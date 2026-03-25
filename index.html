@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LUMARO MART - Order</title>
+    <style>
+        :root { --primary: #27ae60; --bg: #f4f7f6; }
+        body { font-family: sans-serif; background: var(--bg); margin: 0; padding-bottom: 130px; }
+        header { background: white; padding: 15px; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 100; }
+        .container { max-width: 600px; margin: auto; padding: 15px; }
+        .card { background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-bottom: 15px; }
+        input[type="text"], input[type="tel"], textarea { width: 100%; padding: 12px; margin-top: 8px; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; }
+        
+        .search-wrapper { position: relative; margin-bottom: 15px; }
+        #search { padding-right: 40px; border: 2px solid var(--primary); border-radius: 25px; outline: none; width: 100%; box-sizing: border-box; }
+        .clear-search { position: absolute; right: 15px; top: 55%; transform: translateY(-50%); color: #999; cursor: pointer; font-size: 22px; display: none; font-weight: bold; }
+
+        .product-list { display: flex; flex-direction: column; gap: 10px; }
+        .p-item { background: white; border: 1px solid #eee; padding: 12px; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; }
+        .p-item img { width: 60px; height: 60px; object-fit: contain; margin-right: 15px; border-radius: 5px; }
+        .p-info { flex-grow: 1; }
+        .p-name { display: block; font-weight: bold; font-size: 15px; color: #333; }
+        .p-price { color: var(--primary); font-weight: bold; font-size: 14px; }
+        
+        .qty-box { display: flex; align-items: center; gap: 12px; background: #f9f9f9; padding: 5px 10px; border-radius: 5px; }
+        .btn-q { background: var(--primary); color: white; border: none; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        
+        .pay-options { display: flex; gap: 10px; margin-top: 15px; }
+        .pay-label { flex: 1; position: relative; cursor: pointer; }
+        .pay-label input[type="radio"] { position: absolute; opacity: 0; }
+        .pay-box { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px; border: 2px solid #ddd; border-radius: 10px; background: #fbfcfd; transition: 0.3s; font-size: 14px; font-weight: bold; }
+        .pay-label input[type="radio"]:checked + .pay-box { border-color: var(--primary); background: #e8f5e9; color: var(--primary); }
+        
+        #qrSection { display: none; text-align: center; margin-top: 15px; padding: 15px; background: #fff; border: 1px dashed #bbb; border-radius: 10px; }
+        #qrSection img { width: 180px; margin: 10px 0; border-radius: 10px; }
+        .offer-tag { color: #d32f2f; font-size: 12px; font-weight: bold; display: block; margin-top: 5px; }
+
+        .footer { position: fixed; bottom: 0; width: 100%; background: white; padding: 12px; box-shadow: 0 -2px 10px rgba(0,0,0,0.1); box-sizing: border-box; z-index: 1000; }
+        .footer-content { display: flex; justify-content: space-between; align-items: center; max-width: 600px; margin: auto; }
+        .bill-details { font-size: 11px; color: #666; line-height: 1.4; }
+        .final-total-box { text-align: right; }
+        .final-total { font-size: 22px; color: var(--primary); font-weight: bold; }
+        .order-btn { background: var(--primary); color: white; padding: 12px 25px; border: none; border-radius: 25px; font-weight: bold; cursor: pointer; margin-top: 5px; }
+
+        /* Popup Notification Style */
+        #orderPopup {
+            display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.85); color: white; padding: 20px 30px; border-radius: 15px;
+            text-align: center; z-index: 2000; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h2 style="margin:0; color:var(--primary);">LUMARO MART</h2>
+    <p style="margin:5px 0 0; font-size:12px; color:#666;">Shiv Internet Cafe Premises</p>
+</header>
+
+<div id="orderPopup">
+    <h1 style="color:#27ae60; margin:0; font-size:40px;">✔</h1>
+    <p style="margin:10px 0 0; font-weight:bold;">Order Sent Successfully!</p>
+</div>
+
+<div class="container" id="formUI">
+    <div class="card">
+        <b style="color:#333;">Delivery Details</b>
+        <input type="text" id="name" placeholder="Full Name">
+        <input type="tel" id="mob" placeholder="Mobile Number (10 Digits)" maxlength="10">
+        <textarea id="addr" placeholder="Full Address (House No, Landmark...)" rows="2"></textarea>
+    </div>
+
+    <div class="search-wrapper">
+        <input type="text" id="search" placeholder="🔍 Search Products..." onkeyup="filter()">
+        <span class="clear-search" id="clearBtn" onclick="clearSearch()">×</span>
+    </div>
+
+    <div id="loading">Loading Products...</div>
+    <div class="product-list" id="productList"></div>
+
+    <div class="card" style="margin-top:20px;">
+        <b>Payment Method</b>
+        <span class="offer-tag">✨ Online Payment: Get 5% Instant Discount!</span>
+        <div class="pay-options">
+            <label class="pay-label">
+                <input type="radio" name="pay" value="COD" checked onclick="updateTotal(); toggleQR(false)">
+                <div class="pay-box">🤝 COD</div>
+            </label>
+            <label class="pay-label">
+                <input type="radio" name="pay" value="Online" onclick="updateTotal(); toggleQR(true)">
+                <div class="pay-box">📱 Online (UPI)</div>
+            </label>
+        </div>
+
+        <div id="qrSection">
+            <p style="font-weight:bold; color:#2c3e50;">Scan to Pay: ₹<span id="qrAmount">0</span></p>
+            <img id="upiQR" src="https://lh3.googleusercontent.com/d/17YH2vgm-YMIwS7_0e85_LQhynlBP6icE" alt="Payment QR">
+            <p style="font-size:12px; color:#d32f2f;">Payment ke baad screenshot upload karein:</p>
+            <input type="file" id="screenshot" accept="image/*" style="border:none; background:none;">
+        </div>
+    </div>
+</div>
+
+<div class="footer" id="formFooter">
+    <div class="footer-content">
+        <div class="bill-details">
+            Subtotal: ₹<span id="subTotalDisp">0</span><br>
+            Delivery: ₹<span id="delChargeDisp">0</span><br>
+            Discount: -₹<span id="discDisp">0</span>
+        </div>
+        <div class="final-total-box">
+            <span class="final-total">₹<span id="total">0</span></span><br>
+            <button class="order-btn" onclick="submitOrder()">PLACE ORDER</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const scriptURL = 'https://script.google.com/macros/s/AKfycbyOsNoBGDxn4ibR7d0rJWmHKbx-waYV0JKVJ9rwigwakTXhRHf4eJufPrH0QSpgBdTqZw/exec'; 
+    let allProducts = [];
+    let cart = {};
+
+    async function load() {
+        try {
+            const res = await fetch(scriptURL);
+            allProducts = await res.json();
+            render(allProducts);
+            document.getElementById('loading').style.display = 'none';
+        } catch (e) {
+            document.getElementById('loading').innerHTML = "Error loading products!";
+        }
+    }
+
+    function render(data) {
+        const div = document.getElementById('productList');
+        div.innerHTML = data.map(p => `
+            <div class="p-item" data-name="${p.name.toLowerCase()}">
+                <img src="${p.img || 'https://via.placeholder.com/80'}" onerror="this.src='https://via.placeholder.com/80'">
+                <div class="p-info">
+                    <span class="p-name">${p.name}</span>
+                    <span class="p-price">₹${p.price}</span>
+                </div>
+                <div class="qty-box">
+                    <button class="btn-q" onclick="qty(${p.id},-1)">-</button>
+                    <b id="q-${p.id}">0</b>
+                    <button class="btn-q" onclick="qty(${p.id},1)">+</button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function qty(id, d) {
+        cart[id] = Math.max(0, (cart[id] || 0) + d);
+        document.getElementById('q-'+id).innerText = cart[id];
+        updateTotal();
+    }
+
+    function updateTotal() {
+        let subtotal = 0;
+        allProducts.forEach(p => { if(cart[p.id]) subtotal += cart[p.id] * p.price; });
+        let delivery = (subtotal > 0 && subtotal <= 100) ? 40 : 0; 
+        let paymentType = document.querySelector('input[name="pay"]:checked').value;
+        let discount = 0;
+        if (paymentType === 'Online' && subtotal > 0) discount = Math.round(subtotal * 0.05);
+        let finalTotal = subtotal + delivery - discount;
+        document.getElementById('subTotalDisp').innerText = subtotal;
+        document.getElementById('delChargeDisp').innerText = delivery;
+        document.getElementById('discDisp').innerText = discount;
+        document.getElementById('total').innerText = finalTotal;
+        document.getElementById('qrAmount').innerText = finalTotal;
+    }
+
+    function filter() {
+        let val = document.getElementById('search').value.toLowerCase();
+        document.getElementById('clearBtn').style.display = val.length > 0 ? "block" : "none";
+        document.querySelectorAll('.p-item').forEach(el => {
+            el.style.display = el.dataset.name.includes(val) ? 'flex' : 'none';
+        });
+    }
+
+    function clearSearch() {
+        document.getElementById('search').value = "";
+        filter();
+    }
+
+    function toggleQR(show) {
+        document.getElementById('qrSection').style.display = show ? 'block' : 'none';
+    }
+
+    async function submitOrder() {
+        const n = document.getElementById('name').value.trim();
+        const m = document.getElementById('mob').value.trim();
+        const a = document.getElementById('addr').value.trim();
+        const sub = document.getElementById('subTotalDisp').innerText;
+        const del = document.getElementById('delChargeDisp').innerText;
+        const disc = document.getElementById('discDisp').innerText;
+        const total = document.getElementById('total').innerText;
+        const payMode = document.querySelector('input[name="pay"]:checked').value;
+
+        if(!n || m.length < 10 || total == "0") return alert("Details check karein!");
+
+        let itemsStr = "";
+        allProducts.forEach(p => { if(cart[p.id]) itemsStr += `${p.name} (x${cart[p.id]}), `; });
+
+        const finalData = { name: n, mobile: m, address: a, items: itemsStr, subtotal: sub, delivery: del, discount: disc, total: total, payment: payMode };
+        
+        document.querySelector('.order-btn').innerText = "Sending...";
+        try {
+            await fetch(scriptURL, { method: 'POST', mode: 'no-cors', body: JSON.stringify(finalData) });
+            showSuccessAndReload();
+        } catch (e) { 
+            showSuccessAndReload();
+        }
+    }
+
+    function showSuccessAndReload() {
+        document.getElementById('orderPopup').style.display = 'block';
+        setTimeout(() => {
+            window.location.reload(true);
+        }, 2000); // 2 second baad automatic refresh
+    }
+
+    window.onload = load;
+</script>
+</body>
+</html>
