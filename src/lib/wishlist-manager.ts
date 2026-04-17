@@ -1,6 +1,7 @@
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { cacheUtils } from './cache-utils';
+import { handleFirestoreError, OperationType } from './firestore-utils';
 
 type WishlistListener = (ids: string[]) => void;
 let wishlistIds: string[] = [];
@@ -26,11 +27,17 @@ export const wishlistManager = {
       }
       
       currentUserId = userId;
-      const q = query(collection(db, 'wishlist'), where('userId', '==', userId));
+      const q = query(
+        collection(db, 'wishlist'), 
+        where('userId', '==', userId),
+        limit(100)
+      );
       unsubscribe = onSnapshot(q, (snapshot) => {
         wishlistIds = snapshot.docs.map(doc => doc.data().productId);
         cacheUtils.setItem(`wishlist_ids_cache_${userId}`, wishlistIds);
         listeners.forEach(l => l(wishlistIds));
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'wishlist');
       });
     }
     

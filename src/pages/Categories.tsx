@@ -8,6 +8,7 @@ import { db } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { WishlistButton } from '../components/WishlistButton';
 import { cacheUtils } from '../lib/cache-utils';
+import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 
 export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p: Product) => void }) => {
   const navigate = useNavigate();
@@ -64,6 +65,8 @@ export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCa
       if (!selectedCategory && cats.length > 0) {
         setSelectedCategory(cats[0].name);
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'categories');
     });
     return () => unsubscribe();
   }, []);
@@ -80,6 +83,9 @@ export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCa
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(prods);
       cacheUtils.setItem(`category_prods_${selectedCategory}`, prods);
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'products');
       setLoading(false);
     });
 

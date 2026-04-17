@@ -121,6 +121,16 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "productId", "createdAt"]
+    },
+    "Cart": {
+      "title": "Cart",
+      "description": "User's persistent cart items.",
+      "type": "object",
+      "properties": {
+        "items": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["items", "updatedAt"]
     }
   },
   "firestore": {
@@ -159,6 +169,10 @@
     "/wishlist/{wishlistId}": {
       "schema": "WishlistItem",
       "description": "User wishlist items."
+    },
+    "/carts/{userId}": {
+      "schema": "Cart",
+      "description": "User persistent shopping carts."
     }
   }
 }

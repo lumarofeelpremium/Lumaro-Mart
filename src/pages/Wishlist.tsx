@@ -82,7 +82,7 @@ export const Wishlist = ({ user, onAddToCart }: { user: User | null, onAddToCart
         await deleteDoc(doc(db, 'wishlist', document.id));
       });
     } catch (error) {
-      console.error("Error removing from wishlist:", error);
+      handleFirestoreError(error, OperationType.GET, 'wishlist');
     }
   };
 

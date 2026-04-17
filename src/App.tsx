@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, getDocFromServer } from 'firebase/firestore';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from './firebase';
+import { handleFirestoreError, OperationType } from './lib/firestore-utils';
 import { Home } from './pages/Home';
 import { Signup, Login } from './pages/Auth';
 import { Categories } from './pages/Categories';
@@ -24,6 +25,54 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState<CartItem[]>([]);
+  const isSyncingRef = useRef(false);
+
+  // Handle Cart Persistence
+  useEffect(() => {
+    if (loading) return;
+
+    if (user) {
+      const fetchCart = async () => {
+        try {
+          const cartDoc = await getDoc(doc(db, 'carts', user.uid));
+          if (cartDoc.exists()) {
+            setCart(cartDoc.data().items || []);
+          } else {
+            // If user has local cart items but no stored cart, initialize storage
+            if (cart.length > 0) {
+              await setDoc(doc(db, 'carts', user.uid), {
+                items: cart,
+                updatedAt: serverTimestamp()
+              });
+            }
+          }
+        } catch (error) {
+          handleFirestoreError(error, OperationType.GET, `carts/${user.uid}`);
+        }
+      };
+      fetchCart();
+    } else {
+      // Clear cart on logout to prevent data mixing
+      setCart([]);
+    }
+  }, [user?.uid, loading]);
+
+  // Sync Cart to Firestore
+  const syncCartToFirestore = async (newCart: CartItem[]) => {
+    if (!user || isSyncingRef.current) return;
+    
+    isSyncingRef.current = true;
+    try {
+      await setDoc(doc(db, 'carts', user.uid), {
+        items: newCart,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `carts/${user.uid}`);
+    } finally {
+      isSyncingRef.current = false;
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -35,8 +84,13 @@ export default function App() {
             const data = userDoc.data();
             let role = data.role;
             
-            // Force admin role for the specific mobile number
-            if (data.phoneNumber === '7830948738' || firebaseUser.email === '7830948738@lumaro.com') {
+            // Force admin role for the specific identities
+            const isAdminIdentity = 
+              data.phoneNumber === '7830948738' || 
+              firebaseUser.email === '7830948738@lumaro.com' ||
+              firebaseUser.email === 'shiva1520980@gmail.com';
+
+            if (isAdminIdentity) {
               role = 'admin';
             }
 
@@ -67,6 +121,7 @@ export default function App() {
         }
       } else {
         setUser(null);
+        setCart([]); // Critical: Clear cart state on logout
       }
       setLoading(false);
     });
@@ -76,14 +131,21 @@ export default function App() {
 
   const handleAddToCart = (product: Product) => {
     if (product.stock <= 0) return;
+    
+    let newCart: CartItem[] = [];
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
       if (existing) {
-        return prev.map(item => 
+        newCart = prev.map(item => 
           item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
         );
+      } else {
+        newCart = [...prev, { ...product, quantity: 1 }];
       }
-      return [...prev, { ...product, quantity: 1 }];
+      
+      // Update Firestore if user is logged in
+      if (user) syncCartToFirestore(newCart);
+      return newCart;
     });
   };
 
@@ -92,16 +154,39 @@ export default function App() {
       handleRemoveFromCart(id);
       return;
     }
-    setCart(prev => prev.map(item => item.id === id ? { ...item, quantity } : item));
+    
+    setCart(prev => {
+      const newCart = prev.map(item => item.id === id ? { ...item, quantity } : item);
+      if (user) syncCartToFirestore(newCart);
+      return newCart;
+    });
   };
 
   const handleRemoveFromCart = (id: string) => {
-    setCart(prev => prev.filter(item => item.id !== id));
+    setCart(prev => {
+      const newCart = prev.filter(item => item.id !== id);
+      if (user) syncCartToFirestore(newCart);
+      return newCart;
+    });
   };
 
-  const handleClearCart = () => setCart([]);
+  const handleClearCart = () => {
+    setCart([]);
+    if (user) syncCartToFirestore([]);
+  };
 
-  const handleLogout = () => setUser(null);
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+      setCart([]);
+    } catch (error) {
+      console.error("Logout error:", error);
+      // Fallback
+      setUser(null);
+      setCart([]);
+    }
+  };
 
   if (loading) {
     return (

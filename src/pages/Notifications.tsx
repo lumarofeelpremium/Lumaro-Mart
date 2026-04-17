@@ -45,6 +45,9 @@ export const Notifications = () => {
       setNotifications(notifs);
       cacheUtils.setItem('notifications_cache', notifs);
       setLoading(false);
+    }, (error) => {
+      console.error('Snapshot error in notifications', error);
+      setLoading(false);
     });
     return () => unsubscribe();
   }, []);
