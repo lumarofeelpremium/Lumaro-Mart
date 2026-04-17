@@ -1,0 +1,188 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: uid, email, displayName, role, phoneNumber, photoURL, address, pincode, loyaltyPoints
+    //
+    // Collection: products
+    // Fields: name, price, image, category, stock, description, rating, salesCount, createdAt
+    //
+    // Collection: categories
+    // Fields: name, icon
+    //
+    // Collection: orders
+    // Fields: userId, items, total, subtotal, delivery, pointsRedeemed, pointsEarned, status, createdAt
+    //
+    // Collection: banners
+    // Fields: title, subtitle, buttonText, backgroundColor, image, active
+    //
+    // Collection: settings
+    // Document: global
+    // Fields: whatsappNumber
+    //
+    // Collection: notifications
+    // Fields: title, message, type, createdAt, productId
+    //
+    // Collection: reviews
+    // Fields: productId, userId, userName, rating, comment, createdAt
+    //
+    // Collection: wishlist
+    // Fields: userId, productId, createdAt
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.email == "shiva1520980@gmail.com" ||
+         request.auth.token.email == "7830948738@lumaro.com" ||
+         request.auth.token.phone_number == "+917830948738" ||
+         request.auth.token.phone_number == "7830948738" ||
+         request.auth.token.phone_number.matches(".*7830948738$"));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*") || url.matches("^data:image/.*"));
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 100 &&
+             (data.email == "" || isValidEmail(data.email)) &&
+             data.role in ['user', 'admin'] &&
+             (!('phoneNumber' in data) || data.phoneNumber is string) &&
+             (!('address' in data) || data.address is string) &&
+             (!('pincode' in data) || data.pincode is string) &&
+             (!('loyaltyPoints' in data) || data.loyaltyPoints is number);
+    }
+
+    function isValidProduct(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.price is number && data.price >= 0 &&
+             data.image is string && isValidUrl(data.image) &&
+             data.category is string &&
+             data.stock is number && data.stock >= 0;
+    }
+
+    function isValidOrder(data) {
+      return data.userId is string &&
+             (!('userName' in data) || data.userName is string) &&
+             (!('userPhone' in data) || data.userPhone is string) &&
+             data.items is list &&
+             data.total is number &&
+             data.status in ['pending', 'confirmed', 'delivered', 'canceled'];
+    }
+
+    function isValidBanner(data) {
+      return data.image is string && isValidUrl(data.image) &&
+             data.title is string && data.title.size() > 0 &&
+             data.subtitle is string &&
+             data.buttonText is string &&
+             data.backgroundColor is string &&
+             data.active is bool;
+    }
+
+    function isValidReview(data) {
+      return data.productId is string &&
+             data.userId is string &&
+             data.userName is string &&
+             data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+             (!('comment' in data) || (data.comment is string && data.comment.size() < 1000));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) &&
+                    ((isOwner(userId) && request.resource.data.role == 'user') || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) &&
+                    ((isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId;
+      allow update: if isAdmin();
+    }
+
+    match /banners/{bannerId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /settings/global {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /test/connection {
+      allow read: if true;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && 
+                    request.auth.uid == request.resource.data.userId &&
+                    isValidReview(request.resource.data);
+      allow update, delete: if isAdmin() || (isAuthenticated() && request.auth.uid == resource.data.userId);
+    }
+
+    match /wishlist/{wishlistId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow list: if isAuthenticated() && (request.query.limit <= 100 && request.auth.uid == request.query.filters.userId);
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId;
+      allow delete: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
