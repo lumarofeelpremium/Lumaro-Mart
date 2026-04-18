@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock } from 'lucide-react';
+import { ChevronLeft, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner } from '../types';
@@ -32,6 +32,13 @@ export const AdminDashboard = () => {
   const [selectedUserStats, setSelectedUserStats] = useState<User | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState<{ id: string, type: 'product' | 'category' | 'banner' | 'user', name: string } | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const isInitialLoad = React.useRef(true);
+  const notificationAudio = React.useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    // Preload notification sound
+    notificationAudio.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+  }, []);
 
   useEffect(() => {
     if (successMessage) {
@@ -56,7 +63,32 @@ export const AdminDashboard = () => {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
 
     const unsubOrders = onSnapshot(query(collection(db, 'orders'), orderBy('createdAt', 'desc')), (snapshot) => {
-      setOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order)));
+      const newOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
+      
+      // Play sound for NEW orders arriving while dashboard is open
+      if (!isInitialLoad.current) {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'added') {
+            const orderData = change.doc.data();
+            // Verify it's actually a new order (timestamp check)
+            const orderTime = orderData.createdAt?.toMillis() || Date.now();
+            if (Date.now() - orderTime < 10000) { // dentro de los últimos 10 segundos
+              notificationAudio.current?.play().catch(e => console.log('Audio playback failed:', e));
+              
+              // Browser Notification
+              if ("Notification" in window && Notification.permission === "granted") {
+                new Notification("New Order Received!", {
+                  body: `Order from ${orderData.userName || 'Customer'} - ₹${orderData.total}`,
+                  icon: '/favicon.ico'
+                });
+              }
+            }
+          }
+        });
+      }
+      
+      setOrders(newOrders);
+      isInitialLoad.current = false;
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'orders'));
 
     const unsubSettings = onSnapshot(doc(db, 'settings', 'global'), (snapshot) => {
@@ -314,7 +346,25 @@ export const AdminDashboard = () => {
             />
           )}
           {activeTab === 'settings' && (
-            <SettingsTab settings={appSettings} onSave={handleUpdateSettings} />
+            <SettingsTab 
+              settings={appSettings} 
+              onSave={handleUpdateSettings} 
+              onTestNotification={() => {
+                // To unlock audio on some browsers, we need user interaction
+                if (notificationAudio.current) {
+                  notificationAudio.current.play()
+                    .then(() => {
+                      if ("Notification" in window && Notification.permission === "granted") {
+                        new Notification("Lumaro Mart Admin", {
+                          body: "Testing notifications! They are working correctly.",
+                          icon: '/favicon.ico'
+                        });
+                      }
+                    })
+                    .catch(e => console.error("Audio test failed:", e));
+                }
+              }}
+            />
           )}
         </div>
       </div>
@@ -904,20 +954,62 @@ const OrderDetailsModal = ({
   );
 };
 
-const SettingsTab = ({ settings, onSave }: { settings: AppSettings, onSave: (s: AppSettings) => Promise<boolean> }) => {
+const SettingsTab = ({ 
+  settings, 
+  onSave,
+  onTestNotification 
+}: { 
+  settings: AppSettings, 
+  onSave: (s: AppSettings) => Promise<boolean>,
+  onTestNotification: () => void 
+}) => {
   const [whatsappNumber, setWhatsappNumber] = useState(settings.whatsappNumber);
   const [whatsappEnabled, setWhatsappEnabled] = useState(settings.whatsappEnabled ?? true);
+  const [telegramBotToken, setTelegramBotToken] = useState(settings.telegramBotToken || '');
+  const [telegramChatId, setTelegramChatId] = useState(settings.telegramChatId || '');
+  const [telegramEnabled, setTelegramEnabled] = useState(settings.telegramEnabled ?? false);
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
+
+  useEffect(() => {
+    if ("Notification" in window) {
+      setNotifPermission(Notification.permission);
+    }
+  }, []);
 
   useEffect(() => {
     setWhatsappNumber(settings.whatsappNumber);
     setWhatsappEnabled(settings.whatsappEnabled ?? true);
+    setTelegramBotToken(settings.telegramBotToken || '');
+    setTelegramChatId(settings.telegramChatId || '');
+    setTelegramEnabled(settings.telegramEnabled ?? false);
   }, [settings]);
+
+  const handleRequestPermission = () => {
+    if ("Notification" in window) {
+      Notification.requestPermission().then(permission => {
+        setNotifPermission(permission);
+        if (permission === "granted") {
+          onTestNotification();
+        } else if (permission === "denied") {
+          alert("Notification permission denied. Please enable it from browser settings.");
+        }
+      });
+    } else {
+      alert("This browser does not support notifications.");
+    }
+  };
 
   const handleSave = async () => {
     setIsSaving(true);
-    const success = await onSave({ whatsappNumber, whatsappEnabled });
+    const success = await onSave({ 
+      whatsappNumber, 
+      whatsappEnabled,
+      telegramEnabled,
+      telegramBotToken,
+      telegramChatId
+    });
     setIsSaving(false);
     
     if (success) {
@@ -985,6 +1077,98 @@ const SettingsTab = ({ settings, onSave }: { settings: AppSettings, onSave: (s: 
               className="bg-white"
             />
             <p className="text-[9px] text-gray-400 mt-1 italic">Include country code without + (e.g. 91 for India)</p>
+          </div>
+
+          <div className="h-px bg-blue-100 my-4" />
+
+          {/* Browser Notifications Switch */}
+          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-blue-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-500 flex items-center justify-center">
+                <Bell size={20} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-[#1A1A1A]">Browser Alerts</p>
+                <p className="text-[10px] text-gray-400">Status: <span className={cn(
+                  "capitalize font-bold",
+                  notifPermission === 'granted' ? "text-green-500" : 
+                  notifPermission === 'denied' ? "text-red-500" : "text-gray-400"
+                )}>{notifPermission}</span></p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              {notifPermission === 'granted' && (
+                <button 
+                  onClick={onTestNotification}
+                  className="text-[10px] font-bold text-blue-500 bg-blue-50 px-3 py-2 rounded-xl hover:bg-blue-100 transition-colors"
+                >
+                  Test
+                </button>
+              )}
+              <button 
+                onClick={handleRequestPermission}
+                className={cn(
+                  "text-[10px] font-bold px-3 py-2 rounded-xl transition-colors",
+                  notifPermission === 'granted' ? "bg-green-50 text-green-500" : "bg-orange-50 text-orange-500 hover:bg-orange-100"
+                )}
+              >
+                {notifPermission === 'granted' ? 'Enabled' : 'Enable'}
+              </button>
+            </div>
+          </div>
+
+          <div className="h-px bg-blue-100 my-4" />
+
+          {/* Telegram Settings */}
+          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-blue-100">
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                telegramEnabled ? "bg-[#0088cc] text-white" : "bg-gray-100 text-gray-400"
+              )}>
+                <Send size={20} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-[#1A1A1A]">Telegram Notifications</p>
+                <p className="text-[10px] text-gray-400">Receive Push Notifications to Phone</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setTelegramEnabled(!telegramEnabled)}
+              className={cn(
+                "w-12 h-6 rounded-full transition-all relative",
+                telegramEnabled ? "bg-[#0088cc]" : "bg-gray-200"
+              )}
+            >
+              <div className={cn(
+                "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                telegramEnabled ? "right-1" : "left-1"
+              )} />
+            </button>
+          </div>
+
+          <div className={cn("space-y-4 transition-all", !telegramEnabled && "opacity-50 pointer-events-none")}>
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Telegram Bot Token</label>
+              <Input 
+                value={telegramBotToken}
+                onChange={(e) => setTelegramBotToken(e.target.value)}
+                placeholder="Paste Bot Token here"
+                className="bg-white"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Your Chat ID</label>
+              <div className="flex gap-2">
+                <Input 
+                  value={telegramChatId}
+                  onChange={(e) => setTelegramChatId(e.target.value)}
+                  placeholder="Paste Chat ID here"
+                  className="bg-white"
+                />
+              </div>
+              <p className="text-[9px] text-gray-400 mt-1 italic">Use @userinfobot on Telegram to get your Chat ID</p>
+            </div>
           </div>
           
           <Button 

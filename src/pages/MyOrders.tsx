@@ -8,6 +8,7 @@ import { User, Order } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { Button } from '../components/ui/Base';
 import { cacheUtils } from '../lib/cache-utils';
+import { cn } from '../lib/utils';
 
 export const MyOrders = ({ user }: { user: User | null }) => {
   const navigate = useNavigate();
@@ -172,6 +173,7 @@ export const MyOrders = ({ user }: { user: User | null }) => {
                 <span className={`px-3 py-1 rounded-xl text-[10px] font-bold uppercase tracking-wider ${
                   order.status === 'pending' ? "bg-orange-50 text-orange-500" :
                   order.status === 'confirmed' ? "bg-blue-50 text-blue-500" :
+                  order.status === 'canceled' ? "bg-red-50 text-red-500" :
                   "bg-green-50 text-green-500"
                 }`}>
                   {order.status}
@@ -225,7 +227,13 @@ export const MyOrders = ({ user }: { user: User | null }) => {
                     </div>
                     <div>
                       <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Status</p>
-                      <p className="font-bold text-[#1A1A1A] capitalize text-lg">{selectedOrder.status}</p>
+                      <p className={cn(
+                        "font-bold capitalize text-lg",
+                        selectedOrder.status === 'canceled' ? "text-red-500" :
+                        selectedOrder.status === 'pending' ? "text-orange-500" :
+                        selectedOrder.status === 'confirmed' ? "text-blue-500" :
+                        "text-[#66D2A4]"
+                      )}>{selectedOrder.status}</p>
                     </div>
                   </div>
                   <div className="text-right">

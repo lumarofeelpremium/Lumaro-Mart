@@ -5,6 +5,7 @@ import { collection, addDoc, deleteDoc, doc, getDocs, serverTimestamp, query, wh
 import { User } from '../types';
 import { cn } from '../lib/utils';
 import { wishlistManager } from '../lib/wishlist-manager';
+import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 
 interface WishlistButtonProps {
   user: User | null;
@@ -59,7 +60,7 @@ export const WishlistButton = ({ user, productId, className }: WishlistButtonPro
         });
       }
     } catch (error) {
-      console.error("Error toggling wishlist:", error);
+      handleFirestoreError(error, OperationType.WRITE, 'wishlist');
     }
   };
 

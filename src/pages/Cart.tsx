@@ -154,6 +154,39 @@ export const Cart = ({
         window.open(`https://wa.me/${whatsappNumber}?text=${encodedMessage}`, '_blank');
       }
 
+      // Send Telegram Notification (Background)
+      const fetchTelegramSettings = async () => {
+        const sDoc = await getDoc(doc(db, 'settings', 'global'));
+        if (sDoc.exists()) {
+          const sData = sDoc.data();
+          if (sData.telegramEnabled && sData.telegramBotToken && sData.telegramChatId) {
+            const tgMessage = `🚀 *NEW ORDER RECEIVED*\n\n` +
+              `📦 *Order ID:* #${orderRef.id.slice(-6)}\n` +
+              `👤 *Customer:* ${user.displayName}\n` +
+              `💰 *Total:* ₹${total}\n` +
+              `📍 *Pincode:* ${pincode || user.pincode || 'N/A'}\n` +
+              `📞 *Phone:* ${user.phoneNumber || 'N/A'}\n\n` +
+              `🛒 *Items:* ${items.length}\n` +
+              `Check Admin Dashboard for details.`;
+            
+            try {
+              await fetch(`https://api.telegram.org/bot${sData.telegramBotToken}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: sData.telegramChatId,
+                  text: tgMessage,
+                  parse_mode: 'Markdown'
+                })
+              });
+            } catch (err) {
+              console.error("Telegram notification failed:", err);
+            }
+          }
+        }
+      };
+      fetchTelegramSettings();
+
       onClear();
       navigate('/order-confirmation');
     } catch (error) {

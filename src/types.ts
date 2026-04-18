@@ -72,6 +72,9 @@ export interface Notification {
 export interface AppSettings {
   whatsappNumber: string;
   whatsappEnabled: boolean;
+  telegramEnabled?: boolean;
+  telegramBotToken?: string;
+  telegramChatId?: string;
 }
 
 export interface Banner {
