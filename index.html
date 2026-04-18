@@ -7,6 +7,16 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Fallback redirect for Single Page Application in mobile/static environments
+      (function() {
+        var pathname = window.location.pathname;
+        var hash = window.location.hash;
+        if (pathname !== '/' && pathname !== '/index.html' && !hash) {
+          window.location.replace('/' + window.location.search + '#' + pathname + window.location.hash);
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
