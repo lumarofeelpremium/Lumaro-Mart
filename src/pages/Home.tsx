@@ -226,16 +226,16 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
                   style={{ backgroundColor: banners[currentBannerIndex].backgroundColor }}
                   className="relative p-8 text-white min-h-[180px] flex flex-col justify-center"
                 >
-                  <div className="relative z-10 max-w-[200px]">
-                    <p className="text-[10px] font-bold uppercase tracking-wider mb-2 opacity-80">
+                  <div className="relative z-10 max-w-[240px]">
+                    <p className="text-[10px] font-bold uppercase tracking-wider mb-2 opacity-90 drop-shadow-md">
                       {banners[currentBannerIndex].subtitle}
                     </p>
-                    <h2 className="text-2xl font-extrabold leading-tight mb-4">
+                    <h2 className="text-2xl font-extrabold leading-tight mb-4 drop-shadow-lg text-white">
                       {banners[currentBannerIndex].title}
                     </h2>
                     <Button 
                       variant="secondary" 
-                      className="bg-white text-gray-900 border-none text-xs px-6 py-2 rounded-full"
+                      className="bg-white text-gray-900 border-none text-xs px-6 py-2 rounded-full shadow-lg"
                       onClick={() => navigate('/categories')}
                     >
                       {banners[currentBannerIndex].buttonText}
@@ -243,13 +243,14 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
                   </div>
 
                   {banners[currentBannerIndex].image && (
-                    <div className="absolute right-0 bottom-0 w-1/2 h-full pointer-events-none overflow-hidden">
+                    <div className="absolute inset-0 w-full h-full pointer-events-none">
                       <img 
                         src={banners[currentBannerIndex].image} 
                         alt={banners[currentBannerIndex].title} 
-                        className="w-full h-full object-contain object-right-bottom translate-x-4 translate-y-4 scale-110"
+                        className="w-full h-full object-cover opacity-70"
                         referrerPolicy="no-referrer"
                       />
+                      <div className="absolute inset-0 bg-gradient-to-r from-black/20 via-transparent to-transparent" />
                     </div>
                   )}
                   

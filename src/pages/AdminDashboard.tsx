@@ -1577,10 +1577,6 @@ const BannerFormModal = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.image) {
-      alert("Please upload a banner image.");
-      return;
-    }
     setUploading(true);
     try {
       await onSave(formData);
