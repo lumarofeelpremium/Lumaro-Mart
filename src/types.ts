@@ -47,6 +47,7 @@ export interface Order {
   subtotal?: number;
   delivery?: number;
   pointsRedeemed?: number;
+  pointsEarned?: number;
 }
 
 export interface Review {

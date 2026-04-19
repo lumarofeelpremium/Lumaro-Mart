@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { handleFirestoreError, OperationType } from './lib/firestore-utils';
 import { Home } from './pages/Home';
@@ -75,11 +75,18 @@ export default function App() {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    let unsubscribeUser: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (unsubscribeUser) {
+        unsubscribeUser();
+        unsubscribeUser = null;
+      }
+
       if (firebaseUser) {
-        // Fetch user role and additional data from Firestore
-        try {
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+        // Set up real-time listener for user data
+        const userRef = doc(db, 'users', firebaseUser.uid);
+        unsubscribeUser = onSnapshot(userRef, (userDoc) => {
           if (userDoc.exists()) {
             const data = userDoc.data();
             let role = data.role;
@@ -102,7 +109,7 @@ export default function App() {
               role
             } as User);
           } else {
-            // If user exists in Auth but not in Firestore (shouldn't happen with proper signup)
+            // Document doesn't exist yet
             setUser({
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
@@ -110,23 +117,22 @@ export default function App() {
               role: 'user'
             } as User);
           }
-        } catch (error) {
-          console.error("Error fetching user data:", error);
-          setUser({
-            uid: firebaseUser.uid,
-            email: firebaseUser.email || '',
-            displayName: firebaseUser.displayName || 'User',
-            role: 'user'
-          } as User);
-        }
+          setLoading(false);
+        }, (error) => {
+          console.error("Error listening to user data:", error);
+          setLoading(false);
+        });
       } else {
         setUser(null);
-        setCart([]); // Critical: Clear cart state on logout
+        setCart([]);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeUser) unsubscribeUser();
+    };
   }, []);
 
   const handleAddToCart = (product: Product) => {

@@ -106,12 +106,15 @@ export const Cart = ({
         createdAt: serverTimestamp()
       });
 
-      // Update user loyalty points
-      const newPoints = (user.loyaltyPoints || 0) - pointsToRedeem + pointsEarned;
-      await updateDoc(doc(db, 'users', user.uid), {
-        loyaltyPoints: newPoints
-      });
-      setUser({ ...user, loyaltyPoints: newPoints });
+      // Update user loyalty points - Only subtract redeemed points
+      // pointsEarned will be added when order is DELIVERED
+      if (pointsToRedeem > 0) {
+        const newPoints = (user.loyaltyPoints || 0) - pointsToRedeem;
+        await updateDoc(doc(db, 'users', user.uid), {
+          loyaltyPoints: newPoints
+        });
+        setUser({ ...user, loyaltyPoints: newPoints });
+      }
 
       // Update Product Stock and Sales Count
       const batch = writeBatch(db);

@@ -252,6 +252,22 @@ export const AdminDashboard = () => {
       // Update the order status
       batch.update(orderRef, { status: newStatus });
       
+      // Award Loyalty Points on Delivery
+      if (newStatus === 'delivered' && oldStatus !== 'delivered' && orderData.pointsEarned && orderData.pointsEarned > 0) {
+        const userRef = doc(db, 'users', orderData.userId);
+        batch.update(userRef, {
+          loyaltyPoints: increment(orderData.pointsEarned)
+        });
+      }
+
+      // Case 3: Reverting from delivered (Revoke points)
+      if (oldStatus === 'delivered' && newStatus !== 'delivered' && orderData.pointsEarned && orderData.pointsEarned > 0) {
+        const userRef = doc(db, 'users', orderData.userId);
+        batch.update(userRef, {
+          loyaltyPoints: increment(-orderData.pointsEarned)
+        });
+      }
+      
       await batch.commit();
       setSuccessMessage(`Order status updated to ${newStatus}`);
     } catch (error) {
@@ -937,6 +953,12 @@ const OrderDetailsModal = ({
               <div className="flex justify-between text-xs text-red-400">
                 <span>Points Redeemed</span>
                 <span>-₹{order.pointsRedeemed}</span>
+              </div>
+            )}
+            {order.pointsEarned !== undefined && order.pointsEarned > 0 && (
+              <div className="flex justify-between text-[10px] text-green-400 font-bold uppercase tracking-wider bg-white/5 p-2 rounded-lg border border-white/5">
+                <span>Will Earn Points</span>
+                <span>+{order.pointsEarned} Points</span>
               </div>
             )}
             <div className="pt-3 border-t border-white/10 flex justify-between items-center">
@@ -1789,6 +1811,18 @@ const UserStatsModal = ({ user, orders, onClose, onViewAllOrders }: { user: User
               <div>
                 <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Total Value</p>
                 <p className="text-lg font-bold text-[#1A1A1A]">₹{stats.totalSpent.toLocaleString()}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-amber-50 p-4 rounded-2xl flex items-center justify-between border border-amber-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-amber-500 shadow-sm">
+                <Star size={20} fill="currentColor" />
+              </div>
+              <div>
+                <p className="text-[10px] text-amber-600 font-bold uppercase tracking-wider">Loyalty Points</p>
+                <p className="text-lg font-bold text-amber-900">{user.loyaltyPoints || 0} pts</p>
               </div>
             </div>
           </div>
