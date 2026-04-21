@@ -10,11 +10,25 @@ export const OrderConfirmation = () => {
   const orderData = location.state;
 
   useEffect(() => {
-    // If we have whatsapp data, we could try to redirect automatically, 
-    // but a button is safer for mobile browsers to avoid pop-up blocking.
-    // We'll just ensure the state is handled.
+    // If we have no state, it might be a direct access, redirect to home
+    if (!orderData) {
+      const timer = setTimeout(() => {
+        navigate('/', { replace: true });
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+    
     window.scrollTo(0, 0);
-  }, []);
+  }, [orderData, navigate]);
+
+  if (!orderData) {
+    return (
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center px-8 text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#66D2A4] mb-4"></div>
+        <p className="text-gray-400">Loading order info...</p>
+      </div>
+    );
+  }
 
   const handleWhatsAppRedirect = () => {
     if (!orderData || !orderData.whatsappData) return;

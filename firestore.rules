@@ -92,11 +92,9 @@ service cloud.firestore {
     }
 
     function isValidOrder(data) {
-      return data.userId is string &&
-             (!('userName' in data) || data.userName is string) &&
-             (!('userPhone' in data) || data.userPhone is string) &&
-             data.items is list &&
-             data.total is number &&
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.items is list && data.items.size() > 0 &&
+             data.total is number && data.total >= 0 &&
              data.status in ['pending', 'confirmed', 'delivered', 'canceled'];
     }
 
@@ -133,7 +131,11 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isAuthenticated() && 
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'salesCount'])
+      );
     }
 
     match /categories/{categoryId} {
@@ -142,9 +144,14 @@ service cloud.firestore {
     }
 
     match /orders/{orderId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId;
-      allow update: if isAdmin();
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidOrder(request.resource.data);
+      allow update: if isAdmin() || (
+        isAuthenticated() && 
+        request.auth.uid == resource.data.userId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewed'])
+      );
+      allow delete: if isAdmin();
     }
 
     match /banners/{bannerId} {

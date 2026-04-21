@@ -30,8 +30,22 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  let errorMessage = 'An unknown error occurred';
+  
+  if (error instanceof Error) {
+    errorMessage = error.message;
+  } else if (typeof error === 'string') {
+    errorMessage = error;
+  } else {
+    try {
+      errorMessage = JSON.stringify(error);
+    } catch {
+      errorMessage = String(error);
+    }
+  }
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errorMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -50,6 +64,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   };
 
   const errString = cacheUtils.safeStringify(errInfo);
-  console.error('Firestore Error: ', errString);
+  console.error('Firestore Error Details:', errString);
+  // We throw a plain error message to avoid circular structure issues in the component's catch block
   throw new Error(errString);
 }

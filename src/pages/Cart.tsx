@@ -26,6 +26,7 @@ export const Cart = ({
 }) => {
   const navigate = useNavigate();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [showAddressModal, setShowAddressModal] = useState(false);
   const [address, setAddress] = useState(user?.address || '');
   const [pincode, setPincode] = useState(user?.pincode || '');
@@ -77,6 +78,7 @@ export const Cart = ({
     setIsProcessing(true);
     
     try {
+      setError(null);
       // Update user address if provided in modal
       if (address && !user.address) {
         await updateDoc(doc(db, 'users', user.uid), {
@@ -160,28 +162,39 @@ export const Cart = ({
       };
       fetchTelegramSettings();
 
-      onClear();
+      // 1. Prepare data for confirmation page
+      const confirmationState = { 
+        orderId: orderRef.id,
+        userName: user.displayName,
+        userPhone: user.phoneNumber || '',
+        userEmail: user.email,
+        items: [...items], // Clone items to ensure they persist in state
+        total,
+        subtotal,
+        delivery,
+        pointsRedeemed: pointsToRedeem,
+        whatsappData: {
+          enabled: whatsappEnabled,
+          number: whatsappNumber
+        },
+        address: address || user.address,
+        pincode: pincode || user.pincode
+      };
+
+      // 2. Navigate FIRST to ensure user sees the success page
       navigate('/order-confirmation', { 
-        state: { 
-          orderId: orderRef.id,
-          userName: user.displayName,
-          userPhone: user.phoneNumber || '',
-          userEmail: user.email,
-          items,
-          total,
-          subtotal,
-          delivery,
-          pointsRedeemed: pointsToRedeem,
-          whatsappData: {
-            enabled: whatsappEnabled,
-            number: whatsappNumber
-          },
-          address: address || user.address,
-          pincode: pincode || user.pincode
-        } 
+        state: confirmationState,
+        replace: true 
       });
-    } catch (error) {
+
+      // 3. Clear cart with a slight delay to let navigation initiate
+      setTimeout(() => {
+        onClear();
+      }, 100);
+
+    } catch (error: any) {
       handleFirestoreError(error, OperationType.CREATE, 'orders');
+      setError(error.message || 'Failed to place order. Please try again.');
     } finally {
       setIsProcessing(false);
     }
@@ -205,6 +218,13 @@ export const Cart = ({
           Clear
         </button>
       </div>
+
+      {error && (
+        <div className="mx-6 mt-4 p-4 bg-red-50 text-red-600 rounded-2xl text-sm font-medium border border-red-100 flex items-center gap-3">
+          <div className="w-1.5 h-1.5 bg-red-600 rounded-full animate-pulse flex-shrink-0" />
+          <p>{error.includes('{') ? 'Payment/Order verification failed. Please check your connection.' : error}</p>
+        </div>
+      )}
 
       <div className="px-6 pt-6 space-y-4">
         <AnimatePresence mode="popLayout">

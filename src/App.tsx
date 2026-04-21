@@ -63,8 +63,14 @@ export default function App() {
     
     isSyncingRef.current = true;
     try {
+      // Strip images and large descriptions from cart items to save bandwidth and stay under 1MB limit
+      const minimizedCart = newCart.map(({ image, description, ...rest }) => ({
+        ...rest,
+        // We only need the essential data for cart persistence
+      }));
+
       await setDoc(doc(db, 'carts', user.uid), {
-        items: newCart,
+        items: minimizedCart,
         updatedAt: serverTimestamp()
       });
     } catch (error) {

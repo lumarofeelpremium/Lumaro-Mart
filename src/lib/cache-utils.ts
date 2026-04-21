@@ -7,11 +7,13 @@ export const cacheUtils = {
    * Safe stringify to avoid circular structure errors
    */
   safeStringify: (obj: any) => {
-    const cache = new Set();
+    const seen = new WeakSet();
     return JSON.stringify(obj, (key, value) => {
-      if (typeof value === 'object' && value !== null) {
-        if (cache.has(value)) return;
-        cache.add(value);
+      if (typeof value === "object" && value !== null) {
+        if (seen.has(value)) {
+          return "[Circular]";
+        }
+        seen.add(value);
       }
       return value;
     });
