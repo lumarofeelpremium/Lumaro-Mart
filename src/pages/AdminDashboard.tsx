@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ChevronLeft, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner } from '../types';
@@ -9,10 +9,12 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Image, Loader2, Star, Layout } from 'lucide-react';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { compressImage } from '../lib/utils';
+import * as XLSX from 'xlsx';
+import { useReactToPrint } from 'react-to-print';
 
 export const AdminDashboard = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'users' | 'products' | 'orders' | 'categories' | 'settings' | 'banners'>('orders');
+  const [activeTab, setActiveTab] = useState<'users' | 'products' | 'orders' | 'categories' | 'settings' | 'banners' | 'reports'>('orders');
   const [users, setUsers] = useState<User[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -92,7 +94,13 @@ export const AdminDashboard = () => {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'orders'));
 
     const unsubSettings = onSnapshot(doc(db, 'settings', 'global'), (snapshot) => {
-      if (snapshot.exists()) setAppSettings(snapshot.data() as AppSettings);
+      if (snapshot.exists()) {
+        const data = snapshot.data() as AppSettings;
+        setAppSettings(data);
+        if (data.stockThreshold !== undefined) {
+          setStockThreshold(data.stockThreshold);
+        }
+      }
     }, (error) => handleFirestoreError(error, OperationType.GET, 'settings/global'));
 
     const unsubBanners = onSnapshot(query(collection(db, 'banners')), (snapshot) => {
@@ -285,6 +293,17 @@ export const AdminDashboard = () => {
     }
   };
 
+  const handleUpdateStockThreshold = async (newThreshold: number) => {
+    setStockThreshold(newThreshold);
+    try {
+      await updateDoc(doc(db, 'settings', 'global'), {
+        stockThreshold: newThreshold
+      });
+    } catch (error) {
+      console.error("Error updating stock threshold:", error);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#F8FBF9] pb-32">
       <div className="bg-white px-6 pt-12 pb-6 rounded-b-[40px] shadow-sm mb-6">
@@ -309,6 +328,7 @@ export const AdminDashboard = () => {
       <div className="px-6">
         <div className="flex gap-2 mb-6 overflow-x-auto no-scrollbar pb-2">
           <TabButton active={activeTab === 'orders'} onClick={() => setActiveTab('orders')} label="Orders" />
+          <TabButton active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} label="Sales Report" />
           <TabButton active={activeTab === 'products'} onClick={() => setActiveTab('products')} label="Products" />
           <TabButton active={activeTab === 'categories'} onClick={() => setActiveTab('categories')} label="Categories" />
           <TabButton active={activeTab === 'banners'} onClick={() => setActiveTab('banners')} label="Banners" />
@@ -331,7 +351,7 @@ export const AdminDashboard = () => {
               onDelete={handleDeleteProduct}
               onAdd={() => setIsAddingProduct(true)}
               stockThreshold={stockThreshold}
-              onThresholdChange={setStockThreshold}
+              onThresholdChange={handleUpdateStockThreshold}
               searchQuery={productSearchQuery}
               onSearchChange={setProductSearchQuery}
             />
@@ -352,6 +372,9 @@ export const AdminDashboard = () => {
               onSearchChange={setOrderSearchQuery}
               onViewDetails={setSelectedOrder}
             />
+          )}
+          {activeTab === 'reports' && (
+            <SalesReport orders={orders} />
           )}
           {activeTab === 'banners' && (
             <BannerList 
@@ -583,12 +606,23 @@ const ProductList = ({
         ) : (
           <div className="space-y-2">
             {lowStockItems.map(p => (
-              <div key={p.id} className="flex justify-between items-center bg-white/50 p-2 rounded-xl border border-orange-100/50">
-                <span className="text-[11px] font-medium text-orange-700">{p.name}</span>
-                <span className="text-[10px] font-bold px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full">
-                  {p.stock} left
-                </span>
-              </div>
+              <button 
+                key={p.id} 
+                onClick={() => onEdit(p)}
+                className="w-full flex justify-between items-center bg-white/50 p-3 rounded-xl border border-orange-100/50 hover:bg-white hover:border-orange-300 transition-all text-left group"
+                title="Click to edit product stock"
+              >
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-bold text-orange-700 group-hover:text-orange-900">{p.name}</span>
+                  <span className="text-[9px] text-orange-400 font-medium">{p.category}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold px-2 py-1 bg-orange-100 text-orange-600 rounded-lg group-hover:bg-orange-200">
+                    {p.stock} left
+                  </span>
+                  <Edit2 size={12} className="text-orange-400 group-hover:text-orange-600" />
+                </div>
+              </button>
             ))}
           </div>
         )}
@@ -782,6 +816,254 @@ const OrderList = ({
           </div>
         ))
       )}
+    </div>
+  );
+};
+
+const SalesReport = ({ orders }: { orders: Order[] }) => {
+  const componentRef = useRef<HTMLDivElement>(null);
+  const [timeframe, setTimeframe] = useState<'today' | 'week' | 'month' | 'year' | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<Order['status'] | 'all'>('all');
+
+  const handlePrint = useReactToPrint({
+    contentRef: componentRef,
+  });
+
+  const filterOrders = () => {
+    let filtered = [...orders];
+    const now = new Date();
+
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(o => o.status === statusFilter);
+    }
+
+    if (timeframe !== 'all') {
+      filtered = filtered.filter(o => {
+        const orderDate = o.createdAt?.toDate ? o.createdAt.toDate() : new Date();
+        if (timeframe === 'today') {
+          return orderDate.toDateString() === now.toDateString();
+        }
+        if (timeframe === 'week') {
+          const weekAgo = new Date();
+          weekAgo.setDate(now.getDate() - 7);
+          return orderDate >= weekAgo;
+        }
+        if (timeframe === 'month') {
+          return orderDate.getMonth() === now.getMonth() && orderDate.getFullYear() === now.getFullYear();
+        }
+        if (timeframe === 'year') {
+          return orderDate.getFullYear() === now.getFullYear();
+        }
+        return true;
+      });
+    }
+    return filtered;
+  };
+
+  const currentOrders = filterOrders();
+
+  const downloadExcel = () => {
+    const data = currentOrders.flatMap(o => o.items.map(item => {
+        const orderDate = o.createdAt?.toDate ? o.createdAt.toDate() : null;
+        const formattedDate = orderDate 
+            ? `${String(orderDate.getDate()).padStart(2, '0')}/${String(orderDate.getMonth() + 1).padStart(2, '0')}/${orderDate.getFullYear()}`
+            : 'N/A';
+            
+        return {
+            'Date': formattedDate,
+            'Order ID': o.id,
+            'Customer': o.userName || 'N/A',
+            'Customer Mobile': o.userPhone || 'N/A',
+            'Product': item.name,
+            'Qty': item.quantity,
+            'Price': item.price,
+            'Total Item Price': item.price * item.quantity,
+            'Discount (Points)': o.pointsRedeemed || 0,
+            'Delivery': o.delivery || 0,
+            'Grand Total': o.total,
+            'Status': o.status.toUpperCase()
+        };
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Sales Report");
+    XLSX.writeFile(workbook, `LumaroMart_Sales_Report_${timeframe}_${new Date().toLocaleDateString()}.xlsx`);
+  };
+
+  const totalSales = currentOrders.reduce((sum, o) => sum + o.total, 0);
+  const totalOrders = currentOrders.length;
+  const successfulOrders = currentOrders.filter(o => o.status === 'delivered').length;
+  const canceledOrders = currentOrders.filter(o => o.status === 'canceled').length;
+
+  return (
+    <div className="space-y-6">
+      {/* Date Range & Status Filters */}
+      <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex-grow min-w-[200px]">
+            <label className="text-[10px] font-bold text-gray-400 uppercase mb-2 block">Timeframe</label>
+            <div className="flex gap-2 overflow-x-auto no-scrollbar">
+              {(['all', 'today', 'week', 'month', 'year'] as const).map(t => (
+                <button
+                  key={t}
+                  onClick={() => setTimeframe(t)}
+                  className={cn(
+                    "px-4 py-2 rounded-xl text-[10px] font-bold uppercase transition-all whitespace-nowrap",
+                    timeframe === t ? "bg-[#66D2A4] text-white" : "bg-gray-50 text-gray-400 hover:bg-gray-100"
+                  )}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="min-w-[150px]">
+            <label className="text-[10px] font-bold text-gray-400 uppercase mb-2 block">Status Filter</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="w-full bg-gray-50 border-none rounded-xl py-2 px-3 text-[10px] font-bold uppercase outline-none"
+            >
+              <option value="all">All Status</option>
+              <option value="pending">Pending</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="delivered">Delivered</option>
+              <option value="canceled">Canceled</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="flex gap-3 pt-2">
+          <Button 
+            onClick={downloadExcel} 
+            variant="secondary" 
+            className="flex-grow py-3 flex items-center justify-center gap-2 text-xs"
+          >
+            <Download size={16} /> Excel Download
+          </Button>
+          <Button 
+            onClick={() => handlePrint()} 
+            className="flex-grow py-3 flex items-center justify-center gap-2 text-xs"
+          >
+            <Printer size={16} /> Print Report
+          </Button>
+        </div>
+      </div>
+
+      {/* Summary Stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-green-50 p-4 rounded-2xl border border-green-100">
+          <p className="text-[8px] font-bold text-green-600 uppercase mb-1">Total Sales</p>
+          <p className="text-lg font-bold text-green-900">₹{totalSales.toLocaleString()}</p>
+        </div>
+        <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
+          <p className="text-[8px] font-bold text-blue-600 uppercase mb-1">Success</p>
+          <p className="text-lg font-bold text-blue-900">{successfulOrders}</p>
+        </div>
+        <div className="bg-red-50 p-4 rounded-2xl border border-red-100">
+          <p className="text-[8px] font-bold text-red-600 uppercase mb-1">Canceled</p>
+          <p className="text-lg font-bold text-red-900">{canceledOrders}</p>
+        </div>
+      </div>
+
+      {/* Report Table View (Printable) */}
+      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+        <div ref={componentRef} className="p-8 bg-white print:p-0">
+          <div className="hidden print:block mb-8 text-center">
+            <h1 className="text-2xl font-bold text-gray-900">Lumaro Mart - Sales Report</h1>
+            <p className="text-sm text-gray-500 mt-2">
+              Timeframe: {timeframe.toUpperCase()} | Filter: {statusFilter.toUpperCase()}
+            </p>
+            <p className="text-[10px] text-gray-400 mt-1">Generated on: {new Date().toLocaleString()}</p>
+          </div>
+
+          {/* Top Grand Total display for quick view */}
+          {currentOrders.length > 0 && (
+            <div className="mb-6 p-4 bg-[#66D2A4]/10 rounded-2xl border border-[#66D2A4]/20 flex justify-between items-center print:hidden">
+              <span className="text-sm font-bold text-gray-600 uppercase tracking-wider">Report Grand Total</span>
+              <span className="text-2xl font-black text-[#66D2A4]">₹{totalSales.toLocaleString()}</span>
+            </div>
+          )}
+
+          <div className="overflow-x-auto max-h-[600px] overflow-y-auto no-scrollbar relative">
+            <table className="w-full text-left text-[11px] border-collapse">
+              <thead className="sticky top-0 bg-white z-10 shadow-sm">
+                <tr className="border-b border-gray-100">
+                  <th className="py-4 px-2 font-bold text-gray-400 uppercase tracking-wider bg-white">Order ID</th>
+                  <th className="py-4 px-2 font-bold text-gray-400 uppercase tracking-wider bg-white">Customer</th>
+                  <th className="py-4 px-2 font-bold text-gray-400 uppercase tracking-wider bg-white">Item Details</th>
+                  <th className="py-4 px-2 font-bold text-gray-400 uppercase tracking-wider text-right bg-white">Qty</th>
+                  <th className="py-4 px-2 font-bold text-gray-400 uppercase tracking-wider text-right bg-white">Price</th>
+                  <th className="py-4 px-2 font-bold text-gray-400 uppercase tracking-wider text-right bg-white">Total</th>
+                  <th className="py-4 px-2 font-bold text-gray-400 uppercase tracking-wider text-center bg-white">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {currentOrders.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-12 text-center text-gray-400">No records found for this period.</td>
+                  </tr>
+                ) : (
+                  currentOrders.map(order => (
+                    <React.Fragment key={order.id}>
+                      {order.items.map((item, idx) => (
+                        <tr key={`${order.id}-${idx}`} className="hover:bg-gray-50 transition-colors">
+                          <td className="py-3 px-2 font-mono text-gray-400 bg-gray-50/50 print:bg-transparent whitespace-nowrap">
+                            {idx === 0 ? `#${order.id.slice(-6)}` : ''}
+                          </td>
+                          <td className="py-3 px-2 bg-gray-50/50 print:bg-transparent">
+                            {idx === 0 ? (
+                              <>
+                                <p className="font-bold text-[#1A1A1A]">{order.userName || 'N/A'}</p>
+                                <p className="text-[10px] text-blue-500 font-bold whitespace-nowrap">{order.userPhone || 'N/A'}</p>
+                              </>
+                            ) : ''}
+                          </td>
+                          <td className="py-3 px-2">
+                            <p className="font-bold text-[#1A1A1A]">{item.name}</p>
+                            {idx === order.items.length - 1 && (
+                              <div className="mt-1 flex gap-2 text-[9px] text-gray-400">
+                                <span className="text-orange-500">Disc: ₹{order.pointsRedeemed || 0}</span>
+                                <span className="text-blue-500">Del: ₹{order.delivery || 0}</span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-2 text-right font-medium">{item.quantity}</td>
+                          <td className="py-3 px-2 text-right">₹{item.price}</td>
+                          <td className="py-3 px-2 text-right font-bold text-[#1A1A1A]">₹{item.price * item.quantity}</td>
+                          <td className="py-3 px-2 text-center">
+                            {idx === 0 && (
+                              <span className={cn(
+                                "px-2 py-0.5 rounded-full text-[8px] font-bold uppercase inline-block",
+                                order.status === 'delivered' ? "bg-green-100 text-green-600" :
+                                order.status === 'canceled' ? "bg-red-100 text-red-600" :
+                                order.status === 'confirmed' ? "bg-blue-100 text-blue-600" :
+                                "bg-orange-100 text-orange-600"
+                              )}>
+                                {order.status}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  ))
+                )}
+              </tbody>
+              {currentOrders.length > 0 && (
+                <tfoot>
+                  <tr className="bg-gray-50 font-bold text-gray-900 border-t border-gray-200">
+                    <td colSpan={5} className="py-4 px-2 text-right text-xs uppercase">Grand Total</td>
+                    <td className="py-4 px-2 text-right text-lg text-[#66D2A4]">₹{totalSales.toLocaleString()}</td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
@@ -1259,6 +1541,16 @@ const ProductFormModal = ({
       return;
     }
 
+    if ((formData.price || 0) < 0) {
+      alert("Price cannot be negative.");
+      return;
+    }
+
+    if ((formData.stock || 0) < 0) {
+      alert("Stock cannot be negative.");
+      return;
+    }
+
     setUploading(true);
     try {
       await onSave(formData);
@@ -1335,8 +1627,9 @@ const ProductFormModal = ({
               <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2">Price (₹)</label>
               <Input 
                 type="number"
-                value={formData.price || ''}
-                onChange={e => setFormData({ ...formData, price: Number(e.target.value) })}
+                min="0"
+                value={formData.price ?? ''}
+                onChange={e => setFormData({ ...formData, price: Math.max(0, Number(e.target.value)) })}
                 placeholder="0"
                 required
               />
@@ -1345,8 +1638,9 @@ const ProductFormModal = ({
               <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2">Stock</label>
               <Input 
                 type="number"
-                value={formData.stock || ''}
-                onChange={e => setFormData({ ...formData, stock: Number(e.target.value) })}
+                min="0"
+                value={formData.stock ?? ''}
+                onChange={e => setFormData({ ...formData, stock: Math.max(0, Math.floor(Number(e.target.value))) })}
                 placeholder="0"
                 required
               />
