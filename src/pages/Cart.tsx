@@ -127,36 +127,6 @@ export const Cart = ({
       });
       await batch.commit();
 
-      // Send WhatsApp message
-      if (whatsappEnabled && whatsappNumber) {
-        const orderList = items.map(item => `✅ *${item.name}*\n   Qty: ${item.quantity} | Price: ₹${item.price * item.quantity}`).join('\n\n');
-        
-        const message = `🚀 *NEW ORDER RECEIVED - LUMARO MART* 🚀\n` +
-          `------------------------------------------\n` +
-          `📦 *Order ID:* #${orderRef.id.slice(-6)}\n` +
-          `📅 *Date:* ${new Date().toLocaleString()}\n\n` +
-          `👤 *CUSTOMER DETAILS*\n` +
-          `• *Name:* ${user.displayName}\n` +
-          `• *Phone:* ${user.phoneNumber || 'N/A'}\n` +
-          `• *Email:* ${user.email}\n\n` +
-          `📍 *DELIVERY ADDRESS*\n` +
-          `${address || user.address || 'N/A'}\n` +
-          `*Pincode:* ${pincode || user.pincode || 'N/A'}\n\n` +
-          `🛒 *ORDER ITEMS*\n` +
-          `${orderList}\n\n` +
-          `💰 *ORDER SUMMARY*\n` +
-          `• *Subtotal:* ₹${subtotal}\n` +
-          `• *Delivery:* ${delivery === 0 ? 'FREE' : `₹${delivery}`}\n` +
-          `• *Discount:* -₹${pointsToRedeem}\n` +
-          `------------------------------------------\n` +
-          `✅ *TOTAL AMOUNT:* ₹${total}\n` +
-          `------------------------------------------\n\n` +
-          `📢 *Admin:* Please process this order as soon as possible.`;
-
-        const encodedMessage = encodeURIComponent(message);
-        window.open(`https://wa.me/${whatsappNumber}?text=${encodedMessage}`, '_blank');
-      }
-
       // Send Telegram Notification (Background)
       const fetchTelegramSettings = async () => {
         const sDoc = await getDoc(doc(db, 'settings', 'global'));
@@ -191,7 +161,25 @@ export const Cart = ({
       fetchTelegramSettings();
 
       onClear();
-      navigate('/order-confirmation');
+      navigate('/order-confirmation', { 
+        state: { 
+          orderId: orderRef.id,
+          userName: user.displayName,
+          userPhone: user.phoneNumber || '',
+          userEmail: user.email,
+          items,
+          total,
+          subtotal,
+          delivery,
+          pointsRedeemed: pointsToRedeem,
+          whatsappData: {
+            enabled: whatsappEnabled,
+            number: whatsappNumber
+          },
+          address: address || user.address,
+          pincode: pincode || user.pincode
+        } 
+      });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'orders');
     } finally {
