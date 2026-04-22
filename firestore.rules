@@ -54,7 +54,8 @@ service cloud.firestore {
          request.auth.token.phone_number == "+917830948738" ||
          request.auth.token.phone_number == "7830948738" ||
          (request.auth.token.phone_number is string && request.auth.token.phone_number.matches(".*7830948738$")) ||
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin");
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin"));
     }
 
     function hasOnlyAllowedFields(fields) {
@@ -183,7 +184,6 @@ service cloud.firestore {
 
     match /wishlist/{wishlistId} {
       allow read, delete: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
-      allow list: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId;
     }
 

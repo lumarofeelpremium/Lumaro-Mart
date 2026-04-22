@@ -77,6 +77,8 @@ export interface AppSettings {
   telegramBotToken?: string;
   telegramChatId?: string;
   stockThreshold?: number;
+  supportNumber?: string;
+  supportEnabled?: boolean;
 }
 
 export interface Banner {

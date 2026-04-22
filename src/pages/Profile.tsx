@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, User as UserIcon, Settings, LogOut, ShieldCheck, Package, Users, ChevronRight, Clock, MapPin, X, Camera, Mail, Phone, Home, Hash, Loader2, Star, Heart, Bell } from 'lucide-react';
+import { ChevronLeft, User as UserIcon, Settings, LogOut, ShieldCheck, Package, Users, ChevronRight, Clock, MapPin, X, Camera, Mail, Phone, Home, Hash, Loader2, Star, Heart, Bell, MessageCircle, Headset, LifeBuoy } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
-import { User, Order } from '../types';
+import { User, Order, AppSettings } from '../types';
 import { db } from '../firebase';
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, getDoc } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { compressImage } from '../lib/utils';
@@ -16,6 +16,7 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [editForm, setEditForm] = useState({
@@ -90,6 +91,20 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
       setUnreadNotifCount(unread);
     });
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const settingsDoc = await getDoc(doc(db, 'settings', 'global'));
+        if (settingsDoc.exists()) {
+          setAppSettings(settingsDoc.data() as AppSettings);
+        }
+      } catch (error) {
+        console.error("Error fetching settings:", error);
+      }
+    };
+    fetchSettings();
   }, []);
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -223,6 +238,41 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
           />
           
           <ProfileItem icon={Settings} label="Edit Profile" onClick={() => setShowEditProfile(true)} />
+          
+          {appSettings?.supportEnabled && appSettings.supportNumber && (
+            <>
+              <div className="h-px bg-gray-50 mx-4" />
+              <div className="p-4">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 ml-2">Need help?</p>
+                <div 
+                  onClick={() => {
+                    const msg = encodeURIComponent(`Hi Lumaro Mart Support, I need help with...`);
+                    window.open(`https://wa.me/${appSettings.supportNumber}?text=${msg}`, '_blank');
+                  }}
+                  className="relative overflow-hidden p-5 bg-gradient-to-br from-green-50 to-white rounded-[32px] border border-green-100 group cursor-pointer active:scale-[0.98] transition-all"
+                >
+                  <div className="flex items-center gap-4 relative z-10">
+                    <div className="p-3 bg-green-500 text-white rounded-2xl shadow-lg shadow-green-500/30 group-hover:rotate-12 transition-transform">
+                      <MessageCircle size={24} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-[#1A1A1A]">WhatsApp Support</h4>
+                      <p className="text-[10px] text-gray-400 font-medium">Quick response for all queries</p>
+                    </div>
+                    <div className="ml-auto p-2 bg-white rounded-xl text-green-500 shadow-sm border border-green-50 group-hover:translate-x-1 transition-transform">
+                      <ChevronRight size={18} />
+                    </div>
+                  </div>
+                  {/* Decorative element */}
+                  <div className="absolute -bottom-6 -right-6 w-24 h-24 bg-green-100/40 rounded-full blur-2xl" />
+                  <div className="absolute top-0 right-0 p-2 opacity-5">
+                    <MessageCircle size={80} />
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
           {user.role === 'admin' && (
             <>
               <div className="h-px bg-gray-50 mx-4" />

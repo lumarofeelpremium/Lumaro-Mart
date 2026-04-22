@@ -419,12 +419,12 @@ export const Cart = ({
 
       <AnimatePresence>
         {showAddressModal && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 backdrop-blur-sm p-4">
             <motion.div 
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
-              className="bg-white w-full max-w-md rounded-t-[40px] p-8 shadow-2xl"
+              className="bg-white w-full max-w-md rounded-[40px] p-8 shadow-2xl mb-2 sm:mb-0"
             >
               <div className="flex justify-between items-center mb-6">
                 <div className="flex items-center gap-2 text-[#66D2A4]">

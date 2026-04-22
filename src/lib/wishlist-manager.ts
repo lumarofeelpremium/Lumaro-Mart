@@ -46,6 +46,11 @@ export const wishlistManager = {
     
     return () => {
       listeners = listeners.filter(l => l !== callback);
+      if (listeners.length === 0 && unsubscribe) {
+        unsubscribe();
+        unsubscribe = null;
+        currentUserId = null;
+      }
     };
   }
 };
