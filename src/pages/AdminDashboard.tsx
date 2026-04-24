@@ -1432,6 +1432,47 @@ const SettingsTab = ({
 
           <div className="h-px bg-blue-100 my-4" />
 
+          {/* Support Settings */}
+          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-blue-100">
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                supportEnabled ? "bg-[#66D2A4] text-white" : "bg-gray-100 text-gray-400"
+              )}>
+                <Phone size={20} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-[#1A1A1A]">Customer Support</p>
+                <p className="text-[10px] text-gray-400">Show help options in Profile</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setSupportEnabled(!supportEnabled)}
+              className={cn(
+                "w-12 h-6 rounded-full transition-all relative",
+                supportEnabled ? "bg-[#66D2A4]" : "bg-gray-200"
+              )}
+            >
+              <div className={cn(
+                "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                supportEnabled ? "right-1" : "left-1"
+              )} />
+            </button>
+          </div>
+
+          <div className={cn("transition-all", !supportEnabled && "opacity-50 pointer-events-none")}>
+            <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Support Mobile Number</label>
+            <Input 
+              placeholder="e.g. 9140094049" 
+              value={supportNumber}
+              onChange={(e) => setSupportNumber(e.target.value)}
+              className="bg-white"
+            />
+            <p className="text-[9px] text-gray-400 mt-1 italic">Users can call or WhatsApp this number from Profile</p>
+          </div>
+
+          <div className="h-px bg-blue-100 my-4" />
+
           {/* Browser Notifications Switch */}
           <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-blue-100">
             <div className="flex items-center gap-3">

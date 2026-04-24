@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Heart, ShoppingCart, Trash2, Loader2, Plus } from 'lucide-react';
+import { ChevronLeft, Heart, ShoppingCart, Trash2, Loader2, Plus, User as UserIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, getDoc, deleteDoc, addDoc, getDocs, writeBatch } from 'firebase/firestore';
@@ -37,7 +37,7 @@ export const Wishlist = ({ user, onAddToCart }: { user: User | null, onAddToCart
 
   useEffect(() => {
     if (!user) {
-      navigate('/login');
+      setLoading(false);
       return;
     }
 
@@ -189,7 +189,21 @@ export const Wishlist = ({ user, onAddToCart }: { user: User | null, onAddToCart
       </div>
 
       <div className="px-6 pt-6">
-        {wishlistItems.length === 0 ? (
+        {!user ? (
+          <div className="text-center py-20">
+            <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
+              <UserIcon size={32} className="text-gray-200" />
+            </div>
+            <h2 className="text-xl font-bold text-[#1A1A1A]">Login required</h2>
+            <p className="text-sm text-gray-400 mt-2">Login to see your saved items</p>
+            <Button 
+              className="mt-6 w-full"
+              onClick={() => navigate('/login', { state: { from: '/wishlist' } })}
+            >
+              Login / Sign Up
+            </Button>
+          </div>
+        ) : wishlistItems.length === 0 ? (
           <div className="text-center py-20">
             <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
               <Heart size={32} className="text-gray-200" />

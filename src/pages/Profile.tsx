@@ -107,6 +107,20 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
     fetchSettings();
   }, []);
 
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const settingsDoc = await getDoc(doc(db, 'settings', 'global'));
+        if (settingsDoc.exists()) {
+          setAppSettings(settingsDoc.data() as AppSettings);
+        }
+      } catch (error) {
+        console.error("Error fetching settings:", error);
+      }
+    };
+    fetchSettings();
+  }, []);
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {

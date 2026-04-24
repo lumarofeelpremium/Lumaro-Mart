@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, User as UserIcon, Mail, Phone, Lock, Loader2, KeyRound, CheckCircle2 } from 'lucide-react';
 import { Button, Input } from '../components/ui/Base';
 import { motion, AnimatePresence } from 'motion/react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { auth, db } from '../firebase';
 import { 
   updateProfile,
@@ -16,6 +16,8 @@ import { User } from '../types';
 
 export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User | null) => void, initialMode?: 'login' | 'signup' }) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const from = location.state?.from || '/profile';
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [mode, setMode] = useState<'login' | 'signup'>(initialMode);
@@ -94,7 +96,7 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
         }
 
         setUser(userData);
-        navigate('/profile');
+        navigate(from);
       } else {
         setError('User data not found. Please sign up.');
       }
@@ -137,7 +139,7 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
 
       await setDoc(doc(db, 'users', firebaseUser.uid), userData);
       setUser(userData as User);
-      navigate('/profile');
+      navigate(from);
     } catch (err: any) {
       console.error(err);
       if (err.code === 'auth/email-already-in-use') {
@@ -151,15 +153,15 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
   };
 
   return (
-    <div className="min-h-screen bg-white px-8 pt-12 pb-8 flex flex-col">
+    <div className="min-h-[100dvh] bg-white px-8 pt-12 pb-12 flex flex-col">
       <button 
         onClick={() => navigate(-1)}
-        className="w-12 h-12 bg-[#F0F7F4] rounded-full flex items-center justify-center text-gray-800 mb-10"
+        className="w-12 h-12 bg-[#F0F7F4] rounded-full flex items-center justify-center text-gray-800 mb-10 shrink-0"
       >
         <ChevronLeft size={24} />
       </button>
 
-      <div className="mb-10">
+      <div className="mb-10 shrink-0">
         <h1 className="text-4xl font-extrabold text-[#1A1A1A] mb-2">
           {mode === 'signup' ? 'Create Account' : 'Welcome Back'}
         </h1>
@@ -261,18 +263,21 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
         </AnimatePresence>
       </div>
 
-      <div className="mt-10">
-        <p className="text-center text-gray-500 text-sm mb-4">
-          {mode === 'signup' ? "Already have an account?" : "Don't have an account?"} {' '}
+      <div className="mt-auto pt-10">
+        <div className="p-6 bg-[#F0F7F4] rounded-[32px] border border-green-50">
+          <p className="text-center text-gray-600 text-sm font-medium">
+            {mode === 'signup' ? "Already a member?" : "New to Lumaro Mart?"}
+          </p>
           <button 
             onClick={() => {
               setMode(mode === 'signup' ? 'login' : 'signup');
+              setError('');
             }}
-            className="text-[#66D2A4] font-bold"
+            className="w-full mt-3 py-3 rounded-xl bg-white text-[#66D2A4] font-bold text-sm shadow-sm border border-green-100 hover:bg-green-50 transition-colors"
           >
-            {mode === 'signup' ? 'Login' : 'Sign Up'}
+            {mode === 'signup' ? 'Switch to Login' : 'Create New Account'}
           </button>
-        </p>
+        </div>
       </div>
     </div>
   );

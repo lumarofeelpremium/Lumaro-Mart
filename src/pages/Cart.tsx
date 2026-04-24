@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Minus, Plus, Trash2, Loader2, MapPin, X, Star, CheckCircle2, ShoppingCart } from 'lucide-react';
+import { ChevronLeft, Minus, Plus, Trash2, Loader2, MapPin, X, Star, CheckCircle2, ShoppingCart, User as UserIcon } from 'lucide-react';
 import { Button, Input } from '../components/ui/Base';
 import { useNavigate } from 'react-router-dom';
 import { CartItem, User, AppSettings } from '../types';
@@ -28,6 +28,7 @@ export const Cart = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAddressModal, setShowAddressModal] = useState(false);
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [address, setAddress] = useState(user?.address || '');
   const [pincode, setPincode] = useState(user?.pincode || '');
   const [whatsappNumber, setWhatsappNumber] = useState('');
@@ -64,7 +65,7 @@ export const Cart = ({
 
   const handleConfirmOrder = async () => {
     if (!user) {
-      navigate('/login');
+      setShowLoginPrompt(true);
       return;
     }
 
@@ -218,6 +219,13 @@ export const Cart = ({
           Clear
         </button>
       </div>
+
+      {error && (
+        <div className="mx-6 mt-4 p-4 bg-red-50 text-red-600 rounded-2xl text-sm font-medium border border-red-100 flex items-center gap-3">
+          <div className="w-1.5 h-1.5 bg-red-600 rounded-full animate-pulse flex-shrink-0" />
+          <p>{error.includes('{') ? 'Payment/Order verification failed. Please check your connection.' : error}</p>
+        </div>
+      )}
 
       {error && (
         <div className="mx-6 mt-4 p-4 bg-red-50 text-red-600 rounded-2xl text-sm font-medium border border-red-100 flex items-center gap-3">
@@ -418,6 +426,38 @@ export const Cart = ({
       </div>
 
       <AnimatePresence>
+        {showLoginPrompt && (
+          <div className="fixed inset-0 z-[110] flex items-end justify-center bg-black/60 backdrop-blur-sm p-4">
+            <motion.div 
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              className="bg-white w-full max-w-md rounded-[40px] p-8 shadow-2xl mb-2 sm:mb-0 text-center"
+            >
+              <div className="w-20 h-20 bg-[#F0F7F4] rounded-full flex items-center justify-center mx-auto mb-6 text-[#66D2A4]">
+                <UserIcon size={40} />
+              </div>
+              <h2 className="text-2xl font-bold text-[#1A1A1A] mb-2">Login Required</h2>
+              <p className="text-gray-500 mb-8">Please login or sign up to place your order and earn loyalty points.</p>
+              
+              <div className="space-y-3">
+                <Button 
+                  className="w-full py-4 rounded-2xl text-lg shadow-lg shadow-[#66D2A4]/20"
+                  onClick={() => navigate('/login', { state: { from: '/cart' } })}
+                >
+                  Login / Sign Up
+                </Button>
+                <button 
+                  onClick={() => setShowLoginPrompt(false)}
+                  className="w-full py-3 text-gray-400 font-bold text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {showAddressModal && (
           <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 backdrop-blur-sm p-4">
             <motion.div 

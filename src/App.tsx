@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { auth, db } from './firebase';
@@ -211,7 +211,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Router>
-        <div className="max-w-md mx-auto bg-white min-h-screen relative shadow-2xl shadow-black/10 overflow-hidden">
+        <div className="max-w-md mx-auto bg-white min-h-screen relative shadow-2xl shadow-black/10 overflow-x-hidden overflow-y-auto">
           <Routes>
             <Route path="/" element={<Home user={user} onAddToCart={handleAddToCart} />} />
             <Route path="/signup" element={<Signup setUser={setUser} />} />
@@ -234,9 +234,18 @@ export default function App() {
             <Route path="/admin" element={user?.role === 'admin' ? <AdminDashboard /> : <Navigate to="/profile" />} />
           </Routes>
           
-          <BottomNav cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)} />
+          <ConditionalBottomNav cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)} />
         </div>
       </Router>
     </ErrorBoundary>
   );
 }
+
+const ConditionalBottomNav = ({ cartCount }: { cartCount: number }) => {
+  const { pathname } = useLocation();
+  const hideOnPaths = ['/login', '/signup', '/admin'];
+  
+  if (hideOnPaths.includes(pathname)) return null;
+  
+  return <BottomNav cartCount={cartCount} />;
+};
