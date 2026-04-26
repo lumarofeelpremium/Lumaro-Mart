@@ -54,10 +54,20 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
   }, []);
 
   useEffect(() => {
-    const unsubCats = onSnapshot(query(collection(db, 'categories'), orderBy('name'), limit(10)), (snapshot) => {
-      const cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
-      setCategories(cats);
-      updateCache({ categories: cats });
+    // Fetch all categories to avoid skipping those without the 'order' field
+    const unsubCats = onSnapshot(collection(db, 'categories'), (snapshot) => {
+      let cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
+      
+      // Sort by order first, then by name
+      cats.sort((a, b) => {
+        const orderA = a.order ?? 999;
+        const orderB = b.order ?? 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.name.localeCompare(b.name);
+      });
+
+      setCategories(cats.slice(0, 20));
+      updateCache({ categories: cats.slice(0, 20) });
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
 
     const unsubAllProds = onSnapshot(query(collection(db, 'products'), limit(100)), (snapshot) => {
@@ -365,10 +375,13 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
                         ) : (
                           <Plus size={24} className="text-gray-300" />
                         )}
-                        <div className="absolute top-2 left-2 bg-[#66D2A4] text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase">
+                        <div className="absolute top-2 left-2 bg-[#66D2A4] text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
                           New
                         </div>
-                        <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-7 h-7 rounded-lg" />
+                        <div className="absolute bottom-2 left-2 bg-white/80 backdrop-blur-sm text-gray-600 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase border border-gray-100 z-10">
+                          {product.category}
+                        </div>
+                        <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-7 h-7 rounded-lg z-10" />
                       </div>
                       <h4 className="font-bold text-[11px] text-[#1A1A1A] line-clamp-1">{product.name}</h4>
                       <span className="font-bold text-[#66D2A4] text-xs mt-1">₹{product.price}</span>
@@ -448,10 +461,13 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
                           ) : (
                             <Plus size={24} className="text-gray-300" />
                           )}
-                          <div className="absolute top-2 left-2 bg-orange-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase">
+                          <div className="absolute top-2 left-2 bg-orange-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
                             Hot
                           </div>
-                          <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-7 h-7 rounded-lg" />
+                          <div className="absolute bottom-2 left-2 bg-white/80 backdrop-blur-sm text-gray-600 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase border border-gray-100 z-10">
+                            {product.category}
+                          </div>
+                          <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-7 h-7 rounded-lg z-10" />
                         </div>
                         <h4 className="font-bold text-[11px] text-[#1A1A1A] line-clamp-1">{product.name}</h4>
                         <span className="font-bold text-[#66D2A4] text-xs mt-1">₹{product.price}</span>
@@ -599,7 +615,10 @@ const ProductCard: React.FC<{ product: Product, user: User | null, onAddToCart: 
       ) : (
         <Plus size={24} className="text-gray-300" />
       )}
-      <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-8 h-8 rounded-xl" />
+      <div className="absolute bottom-2 left-2 bg-white/80 backdrop-blur-sm text-gray-600 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase border border-gray-100 z-10">
+        {product.category}
+      </div>
+      <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-8 h-8 rounded-xl z-10" />
     </div>
     <h4 className="font-bold text-sm text-[#1A1A1A] mb-1 line-clamp-1">{product.name}</h4>
     <p className={cn(

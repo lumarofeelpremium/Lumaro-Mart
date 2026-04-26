@@ -263,6 +263,9 @@ export const ProductDetails = ({
 
         <div className="flex justify-between items-start mb-2">
           <div>
+            <div className="inline-block bg-[#F0F7F4] text-[#66D2A4] text-[10px] font-bold px-2 py-0.5 rounded-full uppercase mb-1">
+              {product.category}
+            </div>
             <h1 className="text-2xl font-extrabold text-[#1A1A1A]">{product.name}</h1>
             <div className="flex items-center gap-3">
               <p className="text-[#66D2A4] font-bold text-xl">₹{product.price}</p>

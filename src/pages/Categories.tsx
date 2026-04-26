@@ -57,9 +57,17 @@ export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCa
   }, [selectedCategory]);
 
   useEffect(() => {
-    const q = query(collection(db, 'categories'), orderBy('name'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
+    const unsubscribe = onSnapshot(collection(db, 'categories'), (snapshot) => {
+      let cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
+      
+      // Sort: priority to 'order', then alphabetical
+      cats.sort((a, b) => {
+        const orderA = a.order ?? 999;
+        const orderB = b.order ?? 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.name.localeCompare(b.name);
+      });
+
       setCategories(cats);
       cacheUtils.setItem('categories_list_cache', cats);
       if (!selectedCategory && cats.length > 0) {

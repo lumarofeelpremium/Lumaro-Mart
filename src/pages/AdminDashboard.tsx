@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone } from 'lucide-react';
+import { ChevronLeft, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner } from '../types';
@@ -60,8 +60,18 @@ export const AdminDashboard = () => {
       setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
 
-    const unsubCategories = onSnapshot(query(collection(db, 'categories'), orderBy('name')), (snapshot) => {
-      setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category)));
+    const unsubCategories = onSnapshot(collection(db, 'categories'), (snapshot) => {
+      let cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
+      
+      // Sort by order field, then by name
+      cats.sort((a, b) => {
+        const orderA = a.order ?? 999;
+        const orderB = b.order ?? 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.name.localeCompare(b.name);
+      });
+      
+      setCategories(cats);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
 
     const unsubOrders = onSnapshot(query(collection(db, 'orders'), orderBy('createdAt', 'desc')), (snapshot) => {
@@ -165,6 +175,7 @@ export const AdminDashboard = () => {
       } else {
         await addDoc(collection(db, 'categories'), {
           ...categoryData,
+          order: categories.length, // Set order to current length to put it at the end
           createdAt: serverTimestamp()
         });
         setSuccessMessage('Category added successfully!');
@@ -178,6 +189,49 @@ export const AdminDashboard = () => {
 
   const handleDeleteCategory = (category: Category) => {
     setDeleteConfirmation({ id: category.id, type: 'category', name: category.name });
+  };
+
+  const handleReorderCategory = async (categoryId: string, direction: 'up' | 'down') => {
+    const index = categories.findIndex(c => c.id === categoryId);
+    if (index === -1) return;
+
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= categories.length) return;
+
+    try {
+      const batch = writeBatch(db);
+      
+      // To ensure a perfect sort, we update the order of ALL items base on their new positions
+      // This also fixes categories that have no 'order' field yet
+      categories.forEach((cat, i) => {
+        let targetOrder = i;
+        if (i === index) targetOrder = newIndex;
+        else if (i === newIndex) targetOrder = index;
+        
+        // Only update if necessary to save operations
+        if (cat.order !== targetOrder) {
+          batch.update(doc(db, 'categories', cat.id), { order: targetOrder });
+        }
+      });
+
+      await batch.commit();
+      setSuccessMessage('Category sequence updated!');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `categories/${categoryId}`);
+    }
+  };
+
+  const handleNormalizeCategoryOrders = async () => {
+    try {
+      const batch = writeBatch(db);
+      categories.forEach((cat, index) => {
+        batch.update(doc(db, 'categories', cat.id), { order: index });
+      });
+      await batch.commit();
+      setSuccessMessage('All category orders synchronized!');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'categories/all');
+    }
   };
 
   const handleSaveBanner = async (bannerData: any) => {
@@ -362,6 +416,8 @@ export const AdminDashboard = () => {
               onEdit={setEditingCategory} 
               onDelete={handleDeleteCategory}
               onAdd={() => setIsAddingCategory(true)}
+              onReorder={handleReorderCategory}
+              onNormalize={handleNormalizeCategoryOrders}
             />
           )}
           {activeTab === 'orders' && (
@@ -695,24 +751,49 @@ const ProductList = ({
   );
 };
 
-const CategoryList = ({ categories, onEdit, onDelete, onAdd }: { categories: Category[], onEdit: (c: Category) => void, onDelete: (c: Category) => void, onAdd: () => void }) => (
+const CategoryList = ({ categories, onEdit, onDelete, onAdd, onReorder, onNormalize }: { categories: Category[], onEdit: (c: Category) => void, onDelete: (c: Category) => void, onAdd: () => void, onReorder: (id: string, dir: 'up' | 'down') => void, onNormalize: () => void }) => (
   <div className="space-y-4">
-    <Button 
-      onClick={onAdd}
-      className="w-full py-3 rounded-2xl flex items-center justify-center gap-2 mb-2"
-    >
-      <Plus size={20} /> Add New Category
-    </Button>
+    <div className="flex gap-2">
+      <Button 
+        onClick={onAdd}
+        className="flex-1 py-3 rounded-2xl flex items-center justify-center gap-2"
+      >
+        <Plus size={20} /> Add New Category
+      </Button>
+      <button 
+        onClick={onNormalize}
+        className="p-3 bg-gray-100 text-gray-400 rounded-2xl hover:bg-gray-200 transition-colors"
+        title="Repair & Sync All Orders"
+      >
+        <Settings size={20} />
+      </button>
+    </div>
 
-    {categories.map((category) => (
+    {categories.map((category, index) => (
       <div key={category.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-2xl transition-colors">
         <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-1 mr-1">
+            <button 
+              onClick={() => onReorder(category.id, 'up')}
+              disabled={index === 0}
+              className={cn("p-1 rounded-md hover:bg-gray-200 transition-colors", index === 0 ? "text-gray-200" : "text-gray-400")}
+            >
+              <ChevronUp size={16} />
+            </button>
+            <button 
+              onClick={() => onReorder(category.id, 'down')}
+              disabled={index === categories.length - 1}
+              className={cn("p-1 rounded-md hover:bg-gray-200 transition-colors", index === categories.length - 1 ? "text-gray-200" : "text-gray-400")}
+            >
+              <ChevronDown size={16} />
+            </button>
+          </div>
           <div className="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center text-xl">
             {category.icon}
           </div>
           <div>
             <h4 className="font-bold text-sm text-[#1A1A1A]">{category.name}</h4>
-            <p className="text-[10px] text-gray-400">ID: {category.id.slice(-6)}</p>
+            <p className="text-[10px] text-gray-400">Order: {category.order ?? index} • ID: {category.id.slice(-6)}</p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -1591,8 +1672,6 @@ const ProductFormModal = ({
 }) => {
   const [formData, setFormData] = useState<Partial<Product>>(product || {
     name: '',
-    price: 0,
-    stock: 0,
     category: categories[0]?.name || 'Fresh Produce',
     image: '',
     description: ''
@@ -1716,8 +1795,11 @@ const ProductFormModal = ({
               <Input 
                 type="number"
                 min="0"
-                value={formData.price ?? ''}
-                onChange={e => setFormData({ ...formData, price: Math.max(0, Number(e.target.value)) })}
+                value={formData.price !== undefined ? formData.price : ''}
+                onChange={e => {
+                  const val = e.target.value;
+                  setFormData({ ...formData, price: val === '' ? undefined : Math.max(0, Number(val)) });
+                }}
                 placeholder="0"
                 required
               />
@@ -1727,8 +1809,11 @@ const ProductFormModal = ({
               <Input 
                 type="number"
                 min="0"
-                value={formData.stock ?? ''}
-                onChange={e => setFormData({ ...formData, stock: Math.max(0, Math.floor(Number(e.target.value))) })}
+                value={formData.stock !== undefined ? formData.stock : ''}
+                onChange={e => {
+                  const val = e.target.value;
+                  setFormData({ ...formData, stock: val === '' ? undefined : Math.max(0, Math.floor(Number(val))) });
+                }}
                 placeholder="0"
                 required
               />
