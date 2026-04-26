@@ -36,7 +36,7 @@ export const Cart = ({
   const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
   
   const subtotal = items.reduce((acc, item) => acc + item.price * item.quantity, 0);
-  const delivery = subtotal > 0 && subtotal <= 100 ? 40 : 0;
+  const delivery = subtotal > 0 && subtotal <= 100 ? 20 : 0;
   
   const pointsAvailable = user?.loyaltyPoints || 0;
   const pointsToRedeem = useLoyaltyPoints ? Math.min(pointsAvailable, subtotal) : 0;
@@ -219,13 +219,6 @@ export const Cart = ({
           Clear
         </button>
       </div>
-
-      {error && (
-        <div className="mx-6 mt-4 p-4 bg-red-50 text-red-600 rounded-2xl text-sm font-medium border border-red-100 flex items-center gap-3">
-          <div className="w-1.5 h-1.5 bg-red-600 rounded-full animate-pulse flex-shrink-0" />
-          <p>{error.includes('{') ? 'Payment/Order verification failed. Please check your connection.' : error}</p>
-        </div>
-      )}
 
       {error && (
         <div className="mx-6 mt-4 p-4 bg-red-50 text-red-600 rounded-2xl text-sm font-medium border border-red-100 flex items-center gap-3">

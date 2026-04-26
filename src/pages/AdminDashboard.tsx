@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner } from '../types';
@@ -16,13 +16,16 @@ export const AdminDashboard = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'users' | 'products' | 'orders' | 'categories' | 'settings' | 'banners' | 'reports'>('orders');
   const [users, setUsers] = useState<User[]>([]);
+  const [userCurrentPage, setUserCurrentPage] = useState(1);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [banners, setBanners] = useState<Banner[]>([]);
   const [appSettings, setAppSettings] = useState<AppSettings>({ whatsappNumber: '', whatsappEnabled: true });
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
+  const [orderCurrentPage, setOrderCurrentPage] = useState(1);
   const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [productCurrentPage, setProductCurrentPage] = useState(1);
   const [stockThreshold, setStockThreshold] = useState(5);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isAddingProduct, setIsAddingProduct] = useState(false);
@@ -396,6 +399,8 @@ export const AdminDashboard = () => {
               users={users} 
               onDelete={(u) => setDeleteConfirmation({ id: u.uid, type: 'user', name: u.displayName })} 
               onViewOrders={(user) => setSelectedUserStats(user)}
+              currentPage={userCurrentPage}
+              onPageChange={setUserCurrentPage}
             />
           )}
           {activeTab === 'products' && (
@@ -407,7 +412,12 @@ export const AdminDashboard = () => {
               stockThreshold={stockThreshold}
               onThresholdChange={handleUpdateStockThreshold}
               searchQuery={productSearchQuery}
-              onSearchChange={setProductSearchQuery}
+              onSearchChange={(val) => {
+                setProductSearchQuery(val);
+                setProductCurrentPage(1); // Reset to page 1 on search
+              }}
+              currentPage={productCurrentPage}
+              onPageChange={setProductCurrentPage}
             />
           )}
           {activeTab === 'categories' && (
@@ -425,8 +435,13 @@ export const AdminDashboard = () => {
               orders={orders} 
               onUpdateStatus={handleUpdateOrderStatus}
               searchQuery={orderSearchQuery}
-              onSearchChange={setOrderSearchQuery}
+              onSearchChange={(val) => {
+                setOrderSearchQuery(val);
+                setOrderCurrentPage(1);
+              }}
               onViewDetails={setSelectedOrder}
+              currentPage={orderCurrentPage}
+              onPageChange={setOrderCurrentPage}
             />
           )}
           {activeTab === 'reports' && (
@@ -566,51 +581,117 @@ const TabButton = ({ active, onClick, label }: any) => (
 const UserList = ({ 
   users, 
   onDelete,
-  onViewOrders
+  onViewOrders,
+  currentPage,
+  onPageChange
 }: { 
   users: User[], 
   onDelete: (u: User) => void,
-  onViewOrders: (user: User) => void
-}) => (
-  <div className="space-y-4">
-    {users.length === 0 ? (
-      <p className="text-center py-8 text-gray-400">No users found</p>
-    ) : (
-      users.map((u) => (
-        <div key={u.uid} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-2xl transition-colors">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-400 overflow-hidden">
-              {u.photoURL ? (
-                <img src={u.photoURL} alt={u.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-              ) : (
-                <Users size={20} />
-              )}
+  onViewOrders: (user: User) => void,
+  currentPage: number,
+  onPageChange: (page: number) => void
+}) => {
+  const itemsPerPage = 15;
+  const totalPages = Math.ceil(users.length / itemsPerPage);
+  const paginatedUsers = users.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  return (
+    <div className="space-y-4">
+      {paginatedUsers.length === 0 ? (
+        <p className="text-center py-8 text-gray-400">No users found</p>
+      ) : (
+        paginatedUsers.map((u) => (
+          <div key={u.uid} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-2xl transition-colors">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-400 overflow-hidden">
+                {u.photoURL ? (
+                  <img src={u.photoURL} alt={u.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  <Users size={20} />
+                )}
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-[#1A1A1A]">{u.displayName}</h4>
+                <p className="text-[10px] text-gray-400">{u.email} • {u.role}</p>
+              </div>
             </div>
-            <div>
-              <h4 className="font-bold text-sm text-[#1A1A1A]">{u.displayName}</h4>
-              <p className="text-[10px] text-gray-400">{u.email} • {u.role}</p>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => onViewOrders(u)}
+                className="p-2 text-[#66D2A4] hover:bg-green-50 rounded-lg transition-colors"
+                title="View Orders"
+              >
+                <Package size={18} />
+              </button>
+              <button 
+                onClick={() => onDelete(u)}
+                className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+              >
+                <Trash2 size={18} />
+              </button>
             </div>
           </div>
-          <div className="flex gap-2">
-            <button 
-              onClick={() => onViewOrders(u)}
-              className="p-2 text-[#66D2A4] hover:bg-green-50 rounded-lg transition-colors"
-              title="View Orders"
-            >
-              <Package size={18} />
-            </button>
-            <button 
-              onClick={() => onDelete(u)}
-              className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-            >
-              <Trash2 size={18} />
-            </button>
+        ))
+      )}
+
+      {/* Pagination Controls */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-6 py-4">
+          <button 
+            disabled={currentPage === 1}
+            onClick={() => onPageChange(currentPage - 1)}
+            className="w-8 h-8 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          
+          <div className="flex items-center gap-1">
+            {[...Array(totalPages)].map((_, i) => {
+              const pageNum = i + 1;
+              if (
+                pageNum === 1 || 
+                pageNum === totalPages || 
+                (pageNum >= currentPage - 1 && pageNum <= currentPage + 1)
+              ) {
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => onPageChange(pageNum)}
+                    className={cn(
+                      "w-8 h-8 rounded-lg font-bold text-[10px] transition-all",
+                      currentPage === pageNum 
+                        ? "bg-[#66D2A4] text-white" 
+                        : "bg-gray-50 text-gray-400 border border-gray-100 hover:border-[#66D2A4]/30"
+                    )}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              } else if (
+                (pageNum === currentPage - 2 && pageNum > 1) || 
+                (pageNum === currentPage + 2 && pageNum < totalPages)
+              ) {
+                return <span key={pageNum} className="text-gray-300 px-1">...</span>;
+              }
+              return null;
+            })}
           </div>
+
+          <button 
+            disabled={currentPage === totalPages}
+            onClick={() => onPageChange(currentPage + 1)}
+            className="w-8 h-8 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <ChevronRight size={16} />
+          </button>
         </div>
-      ))
-    )}
-  </div>
-);
+      )}
+    </div>
+  );
+};
 
 const ProductList = ({ 
   products, 
@@ -620,7 +701,9 @@ const ProductList = ({
   stockThreshold,
   onThresholdChange,
   searchQuery,
-  onSearchChange
+  onSearchChange,
+  currentPage,
+  onPageChange
 }: { 
   products: Product[], 
   onEdit: (p: Product) => void, 
@@ -629,12 +712,21 @@ const ProductList = ({
   stockThreshold: number,
   onThresholdChange: (val: number) => void,
   searchQuery: string,
-  onSearchChange: (val: string) => void
+  onSearchChange: (val: string) => void,
+  currentPage: number,
+  onPageChange: (page: number) => void
 }) => {
   const lowStockItems = products.filter(p => p.stock <= stockThreshold);
   const filteredProducts = products.filter(p => 
     p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     p.category.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const itemsPerPage = 10;
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+  const paginatedProducts = filteredProducts.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
   );
 
   return (
@@ -711,10 +803,10 @@ const ProductList = ({
           )}
         </div>
 
-        {filteredProducts.length === 0 ? (
+        {paginatedProducts.length === 0 ? (
           <p className="text-center py-8 text-gray-400">No products found</p>
         ) : (
-          filteredProducts.map((product) => (
+          paginatedProducts.map((product) => (
             <div key={product.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-2xl transition-colors">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center">
@@ -745,6 +837,59 @@ const ProductList = ({
               </div>
             </div>
           ))
+        )}
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2 mt-6 py-4">
+            <button 
+              disabled={currentPage === 1}
+              onClick={() => onPageChange(currentPage - 1)}
+              className="w-8 h-8 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            
+            <div className="flex items-center gap-1">
+              {[...Array(totalPages)].map((_, i) => {
+                const pageNum = i + 1;
+                if (
+                  pageNum === 1 || 
+                  pageNum === totalPages || 
+                  (pageNum >= currentPage - 1 && pageNum <= currentPage + 1)
+                ) {
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => onPageChange(pageNum)}
+                      className={cn(
+                        "w-8 h-8 rounded-lg font-bold text-[10px] transition-all",
+                        currentPage === pageNum 
+                          ? "bg-[#66D2A4] text-white" 
+                          : "bg-gray-50 text-gray-400 border border-gray-100 hover:border-[#66D2A4]/30"
+                      )}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                } else if (
+                  (pageNum === currentPage - 2 && pageNum > 1) || 
+                  (pageNum === currentPage + 2 && pageNum < totalPages)
+                ) {
+                  return <span key={pageNum} className="text-gray-300 px-1">...</span>;
+                }
+                return null;
+              })}
+            </div>
+
+            <button 
+              disabled={currentPage === totalPages}
+              onClick={() => onPageChange(currentPage + 1)}
+              className="w-8 h-8 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -820,18 +965,29 @@ const OrderList = ({
   onUpdateStatus,
   searchQuery,
   onSearchChange,
-  onViewDetails
+  onViewDetails,
+  currentPage,
+  onPageChange
 }: { 
   orders: Order[], 
   onUpdateStatus: (id: string, status: Order['status']) => void,
   searchQuery: string,
   onSearchChange: (val: string) => void,
-  onViewDetails: (order: Order) => void
+  onViewDetails: (order: Order) => void,
+  currentPage: number,
+  onPageChange: (page: number) => void
 }) => {
   const filteredOrders = orders.filter(order => 
     (order.userPhone || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
     (order.userName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
     order.id.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const itemsPerPage = 10;
+  const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
+  const paginatedOrders = filteredOrders.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
   );
 
   return (
@@ -854,17 +1010,20 @@ const OrderList = ({
         )}
       </div>
 
-      {filteredOrders.length === 0 ? (
+      {paginatedOrders.length === 0 ? (
         <p className="text-center py-8 text-gray-400">No orders found</p>
       ) : (
-        filteredOrders.map((order) => (
+        paginatedOrders.map((order) => (
           <div key={order.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
             <div className="flex justify-between items-start mb-4">
               <div className="cursor-pointer" onClick={() => onViewDetails(order)}>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Order #{order.id.slice(-6)}</p>
                 <h4 className="font-bold text-sm text-[#1A1A1A] mt-1">{order.userName || 'Unknown User'}</h4>
                 <p className="text-[10px] text-blue-500 font-bold mb-1">Mobile: {order.userPhone || 'N/A'}</p>
-                <p className="text-sm font-bold text-[#66D2A4]">₹{order.total}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-bold text-[#66D2A4]">₹{order.total}</p>
+                  <span className="text-blue-500 text-[10px] font-bold">Del: ₹{order.delivery || 0}</span>
+                </div>
                 <p className="text-[10px] text-gray-400 mt-1">
                   {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleString() : 'Just now'}
                 </p>
@@ -888,7 +1047,7 @@ const OrderList = ({
                 </select>
                 <button 
                   onClick={() => onViewDetails(order)}
-                  className="text-[10px] font-bold text-[#66D2A4] uppercase hover:underline"
+                  className="text-[10px] font-bold text-[#66D2A4] uppercase tracking-wider hover:underline"
                 >
                   View Details
                 </button>
@@ -896,6 +1055,59 @@ const OrderList = ({
             </div>
           </div>
         ))
+      )}
+
+      {/* Pagination Controls */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-6 py-4">
+          <button 
+            disabled={currentPage === 1}
+            onClick={() => onPageChange(currentPage - 1)}
+            className="w-8 h-8 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          
+          <div className="flex items-center gap-1">
+            {[...Array(totalPages)].map((_, i) => {
+              const pageNum = i + 1;
+              if (
+                pageNum === 1 || 
+                pageNum === totalPages || 
+                (pageNum >= currentPage - 1 && pageNum <= currentPage + 1)
+              ) {
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => onPageChange(pageNum)}
+                    className={cn(
+                      "w-8 h-8 rounded-lg font-bold text-[10px] transition-all",
+                      currentPage === pageNum 
+                        ? "bg-[#66D2A4] text-white" 
+                        : "bg-gray-50 text-gray-400 border border-gray-100 hover:border-[#66D2A4]/30"
+                    )}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              } else if (
+                (pageNum === currentPage - 2 && pageNum > 1) || 
+                (pageNum === currentPage + 2 && pageNum < totalPages)
+              ) {
+                return <span key={pageNum} className="text-gray-300 px-1">...</span>;
+              }
+              return null;
+            })}
+          </div>
+
+          <button 
+            disabled={currentPage === totalPages}
+            onClick={() => onPageChange(currentPage + 1)}
+            className="w-8 h-8 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
       )}
     </div>
   );
