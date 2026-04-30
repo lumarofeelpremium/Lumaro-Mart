@@ -70,7 +70,7 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
       updateCache({ categories: cats.slice(0, 20) });
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
 
-    const unsubAllProds = onSnapshot(query(collection(db, 'products'), limit(500)), (snapshot) => {
+    const unsubAllProds = onSnapshot(query(collection(db, 'products'), limit(1000)), (snapshot) => {
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setAllProducts(prods);
       
