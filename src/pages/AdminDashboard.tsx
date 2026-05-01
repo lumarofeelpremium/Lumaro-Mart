@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner } from '../types';
 import { auth, db } from '../firebase';
 import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, where, getDoc, increment, writeBatch } from 'firebase/firestore';
-import { motion, AnimatePresence } from 'motion/react';
-import { Image, Loader2, Star, Layout } from 'lucide-react';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { compressImage } from '../lib/utils';
 import * as XLSX from 'xlsx';
@@ -716,6 +715,7 @@ const ProductList = ({
   currentPage: number,
   onPageChange: (page: number) => void
 }) => {
+  const [isAlertsExpanded, setIsAlertsExpanded] = useState(false);
   const lowStockItems = products.filter(p => p.stock <= stockThreshold);
   const filteredProducts = products.filter(p => 
     p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -736,43 +736,70 @@ const ProductList = ({
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2 text-orange-600">
             <AlertTriangle size={20} />
-            <h3 className="font-bold text-sm">Low Stock Alerts</h3>
+            <h3 className="font-bold text-sm">Low Stock Alerts ({lowStockItems.length})</h3>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold text-orange-400 uppercase">Threshold:</span>
-            <input 
-              type="number" 
-              value={stockThreshold}
-              onChange={(e) => onThresholdChange(Number(e.target.value))}
-              className="w-12 bg-white border border-orange-200 rounded-lg px-2 py-1 text-xs font-bold text-orange-600 outline-none"
-            />
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-orange-400 uppercase">Threshold:</span>
+              <input 
+                type="number" 
+                value={stockThreshold}
+                onChange={(e) => onThresholdChange(Number(e.target.value))}
+                className="w-12 bg-white border border-orange-200 rounded-lg px-2 py-1 text-xs font-bold text-orange-600 outline-none"
+              />
+            </div>
+            {lowStockItems.length > 0 && (
+              <button 
+                onClick={() => setIsAlertsExpanded(!isAlertsExpanded)}
+                className="p-2 bg-orange-100 text-orange-600 rounded-full hover:bg-orange-200 transition-colors"
+                title={isAlertsExpanded ? "Collapse" : "Expand"}
+              >
+                {isAlertsExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+            )}
           </div>
         </div>
 
         {lowStockItems.length === 0 ? (
           <p className="text-[10px] text-orange-400 italic">All products are well stocked.</p>
         ) : (
-          <div className="space-y-2">
-            {lowStockItems.map(p => (
-              <button 
-                key={p.id} 
-                onClick={() => onEdit(p)}
-                className="w-full flex justify-between items-center bg-white/50 p-3 rounded-xl border border-orange-100/50 hover:bg-white hover:border-orange-300 transition-all text-left group"
-                title="Click to edit product stock"
+          <AnimatePresence>
+            {isAlertsExpanded ? (
+              <motion.div 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden space-y-2"
               >
-                <div className="flex flex-col">
-                  <span className="text-[11px] font-bold text-orange-700 group-hover:text-orange-900">{p.name}</span>
-                  <span className="text-[9px] text-orange-400 font-medium">{p.category}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold px-2 py-1 bg-orange-100 text-orange-600 rounded-lg group-hover:bg-orange-200">
-                    {p.stock} left
-                  </span>
-                  <Edit2 size={12} className="text-orange-400 group-hover:text-orange-600" />
-                </div>
-              </button>
-            ))}
-          </div>
+                {lowStockItems.map(p => (
+                  <button 
+                    key={p.id} 
+                    onClick={() => {
+                      onEdit(p);
+                      setIsAlertsExpanded(false);
+                    }}
+                    className="w-full flex justify-between items-center bg-white/50 p-3 rounded-xl border border-orange-100/50 hover:bg-white hover:border-orange-300 transition-all text-left group"
+                    title="Click to edit product stock"
+                  >
+                    <div className="flex flex-col">
+                      <span className="text-[11px] font-bold text-orange-700 group-hover:text-orange-900">{p.name}</span>
+                      <span className="text-[9px] text-orange-400 font-medium">{p.category}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold px-2 py-1 bg-orange-100 text-orange-600 rounded-lg group-hover:bg-orange-200">
+                        {p.stock} left
+                      </span>
+                      <Edit2 size={12} className="text-orange-400 group-hover:text-orange-600" />
+                    </div>
+                  </button>
+                ))}
+              </motion.div>
+            ) : (
+              <p className="text-[10px] text-orange-500 font-medium bg-orange-100/50 px-3 py-2 rounded-xl border border-orange-100">
+                ⚠️ Click the arrow to view {lowStockItems.length} products with low stock.
+              </p>
+            )}
+          </AnimatePresence>
         )}
       </div>
 
@@ -818,7 +845,13 @@ const ProductList = ({
                 </div>
                 <div>
                   <h4 className="font-bold text-sm text-[#1A1A1A]">{product.name}</h4>
-                  <p className="text-[10px] text-gray-400">₹{product.price} • {product.stock} in stock • {product.category}</p>
+                  <div className="flex items-center gap-1">
+                    <p className="text-[10px] text-gray-400">₹{product.discountPrice || product.price}</p>
+                    {product.discountPrice && (
+                      <p className="text-[8px] text-red-400 line-through">₹{product.price}</p>
+                    )}
+                    <span className="text-[10px] text-gray-400">• {product.stock} in stock • {product.category}</span>
+                  </div>
                 </div>
               </div>
               <div className="flex gap-2">
@@ -1845,7 +1878,9 @@ const ProductFormModal = ({
     name: '',
     category: categories[0]?.name || 'Fresh Produce',
     image: '',
-    description: ''
+    description: '',
+    discountPrice: undefined,
+    offerLabel: ''
   });
   const [uploading, setUploading] = useState(false);
 
@@ -1987,6 +2022,30 @@ const ProductFormModal = ({
                 }}
                 placeholder="0"
                 required
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2">Offer Price (Optional)</label>
+              <Input 
+                type="number"
+                min="0"
+                value={formData.discountPrice !== undefined ? formData.discountPrice : ''}
+                onChange={e => {
+                  const val = e.target.value;
+                  setFormData({ ...formData, discountPrice: val === '' ? undefined : Math.max(0, Number(val)) });
+                }}
+                placeholder="₹ Offer Price"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2">Offer Label</label>
+              <Input 
+                value={formData.offerLabel || ''}
+                onChange={e => setFormData({ ...formData, offerLabel: e.target.value })}
+                placeholder="e.g. 10% OFF"
               />
             </div>
           </div>

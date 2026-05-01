@@ -2,6 +2,8 @@ export interface Product {
   id: string;
   name: string;
   price: number;
+  discountPrice?: number;
+  offerLabel?: string;
   image: string;
   category: string;
   stock: number;

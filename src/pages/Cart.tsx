@@ -35,7 +35,7 @@ export const Cart = ({
   const [whatsappEnabled, setWhatsappEnabled] = useState(true);
   const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
   
-  const subtotal = items.reduce((acc, item) => acc + item.price * item.quantity, 0);
+  const subtotal = items.reduce((acc, item) => acc + (item.discountPrice || item.price) * item.quantity, 0);
   const delivery = subtotal > 0 && subtotal <= 100 ? 20 : 0;
   
   const pointsAvailable = user?.loyaltyPoints || 0;
@@ -96,7 +96,7 @@ export const Cart = ({
         items: items.map(item => ({
           id: item.id,
           name: item.name,
-          price: item.price,
+          price: item.discountPrice || item.price,
           quantity: item.quantity
           // Removed large base64 image to prevent exceeding 1MB limit
         })),
@@ -271,7 +271,12 @@ export const Cart = ({
                 </div>
                 <div className="flex-grow">
                   <h3 className="font-bold text-[#1A1A1A]">{item.name}</h3>
-                  <p className="text-[#66D2A4] font-bold">₹{item.price}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-[#66D2A4] font-bold">₹{item.discountPrice || item.price}</p>
+                    {item.discountPrice && (
+                      <p className="text-[10px] text-gray-400 line-through">₹{item.price}</p>
+                    )}
+                  </div>
                   {item.stock <= 0 ? (
                     <p className="text-[10px] text-red-500 font-bold">Out of Stock</p>
                   ) : item.quantity > item.stock ? (

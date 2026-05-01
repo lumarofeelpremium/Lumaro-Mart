@@ -248,6 +248,11 @@ export const Wishlist = ({ user, onAddToCart }: { user: User | null, onAddToCart
                   ) : (
                     <Plus size={24} className="text-gray-300" />
                   )}
+                  {product.discountPrice && (
+                    <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
+                      {product.offerLabel || 'Offer'}
+                    </div>
+                  )}
                 </div>
                 
                 <h4 className="font-bold text-sm text-[#1A1A1A] mb-1 line-clamp-1">{product.name}</h4>
@@ -259,7 +264,12 @@ export const Wishlist = ({ user, onAddToCart }: { user: User | null, onAddToCart
                 </p>
                 
                 <div className="flex justify-between items-center mt-auto">
-                  <span className="font-bold text-[#66D2A4]">₹{product.price}</span>
+                  <div className="flex flex-col">
+                    <span className="font-bold text-[#66D2A4]">₹{product.discountPrice || product.price}</span>
+                    {product.discountPrice && (
+                      <span className="text-[10px] text-gray-400 line-through">₹{product.price}</span>
+                    )}
+                  </div>
                   <button 
                     disabled={product.stock <= 0}
                     onClick={() => {

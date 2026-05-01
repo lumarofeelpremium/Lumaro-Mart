@@ -81,9 +81,16 @@ export const OrderConfirmation = () => {
         className="w-full max-w-sm"
       >
         <h1 className="text-3xl font-bold text-[#1A1A1A] mb-4">Order Confirmed!</h1>
-        <p className="text-gray-400 mb-12 px-4">
+        <p className="text-gray-400 mb-8 px-4">
           Your order has been placed successfully. We'll notify you once it's out for delivery.
         </p>
+
+        <div className="bg-green-50 p-4 rounded-2xl border border-green-100 mb-8 flex items-start gap-3 text-left">
+          <MessageCircle size={20} className="text-[#66D2A4] shrink-0 mt-0.5" />
+          <p className="text-[11px] font-medium text-gray-600 leading-relaxed">
+            Agar aapko koi product app me na mile, to WhatsApp par hume bataiye 😊 Hum aapke liye usse arrange karne ki puri koshish karenge
+          </p>
+        </div>
 
         <div className="space-y-4">
           {orderData?.whatsappData?.enabled && (

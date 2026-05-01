@@ -375,16 +375,27 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
                         ) : (
                           <Plus size={24} className="text-gray-300" />
                         )}
-                        <div className="absolute top-2 left-2 bg-[#66D2A4] text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
-                          New
-                        </div>
+                        {product.discountPrice ? (
+                          <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
+                            {product.offerLabel || 'Offer'}
+                          </div>
+                        ) : (
+                          <div className="absolute top-2 left-2 bg-[#66D2A4] text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
+                            New
+                          </div>
+                        )}
                         <div className="absolute bottom-2 left-2 bg-white/80 backdrop-blur-sm text-gray-600 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase border border-gray-100 z-10">
                           {product.category}
                         </div>
                         <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-7 h-7 rounded-lg z-10" />
                       </div>
                       <h4 className="font-bold text-[11px] text-[#1A1A1A] line-clamp-1">{product.name}</h4>
-                      <span className="font-bold text-[#66D2A4] text-xs mt-1">₹{product.price}</span>
+                      <div className="flex items-center gap-1 mt-1">
+                        <span className="font-bold text-[#66D2A4] text-xs">₹{product.discountPrice || product.price}</span>
+                        {product.discountPrice && (
+                          <span className="text-[9px] text-gray-400 line-through">₹{product.price}</span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -461,16 +472,27 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
                           ) : (
                             <Plus size={24} className="text-gray-300" />
                           )}
-                          <div className="absolute top-2 left-2 bg-orange-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
-                            Hot
-                          </div>
+                          {product.discountPrice ? (
+                            <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
+                              {product.offerLabel || 'Offer'}
+                            </div>
+                          ) : (
+                            <div className="absolute top-2 left-2 bg-orange-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
+                              Hot
+                            </div>
+                          )}
                           <div className="absolute bottom-2 left-2 bg-white/80 backdrop-blur-sm text-gray-600 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase border border-gray-100 z-10">
                             {product.category}
                           </div>
                           <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-7 h-7 rounded-lg z-10" />
                         </div>
                         <h4 className="font-bold text-[11px] text-[#1A1A1A] line-clamp-1">{product.name}</h4>
-                        <span className="font-bold text-[#66D2A4] text-xs mt-1">₹{product.price}</span>
+                        <div className="flex items-center gap-1 mt-1">
+                          <span className="font-bold text-[#66D2A4] text-xs">₹{product.discountPrice || product.price}</span>
+                          {product.discountPrice && (
+                            <span className="text-[9px] text-gray-400 line-through">₹{product.price}</span>
+                          )}
+                        </div>
                       </div>
                     ))
                   )}
@@ -615,6 +637,11 @@ const ProductCard: React.FC<{ product: Product, user: User | null, onAddToCart: 
       ) : (
         <Plus size={24} className="text-gray-300" />
       )}
+      {product.discountPrice && (
+        <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
+          {product.offerLabel || 'Offer'}
+        </div>
+      )}
       <div className="absolute bottom-2 left-2 bg-white/80 backdrop-blur-sm text-gray-600 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase border border-gray-100 z-10">
         {product.category}
       </div>
@@ -628,7 +655,12 @@ const ProductCard: React.FC<{ product: Product, user: User | null, onAddToCart: 
       {product.stock > 0 ? `${product.stock} in stock` : "Out of Stock"}
     </p>
     <div className="flex justify-between items-center mt-auto">
-      <span className="font-bold text-[#66D2A4]">₹{product.price}</span>
+      <div className="flex flex-col">
+        <span className="font-bold text-[#66D2A4]">₹{product.discountPrice || product.price}</span>
+        {product.discountPrice && (
+          <span className="text-[10px] text-gray-400 line-through">₹{product.price}</span>
+        )}
+      </div>
       <button 
         disabled={product.stock <= 0}
         onClick={(e) => {

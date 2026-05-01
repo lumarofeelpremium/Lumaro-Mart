@@ -37,11 +37,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   } else if (typeof error === 'string') {
     errorMessage = error;
   } else {
-    try {
-      errorMessage = JSON.stringify(error);
-    } catch {
-      errorMessage = String(error);
-    }
+    errorMessage = cacheUtils.safeStringify(error);
   }
 
   const errInfo: FirestoreErrorInfo = {

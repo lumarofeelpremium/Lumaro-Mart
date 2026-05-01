@@ -268,7 +268,15 @@ export const ProductDetails = ({
             </div>
             <h1 className="text-2xl font-extrabold text-[#1A1A1A]">{product.name}</h1>
             <div className="flex items-center gap-3">
-              <p className="text-[#66D2A4] font-bold text-xl">₹{product.price}</p>
+              <p className="text-[#66D2A4] font-bold text-xl">₹{product.discountPrice || product.price}</p>
+              {product.discountPrice && (
+                <p className="text-gray-400 text-sm line-through">₹{product.price}</p>
+              )}
+              {product.discountPrice && (
+                <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
+                  {product.offerLabel || 'Special Offer'}
+                </span>
+              )}
               {product.stock <= 0 && (
                 <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-1 rounded-full uppercase">
                   Out of Stock

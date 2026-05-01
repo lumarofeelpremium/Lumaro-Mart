@@ -105,22 +105,24 @@ export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCa
 
     // Filter by Price
     if (minPrice !== '') {
-      result = result.filter(p => p.price >= Number(minPrice));
+      result = result.filter(p => (p.discountPrice || p.price) >= Number(minPrice));
     }
     if (maxPrice !== '') {
-      result = result.filter(p => p.price <= Number(maxPrice));
+      result = result.filter(p => (p.discountPrice || p.price) <= Number(maxPrice));
     }
 
     // Sort
     result.sort((a, b) => {
+      const priceA = a.discountPrice || a.price;
+      const priceB = b.discountPrice || b.price;
       if (sortBy === 'popularity') {
         return (b.salesCount || 0) - (a.salesCount || 0);
       }
       if (sortBy === 'priceLow') {
-        return a.price - b.price;
+        return priceA - priceB;
       }
       if (sortBy === 'priceHigh') {
-        return b.price - a.price;
+        return priceB - priceA;
       }
       return 0;
     });
@@ -290,6 +292,11 @@ export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCa
                       ) : (
                         <Plus size={24} className="text-gray-300" />
                       )}
+                      {product.discountPrice && (
+                        <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
+                          {product.offerLabel || 'Offer'}
+                        </div>
+                      )}
                       <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-8 h-8 rounded-xl" />
                     </div>
                     <h4 className="font-bold text-sm text-[#1A1A1A] mb-1 line-clamp-1">{product.name}</h4>
@@ -300,7 +307,12 @@ export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCa
                       {product.stock > 0 ? `${product.stock} in stock` : "Out of Stock"}
                     </p>
                     <div className="flex justify-between items-center">
-                      <span className="font-bold text-[#66D2A4]">₹{product.price}</span>
+                      <div className="flex flex-col">
+                        <span className="font-bold text-[#66D2A4]">₹{product.discountPrice || product.price}</span>
+                        {product.discountPrice && (
+                          <span className="text-[10px] text-gray-400 line-through">₹{product.price}</span>
+                        )}
+                      </div>
                       <button 
                         disabled={product.stock <= 0}
                         onClick={(e) => {
