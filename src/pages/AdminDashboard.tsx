@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner } from '../types';
 import { auth, db } from '../firebase';
-import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, where, getDoc, increment, writeBatch } from 'firebase/firestore';
+import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, where, getDoc, increment, writeBatch, deleteField } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { compressImage } from '../lib/utils';
 import * as XLSX from 'xlsx';
@@ -1878,9 +1878,7 @@ const ProductFormModal = ({
     name: '',
     category: categories[0]?.name || 'Fresh Produce',
     image: '',
-    description: '',
-    discountPrice: undefined,
-    offerLabel: ''
+    description: ''
   });
   const [uploading, setUploading] = useState(false);
 
@@ -1926,7 +1924,28 @@ const ProductFormModal = ({
 
     setUploading(true);
     try {
-      await onSave(formData);
+      // Clean optional fields to ensure they are removed if cleared
+      const finalData = { ...formData };
+      
+      if (finalData.discountPrice === undefined || finalData.discountPrice === null || finalData.discountPrice === 0) {
+        if (mode === 'edit') {
+          // @ts-ignore
+          finalData.discountPrice = deleteField();
+        } else {
+          delete finalData.discountPrice;
+        }
+      }
+      
+      if (!finalData.offerLabel || finalData.offerLabel.trim() === '') {
+        if (mode === 'edit') {
+          // @ts-ignore
+          finalData.offerLabel = deleteField();
+        } else {
+          delete finalData.offerLabel;
+        }
+      }
+
+      await onSave(finalData);
     } catch (error: any) {
       console.error("Error saving product:", error);
       alert(error.message || "Failed to save product. Please try again.");
