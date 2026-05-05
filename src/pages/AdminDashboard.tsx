@@ -172,8 +172,24 @@ export const AdminDashboard = () => {
   const handleSaveCategory = async (categoryData: any) => {
     try {
       if (editingCategory) {
-        await updateDoc(doc(db, 'categories', editingCategory.id), categoryData);
-        setSuccessMessage('Category updated successfully!');
+        const oldName = editingCategory.name;
+        const newName = categoryData.name;
+        
+        const batch = writeBatch(db);
+        
+        // Update the category itself
+        batch.update(doc(db, 'categories', editingCategory.id), categoryData);
+        
+        // If name changed, update all associated products
+        if (oldName !== newName) {
+          const associatedProducts = products.filter(p => p.category === oldName);
+          associatedProducts.forEach(p => {
+            batch.update(doc(db, 'products', p.id), { category: newName });
+          });
+        }
+        
+        await batch.commit();
+        setSuccessMessage('Category and associated products updated successfully!');
       } else {
         await addDoc(collection(db, 'categories'), {
           ...categoryData,
