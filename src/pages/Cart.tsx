@@ -6,8 +6,9 @@ import { CartItem, User, AppSettings } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../firebase';
 import { cn } from '../lib/utils';
-import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc, increment, writeBatch } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc, increment, writeBatch, getDocs, query, where } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
+import { sendPushNotification } from '../lib/api-utils';
 
 export const Cart = ({ 
   user,
@@ -131,37 +132,61 @@ export const Cart = ({
       await batch.commit();
 
       // Send Telegram Notification (Background)
-      const fetchTelegramSettings = async () => {
-        const sDoc = await getDoc(doc(db, 'settings', 'global'));
-        if (sDoc.exists()) {
-          const sData = sDoc.data();
-          if (sData.telegramEnabled && sData.telegramBotToken && sData.telegramChatId) {
-            const tgMessage = `🚀 *NEW ORDER RECEIVED*\n\n` +
-              `📦 *Order ID:* #${orderRef.id.slice(-6)}\n` +
-              `👤 *Customer:* ${user.displayName}\n` +
-              `💰 *Total:* ₹${total}\n` +
-              `📍 *Pincode:* ${pincode || user.pincode || 'N/A'}\n` +
-              `📞 *Phone:* ${user.phoneNumber || 'N/A'}\n\n` +
-              `🛒 *Items:* ${items.length}\n` +
-              `Check Admin Dashboard for details.`;
-            
-            try {
-              await fetch(`https://api.telegram.org/bot${sData.telegramBotToken}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  chat_id: sData.telegramChatId,
-                  text: tgMessage,
-                  parse_mode: 'Markdown'
-                })
-              });
-            } catch (err) {
-              console.error("Telegram notification failed:", err);
+      const fetchTelegramAndNotifyAdmins = async () => {
+        try {
+          // Push Notification to Admins
+          const adminQuery = query(collection(db, 'users'), where('role', '==', 'admin'));
+          const adminDocs = await getDocs(adminQuery);
+          let adminTokens: string[] = [];
+          adminDocs.forEach(doc => {
+            const data = doc.data();
+            if (data.fcmTokens) {
+              adminTokens = [...adminTokens, ...data.fcmTokens];
+            }
+          });
+
+          if (adminTokens.length > 0) {
+            await sendPushNotification(
+              adminTokens,
+              '🚀 New Order Received!',
+              `Order from ${user.displayName} - ₹${total}`,
+              { orderId: orderRef.id }
+            );
+          }
+
+          const sDoc = await getDoc(doc(db, 'settings', 'global'));
+          if (sDoc.exists()) {
+            const sData = sDoc.data();
+            if (sData.telegramEnabled && sData.telegramBotToken && sData.telegramChatId) {
+              const tgMessage = `🚀 *NEW ORDER RECEIVED*\n\n` +
+                `📦 *Order ID:* #${orderRef.id.slice(-6)}\n` +
+                `👤 *Customer:* ${user.displayName}\n` +
+                `💰 *Total:* ₹${total}\n` +
+                `📍 *Pincode:* ${pincode || user.pincode || 'N/A'}\n` +
+                `📞 *Phone:* ${user.phoneNumber || 'N/A'}\n\n` +
+                `🛒 *Items:* ${items.length}\n` +
+                `Check Admin Dashboard for details.`;
+              
+              try {
+                await fetch(`https://api.telegram.org/bot${sData.telegramBotToken}/sendMessage`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    chat_id: sData.telegramChatId,
+                    text: tgMessage,
+                    parse_mode: 'Markdown'
+                  })
+                });
+              } catch (err) {
+                console.error("Telegram notification failed:", err);
+              }
             }
           }
+        } catch (error) {
+          console.error("Error in background notifications:", error);
         }
       };
-      fetchTelegramSettings();
+      fetchTelegramAndNotifyAdmins();
 
       // 1. Prepare data for confirmation page
       const confirmationState = { 

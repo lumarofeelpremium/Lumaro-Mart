@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromCache, getDocFromServer } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { getMessaging } from 'firebase/messaging';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase SDK
@@ -29,6 +30,7 @@ async function testConnection() {
 testConnection();
 
 export const storage = getStorage(app, firebaseConfig.storageBucket);
+export const messaging = typeof window !== 'undefined' ? getMessaging(app) : null;
 
 console.log("Firebase initialized with storage bucket:", firebaseConfig.storageBucket);
 

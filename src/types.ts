@@ -31,6 +31,7 @@ export interface User {
   address?: string;
   pincode?: string;
   loyaltyPoints?: number;
+  fcmTokens?: string[];
 }
 
 export interface CartItem extends Product {

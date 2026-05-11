@@ -18,6 +18,7 @@ import { ProductDetails } from './pages/ProductDetails';
 import { BottomNav } from './components/BottomNav';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { User, CartItem, Product } from './types';
+import { requestNotificationPermission } from './lib/notification-service';
 
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -26,6 +27,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState<CartItem[]>([]);
   const isSyncingRef = useRef(false);
+
+  useEffect(() => {
+    if (user?.uid) {
+      requestNotificationPermission(user.uid);
+    }
+  }, [user?.uid]);
 
   // Handle Cart Persistence
   useEffect(() => {
@@ -211,7 +218,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Router>
-        <div className="max-w-md mx-auto bg-white min-h-screen relative shadow-2xl shadow-black/10 overflow-x-hidden overflow-y-auto">
+        <div className="max-w-md mx-auto bg-white min-h-screen relative shadow-2xl shadow-black/10 overflow-x-hidden overflow-y-auto pb-24 mb-safe">
           <Routes>
             <Route path="/" element={<Home user={user} onAddToCart={handleAddToCart} />} />
             <Route path="/signup" element={<Signup setUser={setUser} />} />
