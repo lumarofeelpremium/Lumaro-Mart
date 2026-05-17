@@ -8,7 +8,6 @@ import { db } from '../firebase';
 import { cn } from '../lib/utils';
 import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc, increment, writeBatch, getDocs, query, where } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
-import { sendPushNotification } from '../lib/api-utils';
 
 export const Cart = ({ 
   user,
@@ -131,62 +130,41 @@ export const Cart = ({
       });
       await batch.commit();
 
-      // Send Telegram Notification (Background)
-      const fetchTelegramAndNotifyAdmins = async () => {
+      // Send Background Notifications
+      const fetchTelegramSettings = async () => {
         try {
-          // Push Notification to Admins
-          const adminQuery = query(collection(db, 'users'), where('role', '==', 'admin'));
-          const adminDocs = await getDocs(adminQuery);
-          let adminTokens: string[] = [];
-          adminDocs.forEach(doc => {
-            const data = doc.data();
-            if (data.fcmTokens) {
-              adminTokens = [...adminTokens, ...data.fcmTokens];
-            }
-          });
-
-          if (adminTokens.length > 0) {
-            await sendPushNotification(
-              adminTokens,
-              '🚀 New Order Received!',
-              `Order from ${user.displayName} - ₹${total}`,
-              { orderId: orderRef.id }
-            );
-          }
-
           const sDoc = await getDoc(doc(db, 'settings', 'global'));
           if (sDoc.exists()) {
             const sData = sDoc.data();
             if (sData.telegramEnabled && sData.telegramBotToken && sData.telegramChatId) {
-              const tgMessage = `🚀 *NEW ORDER RECEIVED*\n\n` +
-                `📦 *Order ID:* #${orderRef.id.slice(-6)}\n` +
-                `👤 *Customer:* ${user.displayName}\n` +
-                `💰 *Total:* ₹${total}\n` +
-                `📍 *Pincode:* ${pincode || user.pincode || 'N/A'}\n` +
-                `📞 *Phone:* ${user.phoneNumber || 'N/A'}\n\n` +
-                `🛒 *Items:* ${items.length}\n` +
+              const cleanToken = sData.telegramBotToken.trim().replace(/^bot/i, '');
+              const tgMessage = `🚀 <b>NEW ORDER RECEIVED</b>\n\n` +
+                `📦 <b>Order ID:</b> #${orderRef.id.slice(-6)}\n` +
+                `👤 <b>Customer:</b> ${user.displayName || 'Guest'}\n` +
+                `💰 <b>Total:</b> ₹${total}\n` +
+                `📍 <b>Pincode:</b> ${pincode || user.pincode || 'N/A'}\n` +
+                `📞 <b>Phone:</b> ${user.phoneNumber || 'N/A'}\n\n` +
+                `🛒 <b>Items:</b> ${items.length}\n` +
                 `Check Admin Dashboard for details.`;
               
-              try {
-                await fetch(`https://api.telegram.org/bot${sData.telegramBotToken}/sendMessage`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    chat_id: sData.telegramChatId,
-                    text: tgMessage,
-                    parse_mode: 'Markdown'
-                  })
-                });
-              } catch (err) {
-                console.error("Telegram notification failed:", err);
-              }
+              await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: sData.telegramChatId.trim(),
+                  text: tgMessage,
+                  parse_mode: 'HTML'
+                }),
+                keepalive: true
+              });
+              console.log("Telegram notification sent successfully");
             }
           }
-        } catch (error) {
-          console.error("Error in background notifications:", error);
+        } catch (tgErr) {
+          console.error("Telegram notification failed:", tgErr);
         }
       };
-      fetchTelegramAndNotifyAdmins();
+      fetchTelegramSettings();
 
       // 1. Prepare data for confirmation page
       const confirmationState = { 

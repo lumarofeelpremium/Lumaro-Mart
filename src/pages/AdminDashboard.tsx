@@ -8,7 +8,6 @@ import { auth, db } from '../firebase';
 import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, where, getDoc, increment, writeBatch, deleteField } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { compressImage } from '../lib/utils';
-import { sendPushNotification } from '../lib/api-utils';
 import * as XLSX from 'xlsx';
 import { useReactToPrint } from 'react-to-print';
 
@@ -351,42 +350,6 @@ export const AdminDashboard = () => {
       
       await batch.commit();
       setSuccessMessage(`Order status updated to ${newStatus}`);
-
-      // Notify User (Background)
-      const notifyUser = async () => {
-        try {
-          const userDoc = await getDoc(doc(db, 'users', orderData.userId));
-          if (userDoc.exists()) {
-            const userData = userDoc.data();
-            if (userData.fcmTokens && userData.fcmTokens.length > 0) {
-              let title = '';
-              let body = '';
-
-              switch (newStatus) {
-                case 'confirmed':
-                  title = '✅ Order Confirmed!';
-                  body = `Your order #${orderId.slice(-6)} has been confirmed.`;
-                  break;
-                case 'delivered':
-                  title = '🎉 Order Delivered!';
-                  body = `Your order #${orderId.slice(-6)} has been delivered. Enjoy!`;
-                  break;
-                case 'canceled':
-                  title = '❌ Order Canceled';
-                  body = `Your order #${orderId.slice(-6)} has been canceled.`;
-                  break;
-              }
-
-              if (title && body) {
-                await sendPushNotification(userData.fcmTokens, title, body, { orderId });
-              }
-            }
-          }
-        } catch (err) {
-          console.error("Error notifying user:", err);
-        }
-      };
-      notifyUser();
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
     }

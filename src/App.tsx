@@ -18,7 +18,6 @@ import { ProductDetails } from './pages/ProductDetails';
 import { BottomNav } from './components/BottomNav';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { User, CartItem, Product } from './types';
-import { requestNotificationPermission } from './lib/notification-service';
 
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -27,12 +26,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState<CartItem[]>([]);
   const isSyncingRef = useRef(false);
-
-  useEffect(() => {
-    if (user?.uid) {
-      requestNotificationPermission(user.uid);
-    }
-  }, [user?.uid]);
 
   // Handle Cart Persistence
   useEffect(() => {
