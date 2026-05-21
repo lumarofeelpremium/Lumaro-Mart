@@ -146,11 +146,85 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
 
   const filteredProducts = useMemo(() => {
     if (!searchQuery.trim()) return [];
-    const query = searchQuery.toLowerCase().trim();
-    return allProducts.filter(p => 
-      p.name.toLowerCase().includes(query) || 
-      p.category.toLowerCase().includes(query)
-    );
+    
+    // Split query by spaces to search for individual words in any order
+    const queryWords = searchQuery
+      .toLowerCase()
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+      
+    if (queryWords.length === 0) return [];
+
+    const scored = allProducts.map(p => {
+      const productName = p.name.toLowerCase();
+      const productCategory = p.category.toLowerCase();
+      const productDesc = (p.description || '').toLowerCase();
+      
+      // All search words must be present in either the name, category, or description
+      const matchesAll = queryWords.every(word => 
+        productName.includes(word) || 
+        productCategory.includes(word) || 
+        productDesc.includes(word)
+      );
+      
+      if (!matchesAll) return { product: p, score: -1 };
+      
+      let score = 0;
+      
+      queryWords.forEach(word => {
+        // 1. Check in Title/Name matches
+        if (productName.includes(word)) {
+          // Base match in product name
+          score += 10;
+          
+          // Exact name matches the query word exactly
+          if (productName === word) {
+            score += 100;
+          }
+          
+          // Exact word match (bounded by word boundaries)
+          const escapedWord = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+          const exactWordRegex = new RegExp(`\\b${escapedWord}\\b`, 'i');
+          if (exactWordRegex.test(productName)) {
+            score += 50;
+          }
+          
+          // Word starts with the query word
+          const startsWithWordRegex = new RegExp(`\\b${escapedWord}`, 'i');
+          if (startsWithWordRegex.test(productName)) {
+            score += 30;
+          }
+          
+          // Leftmost start of the name matches
+          if (productName.startsWith(word)) {
+            score += 20;
+          }
+        }
+        
+        // 2. Check in Category matches
+        if (productCategory.includes(word)) {
+          score += 2;
+          const escapedWord = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+          const exactWordRegex = new RegExp(`\\b${escapedWord}\\b`, 'i');
+          if (exactWordRegex.test(productCategory)) {
+            score += 5;
+          }
+        }
+        
+        // 3. Check in Description matches
+        if (productDesc.includes(word)) {
+          score += 1;
+        }
+      });
+      
+      return { product: p, score };
+    });
+
+    return scored
+      .filter(item => item.score >= 0)
+      .sort((a, b) => b.score - a.score)
+      .map(item => item.product);
   }, [searchQuery, allProducts]);
 
   const isSearching = searchQuery.trim().length > 0;

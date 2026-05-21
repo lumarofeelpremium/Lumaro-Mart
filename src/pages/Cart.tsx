@@ -34,9 +34,35 @@ export const Cart = ({
   const [whatsappNumber, setWhatsappNumber] = useState('');
   const [whatsappEnabled, setWhatsappEnabled] = useState(true);
   const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
+  const [isFirstOrder, setIsFirstOrder] = useState(false);
+
+  useEffect(() => {
+    if (!user) {
+      setIsFirstOrder(false);
+      return;
+    }
+
+    const checkFirstOrder = async () => {
+      try {
+        const ordersQuery = query(
+          collection(db, 'orders'),
+          where('userId', '==', user.uid)
+        );
+        const querySnapshot = await getDocs(ordersQuery);
+        // If there are no previous orders, this is their first order!
+        setIsFirstOrder(querySnapshot.empty);
+      } catch (err) {
+        console.error("Error checking user order history for free delivery:", err);
+        setIsFirstOrder(false);
+      }
+    };
+
+    checkFirstOrder();
+  }, [user]);
   
   const subtotal = items.reduce((acc, item) => acc + (item.discountPrice || item.price) * item.quantity, 0);
-  const delivery = subtotal > 0 && subtotal <= 100 ? 20 : 0;
+  const baseDelivery = subtotal > 0 && subtotal <= 100 ? 20 : 0;
+  const delivery = isFirstOrder ? 0 : baseDelivery;
   
   const pointsAvailable = user?.loyaltyPoints || 0;
   const pointsToRedeem = useLoyaltyPoints ? Math.min(pointsAvailable, subtotal) : 0;
@@ -382,9 +408,19 @@ export const Cart = ({
                     <span className="font-bold">-₹{pointsToRedeem}</span>
                   </div>
                 )}
-                {subtotal <= 100 && subtotal > 0 && (
+                {subtotal <= 100 && subtotal > 0 && !isFirstOrder && user && (
                   <p className="text-[10px] text-orange-500 font-medium text-right -mt-2">
                     Add ₹{101 - subtotal} more for FREE delivery
+                  </p>
+                )}
+                {isFirstOrder && user && (
+                  <p className="text-[10px] text-[#66D2A4] font-bold text-right -mt-2">
+                    🎉 First Order Special: FREE Delivery applied!
+                  </p>
+                )}
+                {!user && subtotal > 0 && (
+                  <p className="text-[10px] text-[#66D2A4] font-semibold text-right -mt-2">
+                    🎁 Register/Login to get FREE Delivery on your first order!
                   </p>
                 )}
                 <div className="h-px bg-dashed border-t border-dashed border-gray-200" />
