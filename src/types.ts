@@ -31,6 +31,8 @@ export interface User {
   address?: string;
   pincode?: string;
   loyaltyPoints?: number;
+  referralCode?: string;
+  referredBy?: string;
 }
 
 export interface CartItem extends Product {

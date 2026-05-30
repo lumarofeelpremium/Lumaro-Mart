@@ -9,15 +9,62 @@ export const cacheUtils = {
   safeStringify: (obj: any) => {
     try {
       const seen = new WeakSet();
-      return JSON.stringify(obj, (key, value) => {
-        if (typeof value === "object" && value !== null) {
-          if (seen.has(value)) {
-            return "[Circular]";
-          }
-          seen.add(value);
+      
+      const sanitize = (val: any): any => {
+        if (val === null || val === undefined) return val;
+        const t = typeof val;
+        if (t === 'string' || t === 'number' || t === 'boolean') return val;
+        if (t === 'function' || t === 'symbol') return undefined;
+
+        if (seen.has(val)) return '[Circular]';
+        
+        // Handle common object types
+        if (val instanceof Date) {
+          return val.toISOString();
         }
-        return value;
-      });
+
+        // Handle firestore Timestamp
+        if (typeof val.toMillis === 'function') {
+          return { seconds: val.seconds, nanoseconds: val.nanoseconds, _type: 'Timestamp' };
+        }
+
+        // Handle generic browser native objects or Web API entities
+        if (
+          typeof window !== 'undefined' && 
+          (val === window || val === document || val instanceof Node || val instanceof Event)
+        ) {
+          return '[Browser Object]';
+        }
+
+        // Check constructor names for minified or native objects
+        if (val.constructor && typeof val.constructor.name === 'string') {
+          const name = val.constructor.name;
+          if (name === 'HTMLImageElement' || name === 'Image' || name === 'Y' || name === 'Ka') {
+            return `[Class: ${name}]`;
+          }
+        }
+
+        seen.add(val);
+
+        if (Array.isArray(val)) {
+          return val.map(item => sanitize(item));
+        }
+
+        // Check if plain object or similar dictionary
+        try {
+          const res: Record<string, any> = {};
+          const keys = Object.keys(val);
+          for (const key of keys) {
+            res[key] = sanitize(val[key]);
+          }
+          return res;
+        } catch (e) {
+          return '[Unserializable Object]';
+        }
+      };
+
+      const sanitizedResult = sanitize(obj);
+      return JSON.stringify(sanitizedResult);
     } catch (e) {
       console.warn('Safe stringify failed, falling back to String():', e);
       return String(obj);

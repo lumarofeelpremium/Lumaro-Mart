@@ -11,7 +11,7 @@ import {
   updateEmail,
   updatePassword
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs, increment, addDoc } from 'firebase/firestore';
 import { User } from '../types';
 
 export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User | null) => void, initialMode?: 'login' | 'signup' }) => {
@@ -26,6 +26,7 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [referralCode, setReferralCode] = useState('');
 
   const getSyntheticEmail = (phone: string) => {
     const cleanPhone = phone.replace(/\D/g, '');
@@ -119,6 +120,30 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
     try {
       const authEmail = getSyntheticEmail(phoneNumber);
       const securePassword = getSecurePassword(password);
+
+      // Verify referral code if supplied
+      let referrerUid = '';
+      const enteredReferral = referralCode.trim().toUpperCase();
+      if (enteredReferral) {
+        const usersRef = collection(db, 'users');
+        const q = query(usersRef, where('referralCode', '==', enteredReferral));
+        const querySnapshot = await getDocs(q);
+        if (querySnapshot.empty) {
+          setError('Invalid Referral Code. Please check the code or keep it empty.');
+          setIsLoading(false);
+          return;
+        } else {
+          const referrerDoc = querySnapshot.docs[0];
+          const rData = referrerDoc.data();
+          if (rData.phoneNumber === phoneNumber) {
+            setError('You cannot use your own referral code!');
+            setIsLoading(false);
+            return;
+          }
+          referrerUid = referrerDoc.id;
+        }
+      }
+
       const userCredential = await createUserWithEmailAndPassword(auth, authEmail, securePassword);
       const firebaseUser = userCredential.user;
 
@@ -127,6 +152,17 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
       });
 
       const role = (phoneNumber === '7830948738') ? 'admin' : 'user'; 
+      
+      // Generate a random uppercase alphanumeric referral code
+      const generateRandomReferral = () => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let result = '';
+        for (let i = 0; i < 6; i++) {
+          result += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return `LUM${result}`;
+      };
+      const myReferralCode = generateRandomReferral();
 
       const userData = {
         uid: firebaseUser.uid,
@@ -134,10 +170,28 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
         email: email || authEmail,
         phoneNumber: phoneNumber,
         role: role,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        referralCode: myReferralCode,
+        loyaltyPoints: 0,
+        referredBy: enteredReferral || null
       };
 
       await setDoc(doc(db, 'users', firebaseUser.uid), userData);
+
+      // Track referral signup but don't award loyalty points
+      if (referrerUid) {
+        try {
+          await addDoc(collection(db, 'notifications'), {
+            title: '👋 Friend Signed Up!',
+            message: `Congratulations! ${fullName} signed up using your referral code. Thank you for sharing Lumaro Mart!`,
+            type: 'offer',
+            createdAt: new Date()
+          });
+        } catch (notifErr) {
+          console.error("Referral notification failed:", notifErr);
+        }
+      }
+
       setUser(userData as User);
       navigate(from);
     } catch (err: any) {
@@ -237,18 +291,26 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
               />
               
               {mode === 'signup' && (
-                <Input 
-                  placeholder="Confirm 4-Digit PIN"
-                  icon={<Lock size={20} />} 
-                  value={confirmPassword}
-                  onChange={(e) => {
-                    const val = e.target.value.replace(/\D/g, '').slice(0, 4);
-                    setConfirmPassword(val);
-                  }}
-                  type="password"
-                  inputMode="numeric"
-                  required
-                />
+                <>
+                  <Input 
+                    placeholder="Confirm 4-Digit PIN"
+                    icon={<Lock size={20} />} 
+                    value={confirmPassword}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+                      setConfirmPassword(val);
+                    }}
+                    type="password"
+                    inputMode="numeric"
+                    required
+                  />
+                  <Input 
+                    placeholder="Referral Code (Optional)"
+                    icon={<KeyRound size={20} />} 
+                    value={referralCode}
+                    onChange={(e) => setReferralCode(e.target.value.toUpperCase().trim())}
+                  />
+                </>
               )}
             </div>
 

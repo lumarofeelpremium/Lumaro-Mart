@@ -68,7 +68,7 @@ export const Cart = ({
   const pointsToRedeem = useLoyaltyPoints ? Math.min(pointsAvailable, subtotal) : 0;
   
   const total = subtotal + delivery - pointsToRedeem;
-  const pointsEarned = subtotal > 100 ? Math.floor(subtotal * 0.05) : 0;
+  const pointsEarned = Math.floor(subtotal / 100) * 5;
 
   const hasOutOfStockItems = items.some(item => item.stock <= 0);
   const hasInsufficientStock = items.some(item => item.quantity > item.stock);

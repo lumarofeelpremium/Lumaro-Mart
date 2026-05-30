@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, User as UserIcon, Settings, LogOut, ShieldCheck, Package, Users, ChevronRight, Clock, MapPin, X, Camera, Mail, Phone, Home, Hash, Loader2, Star, Heart, Bell, MessageCircle, Headset, LifeBuoy } from 'lucide-react';
+import { ChevronLeft, User as UserIcon, Settings, LogOut, ShieldCheck, Package, Users, ChevronRight, Clock, MapPin, X, Camera, Mail, Phone, Home, Hash, Loader2, Star, Heart, Bell, MessageCircle, Headset, LifeBuoy, Gift, Copy, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Order, AppSettings } from '../types';
@@ -17,7 +17,37 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-generate & save a user's referral code if missing (for legacy or existing users)
+  useEffect(() => {
+    if (user && user.uid && !user.referralCode) {
+      const generateRandomCode = () => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let result = '';
+        for (let i = 0; i < 6; i++) {
+          result += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return `LUM${result}`;
+      };
+      const code = generateRandomCode();
+      const updateRefCode = async () => {
+        try {
+          await updateDoc(doc(db, 'users', user.uid), {
+            referralCode: code
+          });
+          setUser({
+            ...user,
+            referralCode: code
+          });
+        } catch (e) {
+          console.error("Error setting referral code for existing user:", e);
+        }
+      };
+      updateRefCode();
+    }
+  }, [user, setUser]);
 
   const [editForm, setEditForm] = useState({
     displayName: user?.displayName || '',
@@ -295,6 +325,72 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
           )}
           <div className="h-px bg-gray-50 mx-4" />
           <ProfileItem icon={LogOut} label="Logout" onClick={onLogout} color="text-red-500" />
+        </div>
+
+        {/* Refer & Earn Feature Card */}
+        <div className="bg-white rounded-[32px] p-6 shadow-sm border border-gray-50 relative overflow-hidden">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2.5 bg-amber-50 text-amber-500 rounded-2xl">
+              <Gift size={24} className="animate-pulse" />
+            </div>
+            <div>
+              <h3 className="font-bold text-gray-900 text-base">Refer & Share 🎁</h3>
+              <p className="text-xs text-gray-500 font-medium">Invite friends & family to Lumaro Mart</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2 bg-[#F0F7F4] p-3 rounded-2xl border border-green-50 mb-3">
+            <div className="flex-1">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider ml-1 mb-0.5">Your Referral Code</p>
+              <p className="font-mono font-black text-xl text-gray-800 tracking-wider ml-1">
+                {user.referralCode || 'LUMXXXXXX'}
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                const code = user.referralCode || 'LUMXXXXXX';
+                navigator.clipboard.writeText(code);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+              className="px-4 py-2 bg-white hover:bg-gray-50 border border-green-100 rounded-xl flex items-center gap-1.5 text-xs font-bold text-[#62cb9b] active:scale-95 transition-all shadow-sm"
+            >
+              {copied ? (
+                <>
+                  <Check size={14} className="text-[#66D2A4]" />
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy size={14} />
+                  <span>Copy</span>
+                </>
+              )}
+            </button>
+          </div>
+          
+          <button
+            onClick={() => {
+              const code = user.referralCode || 'LUMXXXXXX';
+              const messageText = 
+                `🛒 *Lumaro Mart* - Daily Groceries!\n\n` +
+                `अब घर बैठे पाएं रोजाना का किराना सामान, वो भी सबसे बेहतरीन और किफ़ायती दामों पर! 🚀\n\n` +
+                `🎁 *Exclusive Referral Offer:*\n` +
+                `निचे दिए गए लिंक से हमारा App डाउनलोड करें और साइनअप के समय मेरा रेफरल कोड इस्तेमाल करें:\n\n` +
+                `📌 *Referral Code:* *${code}*\n` +
+                `🌐 *App Download Link:* https://drive.google.com/file/d/1mORupZ6SVr5yckvLOpDw1LhvKwsAYGDc/view?usp=drive_link\n\n` +
+                `👉 अभी अपना पहला ऑर्डर करें और पाएँ *FREE DELIVERY* का स्पेशल ऑफ़र! 🎉`;
+              
+              window.open(`https://wa.me/?text=${encodeURIComponent(messageText)}`, '_blank');
+            }}
+            className="w-full py-3.5 bg-[#66D2A4] hover:bg-[#5bc095] text-white rounded-2xl flex items-center justify-center gap-2 text-sm font-bold shadow-md shadow-[#66D2A4]/15 active:scale-[0.98] transition-all"
+          >
+            <MessageCircle size={18} fill="currentColor" />
+            <span>Invite on WhatsApp</span>
+          </button>
+          
+          {/* Subtle background circle decoration */}
+          <div className="absolute -bottom-10 -right-10 w-28 h-28 bg-green-50/40 rounded-full pointer-events-none" />
         </div>
       </div>
 
