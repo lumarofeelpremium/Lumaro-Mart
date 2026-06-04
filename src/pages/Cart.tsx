@@ -61,7 +61,7 @@ export const Cart = ({
   }, [user]);
   
   const subtotal = items.reduce((acc, item) => acc + (item.discountPrice || item.price) * item.quantity, 0);
-  const baseDelivery = subtotal > 0 && subtotal <= 100 ? 20 : 0;
+  const baseDelivery = subtotal > 0 && subtotal <= 50 ? 20 : 0;
   const delivery = isFirstOrder ? 0 : baseDelivery;
   
   const pointsAvailable = user?.loyaltyPoints || 0;
@@ -408,9 +408,9 @@ export const Cart = ({
                     <span className="font-bold">-₹{pointsToRedeem}</span>
                   </div>
                 )}
-                {subtotal <= 100 && subtotal > 0 && !isFirstOrder && user && (
+                {subtotal <= 50 && subtotal > 0 && !isFirstOrder && user && (
                   <p className="text-[10px] text-orange-500 font-medium text-right -mt-2">
-                    Add ₹{101 - subtotal} more for FREE delivery
+                    Add ₹{51 - subtotal} more for FREE delivery
                   </p>
                 )}
                 {isFirstOrder && user && (

@@ -33,6 +33,7 @@ export interface User {
   loyaltyPoints?: number;
   referralCode?: string;
   referredBy?: string;
+  createdAt?: any;
 }
 
 export interface CartItem extends Product {

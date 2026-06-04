@@ -15,6 +15,7 @@ export const AdminDashboard = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'users' | 'products' | 'orders' | 'categories' | 'settings' | 'banners' | 'reports'>('orders');
   const [users, setUsers] = useState<User[]>([]);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userCurrentPage, setUserCurrentPage] = useState(1);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -54,8 +55,17 @@ export const AdminDashboard = () => {
   useEffect(() => {
     if (!auth.currentUser) return;
 
-    const unsubUsers = onSnapshot(query(collection(db, 'users'), orderBy('displayName')), (snapshot) => {
-      setUsers(snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as User)));
+    const unsubUsers = onSnapshot(query(collection(db, 'users')), (snapshot) => {
+      const fetchedUsers = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as User));
+      fetchedUsers.sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (timeA !== timeB) {
+          return timeB - timeA; // Newest first
+        }
+        return (a.displayName || '').localeCompare(b.displayName || '');
+      });
+      setUsers(fetchedUsers);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
 
     const unsubProducts = onSnapshot(query(collection(db, 'products'), orderBy('name')), (snapshot) => {
@@ -416,6 +426,11 @@ export const AdminDashboard = () => {
               onViewOrders={(user) => setSelectedUserStats(user)}
               currentPage={userCurrentPage}
               onPageChange={setUserCurrentPage}
+              searchQuery={userSearchQuery}
+              onSearchChange={(val) => {
+                setUserSearchQuery(val);
+                setUserCurrentPage(1); // Reset to page 1 on search
+              }}
             />
           )}
           {activeTab === 'products' && (
@@ -598,23 +613,55 @@ const UserList = ({
   onDelete,
   onViewOrders,
   currentPage,
-  onPageChange
+  onPageChange,
+  searchQuery,
+  onSearchChange
 }: { 
   users: User[], 
   onDelete: (u: User) => void,
   onViewOrders: (user: User) => void,
   currentPage: number,
-  onPageChange: (page: number) => void
+  onPageChange: (page: number) => void,
+  searchQuery: string,
+  onSearchChange: (val: string) => void
 }) => {
+  const filteredUsers = users.filter((u) => {
+    const q = searchQuery.toLowerCase();
+    return (
+      (u.displayName || '').toLowerCase().includes(q) ||
+      (u.email || '').toLowerCase().includes(q) ||
+      (u.phoneNumber || '').toLowerCase().includes(q)
+    );
+  });
+
   const itemsPerPage = 15;
-  const totalPages = Math.ceil(users.length / itemsPerPage);
-  const paginatedUsers = users.slice(
+  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
+  const paginatedUsers = filteredUsers.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
 
   return (
     <div className="space-y-4">
+      {/* Search Input */}
+      <div className="relative mb-4">
+        <Input 
+          placeholder="Search users by name, phone or email..." 
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className="bg-gray-50 border-none"
+          icon={<Search size={16} />}
+        />
+        {searchQuery && (
+          <button 
+            onClick={() => onSearchChange('')}
+            className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
       {paginatedUsers.length === 0 ? (
         <p className="text-center py-8 text-gray-400">No users found</p>
       ) : (
@@ -629,8 +676,10 @@ const UserList = ({
                 )}
               </div>
               <div>
-                <h4 className="font-bold text-sm text-[#1A1A1A]">{u.displayName}</h4>
-                <p className="text-[10px] text-gray-400">{u.email} • {u.role}</p>
+                <h4 className="font-bold text-sm text-[#1A1A1A]">{u.displayName || 'No Name'}</h4>
+                <p className="text-[10px] text-gray-400">
+                  {u.email || 'No email'} • {u.phoneNumber || 'No phone'} • {u.role}
+                </p>
               </div>
             </div>
             <div className="flex gap-2">
