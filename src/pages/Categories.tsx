@@ -24,6 +24,27 @@ export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCa
   const [maxPrice, setMaxPrice] = useState<string>('');
   const [sortBy, setSortBy] = useState<'popularity' | 'priceLow' | 'priceHigh'>('popularity');
 
+  // Load cached categories on mount and scroll to top of the page
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
+  // Scroll active category smoothly into horizontal view center so it is fully visible
+  useEffect(() => {
+    if (selectedCategory && categories.length > 0) {
+      setTimeout(() => {
+        const activeBtn = document.getElementById(`cat-btn-${selectedCategory}`);
+        if (activeBtn) {
+          activeBtn.scrollIntoView({
+            behavior: 'smooth',
+            block: 'nearest',
+            inline: 'center'
+          });
+        }
+      }, 100);
+    }
+  }, [selectedCategory, categories]);
+
   // Load cached categories on mount
   useEffect(() => {
     const cachedCats = cacheUtils.getItem('categories_list_cache');
@@ -161,21 +182,22 @@ export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCa
 
       <div className="px-6 pt-6">
         {/* Category Selection */}
-        <div className="flex gap-3 overflow-x-auto pb-4 no-scrollbar">
+        <div className="flex flex-wrap gap-2 pb-2">
           {categories.length === 0 ? (
             [1, 2, 3, 4].map(i => (
-              <Skeleton key={i} className="min-w-[120px] h-12 rounded-2xl" />
+              <Skeleton key={i} className="min-w-[100px] h-10 rounded-xl" />
             ))
           ) : (
             categories.map((cat) => (
               <button
                 key={cat.id}
+                id={`cat-btn-${cat.name}`}
                 onClick={() => setSelectedCategory(cat.name)}
                 className={cn(
-                  "flex items-center gap-2 px-6 py-3 rounded-2xl font-bold whitespace-nowrap transition-all",
+                  "flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all",
                   selectedCategory === cat.name 
-                    ? "bg-[#66D2A4] text-white shadow-md shadow-[#66D2A4]/20" 
-                    : "bg-white text-gray-500 border border-gray-100"
+                    ? "bg-[#66D2A4] text-white shadow-md shadow-[#66D2A4]/15" 
+                    : "bg-white text-gray-500 border border-gray-100 hover:border-gray-200"
                 )}
               >
                 <span>{cat.icon}</span>
@@ -292,7 +314,7 @@ export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCa
                       ) : (
                         <Plus size={24} className="text-gray-300" />
                       )}
-                      {product.discountPrice && (
+                      {(product.offerLabel || product.discountPrice) && (
                         <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
                           {product.offerLabel || 'Offer'}
                         </div>

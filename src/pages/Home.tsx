@@ -449,7 +449,7 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
                         ) : (
                           <Plus size={24} className="text-gray-300" />
                         )}
-                        {product.discountPrice ? (
+                        {(product.offerLabel || product.discountPrice) ? (
                           <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
                             {product.offerLabel || 'Offer'}
                           </div>
@@ -546,7 +546,7 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
                           ) : (
                             <Plus size={24} className="text-gray-300" />
                           )}
-                          {product.discountPrice ? (
+                          {(product.offerLabel || product.discountPrice) ? (
                             <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
                               {product.offerLabel || 'Offer'}
                             </div>
@@ -711,7 +711,7 @@ const ProductCard: React.FC<{ product: Product, user: User | null, onAddToCart: 
       ) : (
         <Plus size={24} className="text-gray-300" />
       )}
-      {product.discountPrice && (
+      {(product.offerLabel || product.discountPrice) && (
         <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
           {product.offerLabel || 'Offer'}
         </div>

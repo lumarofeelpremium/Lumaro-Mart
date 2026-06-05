@@ -272,7 +272,7 @@ export const ProductDetails = ({
               {product.discountPrice && (
                 <p className="text-gray-400 text-sm line-through">₹{product.price}</p>
               )}
-              {product.discountPrice && (
+              {(product.offerLabel || product.discountPrice) && (
                 <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
                   {product.offerLabel || 'Special Offer'}
                 </span>

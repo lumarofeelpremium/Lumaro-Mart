@@ -909,7 +909,14 @@ const ProductList = ({
                   )}
                 </div>
                 <div>
-                  <h4 className="font-bold text-sm text-[#1A1A1A]">{product.name}</h4>
+                  <h4 className="font-bold text-sm text-[#1A1A1A] flex items-center gap-2">
+                    {product.name}
+                    {product.offerLabel && (
+                      <span className="text-[9px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full uppercase font-bold">
+                        {product.offerLabel}
+                      </span>
+                    )}
+                  </h4>
                   <div className="flex items-center gap-1">
                     <p className="text-[10px] text-gray-400">₹{product.discountPrice || product.price}</p>
                     {product.discountPrice && (
