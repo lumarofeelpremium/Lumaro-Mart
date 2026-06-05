@@ -7,6 +7,7 @@ export interface Product {
   image: string;
   category: string;
   stock: number;
+  isPopular?: boolean;
   description?: string;
   rating?: number;
   salesCount?: number;

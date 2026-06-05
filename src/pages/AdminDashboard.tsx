@@ -909,11 +909,16 @@ const ProductList = ({
                   )}
                 </div>
                 <div>
-                  <h4 className="font-bold text-sm text-[#1A1A1A] flex items-center gap-2">
+                  <h4 className="font-bold text-sm text-[#1A1A1A] flex items-center gap-2 flex-wrap">
                     {product.name}
                     {product.offerLabel && (
                       <span className="text-[9px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full uppercase font-bold">
                         {product.offerLabel}
+                      </span>
+                    )}
+                    {product.isPopular && (
+                      <span className="text-[9px] bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full uppercase font-bold">
+                        Popular
                       </span>
                     )}
                   </h4>
@@ -2017,6 +2022,15 @@ const ProductFormModal = ({
         }
       }
 
+      if (!finalData.isPopular) {
+        if (mode === 'edit') {
+          // @ts-ignore
+          finalData.isPopular = deleteField();
+        } else {
+          delete finalData.isPopular;
+        }
+      }
+
       await onSave(finalData);
     } catch (error: any) {
       console.error("Error saving product:", error);
@@ -2154,6 +2168,28 @@ const ProductFormModal = ({
               ))}
               {categories.length === 0 && <option value="Fresh Produce">Fresh Produce</option>}
             </select>
+          </div>
+
+          <div className="flex items-center justify-between p-4 bg-[#F0F7F4] rounded-3xl">
+            <div className="flex flex-col pr-4">
+              <span className="text-sm font-bold text-[#1A1A1A]">Popular Item</span>
+              <span className="text-[10px] text-gray-500">Show this product in the 'Popular Items' section on the home screen</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFormData(prev => ({ ...prev, isPopular: !prev.isPopular }))}
+              className={cn(
+                "w-12 h-6 rounded-full p-0.5 transition-colors duration-200 focus:outline-none relative flex items-center shrink-0",
+                formData.isPopular ? "bg-[#66D2A4]" : "bg-gray-300"
+              )}
+            >
+              <div 
+                className={cn(
+                  "w-5 h-5 rounded-full bg-white shadow-md transform transition-transform duration-200",
+                  formData.isPopular ? "translate-x-6" : "translate-x-0"
+                )}
+              />
+            </button>
           </div>
 
           <div className="space-y-2">

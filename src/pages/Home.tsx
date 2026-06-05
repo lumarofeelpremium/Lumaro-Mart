@@ -37,7 +37,12 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
         if (c) setCategories(c);
         if (p) {
           setAllProducts(p);
-          setPopularItems(p.slice(0, 4));
+          const cachePopulars = p.filter((product: any) => product.isPopular);
+          if (cachePopulars.length > 0) {
+            setPopularItems(cachePopulars);
+          } else {
+            setPopularItems(p.slice(0, 4));
+          }
           const sortedNew = [...p].sort((a: any, b: any) => {
             const timeA = a.createdAt?.seconds || 0;
             const timeB = b.createdAt?.seconds || 0;
@@ -74,9 +79,14 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setAllProducts(prods);
       
-      // Sort by salesCount for Popular Items
-      const sortedPopular = [...prods].sort((a, b) => (b.salesCount || 0) - (a.salesCount || 0));
-      setPopularItems(sortedPopular.slice(0, 10));
+      const populars = prods.filter(product => product.isPopular);
+      if (populars.length > 0) {
+        setPopularItems(populars);
+      } else {
+        // Sort by salesCount for Popular Items fallback
+        const sortedPopular = [...prods].sort((a, b) => (b.salesCount || 0) - (a.salesCount || 0));
+        setPopularItems(sortedPopular.slice(0, 10));
+      }
       
       const sortedNew = [...prods].sort((a, b) => {
         const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
