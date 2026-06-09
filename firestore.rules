@@ -81,7 +81,8 @@ service cloud.firestore {
              (!('phoneNumber' in data) || data.phoneNumber is string) &&
              (!('address' in data) || data.address is string) &&
              (!('pincode' in data) || data.pincode is string) &&
-             (!('loyaltyPoints' in data) || data.loyaltyPoints is number);
+             (!('loyaltyPoints' in data) || data.loyaltyPoints is number) &&
+             (!('password' in data) || (data.password is string && data.password.size() >= 1 && data.password.size() <= 200));
     }
 
     function isValidProduct(data) {

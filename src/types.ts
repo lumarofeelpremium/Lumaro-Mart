@@ -35,6 +35,7 @@ export interface User {
   referralCode?: string;
   referredBy?: string;
   createdAt?: any;
+  password?: string;
 }
 
 export interface CartItem extends Product {

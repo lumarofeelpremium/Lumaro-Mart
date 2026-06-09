@@ -34,8 +34,8 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
     if (cachedData) {
       try {
         const { categories: c, allProducts: p, banners: b } = JSON.parse(cachedData);
-        if (c) setCategories(c);
-        if (p) {
+        if (c && Array.isArray(c)) setCategories(c);
+        if (p && Array.isArray(p)) {
           setAllProducts(p);
           const cachePopulars = p.filter((product: any) => product.isPopular);
           if (cachePopulars.length > 0) {
@@ -50,7 +50,7 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
           });
           setNewArrivals(sortedNew.slice(0, 4));
         }
-        if (b) setBanners(b);
+        if (b && Array.isArray(b)) setBanners(b);
         setLoading(false); // We have cached data, so stop showing skeletons
       } catch (e) {
         console.error('Error parsing home cache', e);

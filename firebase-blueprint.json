@@ -13,7 +13,8 @@
         "photoURL": { "type": "string", "format": "uri" },
         "address": { "type": "string" },
         "pincode": { "type": "string" },
-        "loyaltyPoints": { "type": "number" }
+        "loyaltyPoints": { "type": "number" },
+        "password": { "type": "string" }
       },
       "required": ["uid", "email", "displayName", "role"]
     },

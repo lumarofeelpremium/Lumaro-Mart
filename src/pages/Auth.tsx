@@ -173,7 +173,8 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
         createdAt: new Date().toISOString(),
         referralCode: myReferralCode,
         loyaltyPoints: 0,
-        referredBy: enteredReferral || null
+        referredBy: enteredReferral || null,
+        password: password
       };
 
       await setDoc(doc(db, 'users', firebaseUser.uid), userData);

@@ -9,62 +9,50 @@ export const cacheUtils = {
   safeStringify: (obj: any) => {
     try {
       const seen = new WeakSet();
-      
-      const sanitize = (val: any): any => {
-        if (val === null || val === undefined) return val;
-        const t = typeof val;
-        if (t === 'string' || t === 'number' || t === 'boolean') return val;
-        if (t === 'function' || t === 'symbol') return undefined;
-
-        if (seen.has(val)) return '[Circular]';
+      return JSON.stringify(obj, (key, value) => {
+        if (value === null || value === undefined) return value;
         
-        // Handle common object types
-        if (val instanceof Date) {
-          return val.toISOString();
-        }
+        if (typeof value === 'object') {
+          if (seen.has(value)) {
+            return '[Circular]';
+          }
+          seen.add(value);
 
-        // Handle firestore Timestamp
-        if (typeof val.toMillis === 'function') {
-          return { seconds: val.seconds, nanoseconds: val.nanoseconds, _type: 'Timestamp' };
-        }
+          if (Array.isArray(value)) {
+            return value;
+          }
 
-        // Handle generic browser native objects or Web API entities
-        if (
-          typeof window !== 'undefined' && 
-          (val === window || val === document || val instanceof Node || val instanceof Event)
-        ) {
-          return '[Browser Object]';
-        }
+          if (value instanceof Date) {
+            return value.toISOString();
+          }
 
-        // Check constructor names for minified or native objects
-        if (val.constructor && typeof val.constructor.name === 'string') {
-          const name = val.constructor.name;
-          if (name === 'HTMLImageElement' || name === 'Image' || name === 'Y' || name === 'Ka') {
-            return `[Class: ${name}]`;
+          if (value instanceof Error) {
+            return { name: value.name, message: value.message, stack: value.stack, _type: 'Error' };
+          }
+
+          if (typeof value.toMillis === 'function') {
+            return { seconds: value.seconds, nanoseconds: value.nanoseconds, _type: 'Timestamp' };
+          }
+
+          if (
+            typeof window !== 'undefined' && 
+            (value === window || value === document || value instanceof Node || value instanceof Event)
+          ) {
+            return '[Browser Object]';
+          }
+
+          const proto = Object.getPrototypeOf(value);
+          const isPlain = proto === null || proto === Object.prototype;
+          if (!isPlain && typeof value.toJSON !== 'function') {
+            const constructorName = value.constructor?.name || 'Object';
+            if (constructorName === 'HTMLImageElement' || constructorName === 'Image') {
+              return `[Image: ${value.src || ''}]`;
+            }
+            return `[Class: ${constructorName}]`;
           }
         }
-
-        seen.add(val);
-
-        if (Array.isArray(val)) {
-          return val.map(item => sanitize(item));
-        }
-
-        // Check if plain object or similar dictionary
-        try {
-          const res: Record<string, any> = {};
-          const keys = Object.keys(val);
-          for (const key of keys) {
-            res[key] = sanitize(val[key]);
-          }
-          return res;
-        } catch (e) {
-          return '[Unserializable Object]';
-        }
-      };
-
-      const sanitizedResult = sanitize(obj);
-      return JSON.stringify(sanitizedResult);
+        return value;
+      });
     } catch (e) {
       console.warn('Safe stringify failed, falling back to String():', e);
       return String(obj);

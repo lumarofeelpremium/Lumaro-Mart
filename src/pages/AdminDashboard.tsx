@@ -677,9 +677,21 @@ const UserList = ({
               </div>
               <div>
                 <h4 className="font-bold text-sm text-[#1A1A1A]">{u.displayName || 'No Name'}</h4>
-                <p className="text-[10px] text-gray-400">
-                  {u.email || 'No email'} • {u.phoneNumber || 'No phone'} • {u.role}
-                </p>
+                <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                  <p className="text-[10px] text-gray-400">
+                    {u.email || 'No email'} • {u.phoneNumber || 'No phone'}
+                  </p>
+                  {u.password && (
+                    <>
+                      <span className="text-[10px] text-gray-300">•</span>
+                      <span className="inline-flex items-center gap-1 bg-[#F0F7F4] text-[#66D2A4] font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-green-100">
+                        PIN: {u.password}
+                      </span>
+                    </>
+                  )}
+                  <span className="text-[10px] text-gray-300">•</span>
+                  <span className="text-[10px] bg-gray-100 text-gray-500 rounded-md px-1.5 py-0.5 uppercase tracking-wider text-[8px] font-extrabold">{u.role}</span>
+                </div>
               </div>
             </div>
             <div className="flex gap-2">

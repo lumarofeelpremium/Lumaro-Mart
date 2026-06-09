@@ -31,11 +31,20 @@ export interface FirestoreErrorInfo {
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   let errorMessage = 'An unknown error occurred';
+  let isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
   
   if (error instanceof Error) {
     errorMessage = error.message;
+    const lowerMessage = errorMessage.toLowerCase();
+    if (lowerMessage.includes('offline') || lowerMessage.includes('unavailable') || lowerMessage.includes('network')) {
+      isOffline = true;
+    }
   } else if (typeof error === 'string') {
     errorMessage = error;
+    const lowerMessage = errorMessage.toLowerCase();
+    if (lowerMessage.includes('offline') || lowerMessage.includes('unavailable') || lowerMessage.includes('network')) {
+      isOffline = true;
+    }
   } else {
     errorMessage = cacheUtils.safeStringify(error);
   }
@@ -60,6 +69,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   };
 
   const errString = cacheUtils.safeStringify(errInfo);
+  
+  if (isOffline) {
+    console.warn(`Firestore operation '${operationType}' on '${path}' is pending/offline: ${errorMessage}`);
+    return; // graceful return, do not throw to crash the app
+  }
+
   console.error('Firestore Error Details:', errString);
   // We throw a plain error message to avoid circular structure issues in the component's catch block
   throw new Error(errString);
