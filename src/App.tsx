@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, onSnapshot, collection, query, limit, orderBy, where } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { handleFirestoreError, OperationType } from './lib/firestore-utils';
 import { Home } from './pages/Home';
@@ -17,7 +17,7 @@ import { OrderConfirmation } from './pages/OrderConfirmation';
 import { ProductDetails } from './pages/ProductDetails';
 import { BottomNav } from './components/BottomNav';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { User, CartItem, Product } from './types';
+import { User, CartItem, Product, Category, Banner } from './types';
 
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -29,6 +29,79 @@ export default function App() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isUpdating, setIsUpdating] = useState(false);
   const isSyncingRef = useRef(false);
+
+  // Centralized real-time store for lightning fast routing Transitions
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [banners, setBanners] = useState<Banner[]>([]);
+  const [initialDataLoading, setInitialDataLoading] = useState(true);
+
+  // Centralized real-time listener for Categories, Products and Banners
+  useEffect(() => {
+    // 1. First feed from localCache immediately for a 0ms paint
+    const cachedHome = localStorage.getItem('home_cache');
+    if (cachedHome) {
+      try {
+        const { categories: cachedCats, allProducts: cachedProds, banners: cachedBanners } = JSON.parse(cachedHome);
+        if (cachedCats && Array.isArray(cachedCats)) setCategories(cachedCats);
+        if (cachedProds && Array.isArray(cachedProds)) setAllProducts(cachedProds);
+        if (cachedBanners && Array.isArray(cachedBanners)) setBanners(cachedBanners);
+        setInitialDataLoading(false);
+      } catch (err) {
+        console.error('Error loading initial cached data in App', err);
+      }
+    }
+
+    // 2. Setup uninterrupted stream from Firestore
+    const unsubCats = onSnapshot(collection(db, 'categories'), (snapshot) => {
+      let cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
+      cats.sort((a, b) => {
+        const orderA = a.order ?? 999;
+        const orderB = b.order ?? 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.name.localeCompare(b.name);
+      });
+      setCategories(cats);
+      updateLocalCache({ categories: cats });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
+
+    const unsubAllProds = onSnapshot(query(collection(db, 'products'), limit(1000)), (snapshot) => {
+      const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      setAllProducts(prods);
+      setInitialDataLoading(false);
+      updateLocalCache({ allProducts: prods });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
+
+    const unsubBanners = onSnapshot(query(collection(db, 'banners'), where('active', '==', true)), (snapshot) => {
+      const bannersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Banner));
+      const sortedBanners = bannersData.sort((a, b) => {
+        const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+        const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+        return timeB - timeA;
+      });
+      setBanners(sortedBanners);
+      updateLocalCache({ banners: sortedBanners });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'banners'));
+
+    const updateLocalCache = (newData: any) => {
+      try {
+        const currentCache = JSON.parse(localStorage.getItem('home_cache') || '{}');
+        // Slice cached products slightly to respect localStorage limit
+        if (newData.allProducts) {
+          newData.allProducts = newData.allProducts.slice(0, 80);
+        }
+        localStorage.setItem('home_cache', JSON.stringify({ ...currentCache, ...newData }));
+      } catch (e) {
+        console.warn('Silent cache update failure in App:', e);
+      }
+    };
+
+    return () => {
+      unsubCats();
+      unsubAllProds();
+      unsubBanners();
+    };
+  }, []);
 
   // Auto-Update checker effect
   useEffect(() => {
@@ -68,11 +141,7 @@ export default function App() {
           }, 1500);
         }
       } catch (err) {
-        if (typeof navigator !== 'undefined' && !navigator.onLine) {
-          console.warn('[AutoUpdate] Check skipped: Client is offline.');
-        } else {
-          console.error('[AutoUpdate] Check failed:', err);
-        }
+        console.warn('[AutoUpdate] Check skipped or failed info:', err);
       }
     };
 
@@ -301,10 +370,10 @@ export default function App() {
       <Router>
         <div className="max-w-md mx-auto bg-white min-h-screen relative shadow-2xl shadow-black/10 overflow-x-hidden overflow-y-auto pb-24 mb-safe">
           <Routes>
-            <Route path="/" element={<Home user={user} onAddToCart={handleAddToCart} />} />
+            <Route path="/" element={<Home user={user} onAddToCart={handleAddToCart} categories={categories} allProducts={allProducts} banners={banners} initialDataLoading={initialDataLoading} />} />
             <Route path="/signup" element={<Signup setUser={setUser} />} />
             <Route path="/login" element={<Login setUser={setUser} />} />
-            <Route path="/categories" element={<Categories user={user} onAddToCart={handleAddToCart} />} />
+            <Route path="/categories" element={<Categories user={user} onAddToCart={handleAddToCart} categories={categories} allProducts={allProducts} />} />
             <Route path="/cart" element={<Cart 
               user={user}
               setUser={setUser}

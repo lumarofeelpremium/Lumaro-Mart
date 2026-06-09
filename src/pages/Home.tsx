@@ -11,15 +11,23 @@ import { WishlistButton } from '../components/WishlistButton';
 import { cn } from '../lib/utils';
 import { cacheUtils } from '../lib/cache-utils';
 
-export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p: Product) => void }) => {
+export const Home = ({ 
+  user, 
+  onAddToCart,
+  categories,
+  allProducts,
+  banners,
+  initialDataLoading
+}: { 
+  user: User | null;
+  onAddToCart: (p: Product) => void;
+  categories: Category[];
+  allProducts: Product[];
+  banners: Banner[];
+  initialDataLoading: boolean;
+}) => {
   const navigate = useNavigate();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [popularItems, setPopularItems] = useState<Product[]>([]);
-  const [newArrivals, setNewArrivals] = useState<Product[]>([]);
-  const [allProducts, setAllProducts] = useState<Product[]>([]);
-  const [banners, setBanners] = useState<Banner[]>([]);
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [hasUnreadNotifs, setHasUnreadNotifs] = useState(false);
   
@@ -28,88 +36,32 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
   const [jumpPage, setJumpPage] = useState('');
   const itemsPerPage = 10;
 
-  // Load cached data on mount for instant UI
-  useEffect(() => {
-    const cachedData = localStorage.getItem('home_cache');
-    if (cachedData) {
-      try {
-        const { categories: c, allProducts: p, banners: b } = JSON.parse(cachedData);
-        if (c && Array.isArray(c)) setCategories(c);
-        if (p && Array.isArray(p)) {
-          setAllProducts(p);
-          const cachePopulars = p.filter((product: any) => product.isPopular);
-          if (cachePopulars.length > 0) {
-            setPopularItems(cachePopulars);
-          } else {
-            setPopularItems(p.slice(0, 4));
-          }
-          const sortedNew = [...p].sort((a: any, b: any) => {
-            const timeA = a.createdAt?.seconds || 0;
-            const timeB = b.createdAt?.seconds || 0;
-            return timeB - timeA;
-          });
-          setNewArrivals(sortedNew.slice(0, 4));
-        }
-        if (b && Array.isArray(b)) setBanners(b);
-        setLoading(false); // We have cached data, so stop showing skeletons
-      } catch (e) {
-        console.error('Error parsing home cache', e);
-      }
+  // Deriving immediate states from properties for instant responses
+  const loading = initialDataLoading && categories.length === 0 && allProducts.length === 0;
+
+  const popularItems = useMemo(() => {
+    if (!allProducts || allProducts.length === 0) return [];
+    const populars = allProducts.filter(product => product.isPopular);
+    if (populars.length > 0) {
+      return populars;
+    } else {
+      const sortedPopular = [...allProducts].sort((a, b) => (b.salesCount || 0) - (a.salesCount || 0));
+      return sortedPopular.slice(0, 10);
     }
-  }, []);
+  }, [allProducts]);
 
+  const newArrivals = useMemo(() => {
+    if (!allProducts || allProducts.length === 0) return [];
+    const sortedNew = [...allProducts].sort((a, b) => {
+      const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+      const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+      return timeB - timeA;
+    });
+    return sortedNew.slice(0, 4);
+  }, [allProducts]);
+
+  // Handle Notifications query
   useEffect(() => {
-    // Fetch all categories to avoid skipping those without the 'order' field
-    const unsubCats = onSnapshot(collection(db, 'categories'), (snapshot) => {
-      let cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
-      
-      // Sort by order first, then by name
-      cats.sort((a, b) => {
-        const orderA = a.order ?? 999;
-        const orderB = b.order ?? 999;
-        if (orderA !== orderB) return orderA - orderB;
-        return a.name.localeCompare(b.name);
-      });
-
-      setCategories(cats.slice(0, 20));
-      updateCache({ categories: cats.slice(0, 20) });
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
-
-    const unsubAllProds = onSnapshot(query(collection(db, 'products'), limit(1000)), (snapshot) => {
-      const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-      setAllProducts(prods);
-      
-      const populars = prods.filter(product => product.isPopular);
-      if (populars.length > 0) {
-        setPopularItems(populars);
-      } else {
-        // Sort by salesCount for Popular Items fallback
-        const sortedPopular = [...prods].sort((a, b) => (b.salesCount || 0) - (a.salesCount || 0));
-        setPopularItems(sortedPopular.slice(0, 10));
-      }
-      
-      const sortedNew = [...prods].sort((a, b) => {
-        const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
-        const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
-        return timeB - timeA;
-      });
-      setNewArrivals(sortedNew.slice(0, 4));
-      
-      setLoading(false);
-      updateCache({ allProducts: prods });
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
-
-    const unsubBanners = onSnapshot(query(collection(db, 'banners'), where('active', '==', true)), (snapshot) => {
-      const bannersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Banner));
-      const sortedBanners = bannersData.sort((a, b) => {
-        const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
-        const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
-        return timeB - timeA;
-      });
-      setBanners(sortedBanners);
-      updateCache({ banners: sortedBanners });
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'banners'));
-
     const unsubNotifs = onSnapshot(query(collection(db, 'notifications'), orderBy('createdAt', 'desc'), limit(20)), (snapshot) => {
       const notifs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
       const saved = localStorage.getItem('read_notifications');
@@ -125,23 +77,7 @@ export const Home = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p
       setHasUnreadNotifs(unread);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'notifications'));
 
-    const updateCache = (newData: any) => {
-      const currentCache = JSON.parse(cacheUtils.getItem('home_cache') || '{}');
-      
-      // Limit products in cache to avoid QuotaExceededError
-      if (newData.allProducts) {
-        newData.allProducts = newData.allProducts.slice(0, 20);
-      }
-      
-      cacheUtils.setItem('home_cache', { ...currentCache, ...newData });
-    };
-
-    return () => {
-      unsubCats();
-      unsubAllProds();
-      unsubBanners();
-      unsubNotifs();
-    };
+    return () => unsubNotifs();
   }, []);
 
   useEffect(() => {

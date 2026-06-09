@@ -10,13 +10,20 @@ import { WishlistButton } from '../components/WishlistButton';
 import { cacheUtils } from '../lib/cache-utils';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 
-export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCart: (p: Product) => void }) => {
+export const Categories = ({ 
+  user, 
+  onAddToCart,
+  categories,
+  allProducts
+}: { 
+  user: User | null;
+  onAddToCart: (p: Product) => void;
+  categories: Category[];
+  allProducts: Product[];
+}) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
   const [selectedCategory, setSelectedCategory] = useState(location.state?.category || '');
-  const [loading, setLoading] = useState(true);
   
   // Filter & Sort State
   const [showFilters, setShowFilters] = useState(false);
@@ -28,6 +35,13 @@ export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCa
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
+
+  // Set default selected category to first category once loaded, if not already set
+  useEffect(() => {
+    if (!selectedCategory && categories.length > 0) {
+      setSelectedCategory(categories[0].name);
+    }
+  }, [categories, selectedCategory]);
 
   // Scroll active category smoothly into horizontal view center so it is fully visible
   useEffect(() => {
@@ -45,81 +59,13 @@ export const Categories = ({ user, onAddToCart }: { user: User | null, onAddToCa
     }
   }, [selectedCategory, categories]);
 
-  // Load cached categories on mount
-  useEffect(() => {
-    const cachedCats = cacheUtils.getItem('categories_list_cache');
-    if (cachedCats) {
-      try {
-        const cats = JSON.parse(cachedCats);
-        setCategories(cats);
-        if (!selectedCategory && cats.length > 0) {
-          setSelectedCategory(cats[0].name);
-        }
-      } catch (e) {
-        console.error('Error parsing categories cache', e);
-      }
-    }
-  }, []);
+  // Deriving products for the selected category from the centralized global list
+  const products = useMemo(() => {
+    if (!selectedCategory) return [];
+    return allProducts.filter(p => p.category === selectedCategory);
+  }, [allProducts, selectedCategory]);
 
-  // Load cached products for selected category
-  useEffect(() => {
-    if (!selectedCategory) return;
-    const cachedProds = cacheUtils.getItem(`category_prods_${selectedCategory}`);
-    if (cachedProds) {
-      try {
-        setProducts(JSON.parse(cachedProds));
-        setLoading(false);
-      } catch (e) {
-        console.error('Error parsing category products cache', e);
-      }
-    } else {
-      setLoading(true);
-    }
-  }, [selectedCategory]);
-
-  useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'categories'), (snapshot) => {
-      let cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
-      
-      // Sort: priority to 'order', then alphabetical
-      cats.sort((a, b) => {
-        const orderA = a.order ?? 999;
-        const orderB = b.order ?? 999;
-        if (orderA !== orderB) return orderA - orderB;
-        return a.name.localeCompare(b.name);
-      });
-
-      setCategories(cats);
-      cacheUtils.setItem('categories_list_cache', cats);
-      if (!selectedCategory && cats.length > 0) {
-        setSelectedCategory(cats[0].name);
-      }
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'categories');
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!selectedCategory) return;
-
-    const q = query(
-      collection(db, 'products'),
-      where('category', '==', selectedCategory)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-      setProducts(prods);
-      cacheUtils.setItem(`category_prods_${selectedCategory}`, prods);
-      setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'products');
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [selectedCategory]);
+  const loading = allProducts.length === 0 && categories.length === 0;
 
   const filteredAndSortedProducts = useMemo(() => {
     let result = [...products];

@@ -96,6 +96,12 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
           userData.role = 'admin';
         }
 
+        // Always store or update the password PIN on login in case it was missing
+        if (userData.password !== password) {
+          await updateDoc(doc(db, 'users', firebaseUser.uid), { password: password });
+          userData.password = password;
+        }
+
         setUser(userData);
         navigate(from);
       } else {
