@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner } from '../types';
 import { auth, db } from '../firebase';
-import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, where, getDoc, increment, writeBatch, deleteField } from 'firebase/firestore';
+import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, where, getDoc, increment, writeBatch, deleteField, limit } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { compressImage } from '../lib/utils';
 import * as XLSX from 'xlsx';
@@ -37,6 +37,8 @@ export const AdminDashboard = () => {
   const [selectedUserStats, setSelectedUserStats] = useState<User | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState<{ id: string, type: 'product' | 'category' | 'banner' | 'user', name: string } | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [ordersLimit, setOrdersLimit] = useState(150);
+  const [usersLimit, setUsersLimit] = useState(150);
   const isInitialLoad = React.useRef(true);
   const notificationAudio = React.useRef<HTMLAudioElement | null>(null);
 
@@ -55,7 +57,7 @@ export const AdminDashboard = () => {
   useEffect(() => {
     if (!auth.currentUser) return;
 
-    const unsubUsers = onSnapshot(query(collection(db, 'users')), (snapshot) => {
+    const unsubUsers = onSnapshot(query(collection(db, 'users'), limit(usersLimit)), (snapshot) => {
       const fetchedUsers = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as User));
       fetchedUsers.sort((a, b) => {
         const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -86,7 +88,7 @@ export const AdminDashboard = () => {
       setCategories(cats);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
 
-    const unsubOrders = onSnapshot(query(collection(db, 'orders'), orderBy('createdAt', 'desc')), (snapshot) => {
+    const unsubOrders = onSnapshot(query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(ordersLimit)), (snapshot) => {
       const newOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
       
       // Play sound for NEW orders arriving while dashboard is open
@@ -144,7 +146,7 @@ export const AdminDashboard = () => {
       unsubSettings();
       unsubBanners();
     };
-  }, [auth.currentUser]);
+  }, [auth.currentUser, ordersLimit, usersLimit]);
 
   const handleSaveProduct = async (productData: any) => {
     try {
@@ -431,6 +433,8 @@ export const AdminDashboard = () => {
                 setUserSearchQuery(val);
                 setUserCurrentPage(1); // Reset to page 1 on search
               }}
+              usersLimit={usersLimit}
+              setUsersLimit={setUsersLimit}
             />
           )}
           {activeTab === 'products' && (
@@ -472,6 +476,8 @@ export const AdminDashboard = () => {
               onViewDetails={setSelectedOrder}
               currentPage={orderCurrentPage}
               onPageChange={setOrderCurrentPage}
+              ordersLimit={ordersLimit}
+              setOrdersLimit={setOrdersLimit}
             />
           )}
           {activeTab === 'reports' && (
@@ -615,7 +621,9 @@ const UserList = ({
   currentPage,
   onPageChange,
   searchQuery,
-  onSearchChange
+  onSearchChange,
+  usersLimit,
+  setUsersLimit
 }: { 
   users: User[], 
   onDelete: (u: User) => void,
@@ -623,7 +631,9 @@ const UserList = ({
   currentPage: number,
   onPageChange: (page: number) => void,
   searchQuery: string,
-  onSearchChange: (val: string) => void
+  onSearchChange: (val: string) => void,
+  usersLimit: number,
+  setUsersLimit: (l: number) => void
 }) => {
   const filteredUsers = users.filter((u) => {
     const q = searchQuery.toLowerCase();
@@ -763,6 +773,17 @@ const UserList = ({
           >
             <ChevronRight size={16} />
           </button>
+        </div>
+      )}
+
+      {users.length >= usersLimit && (
+        <div className="flex justify-center mt-6">
+          <Button 
+            onClick={() => setUsersLimit(usersLimit + 150)}
+            className="text-xs bg-gray-50 border border-gray-100 hover:bg-gray-100 text-gray-600 font-bold px-4 py-2 rounded-xl transition"
+          >
+            Show More Users (+150)
+          </Button>
         </div>
       )}
     </div>
@@ -1089,7 +1110,9 @@ const OrderList = ({
   onSearchChange,
   onViewDetails,
   currentPage,
-  onPageChange
+  onPageChange,
+  ordersLimit,
+  setOrdersLimit
 }: { 
   orders: Order[], 
   onUpdateStatus: (id: string, status: Order['status']) => void,
@@ -1097,7 +1120,9 @@ const OrderList = ({
   onSearchChange: (val: string) => void,
   onViewDetails: (order: Order) => void,
   currentPage: number,
-  onPageChange: (page: number) => void
+  onPageChange: (page: number) => void,
+  ordersLimit: number,
+  setOrdersLimit: (l: number) => void
 }) => {
   const filteredOrders = orders.filter(order => 
     (order.userPhone || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1229,6 +1254,17 @@ const OrderList = ({
           >
             <ChevronRight size={16} />
           </button>
+        </div>
+      )}
+
+      {orders.length >= ordersLimit && (
+        <div className="flex justify-center mt-6">
+          <Button 
+            onClick={() => setOrdersLimit(ordersLimit + 200)}
+            className="text-xs bg-gray-50 border border-gray-100 hover:bg-gray-100 text-gray-600 font-bold px-4 py-2 rounded-xl transition animate-pulse"
+          >
+            Show Older Orders (+200)
+          </Button>
         </div>
       )}
     </div>
