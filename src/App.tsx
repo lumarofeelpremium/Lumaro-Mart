@@ -35,8 +35,45 @@ export default function App() {
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [banners, setBanners] = useState<Banner[]>([]);
   const [initialDataLoading, setInitialDataLoading] = useState(true);
+  const [productsLimit, setProductsLimit] = useState(45); // Start with a small batch to load instantly
 
-  // Centralized real-time listener for Categories, Products and Banners
+  // Progressive background expansion of product limit after first paint
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setProductsLimit(1000); // Fully load remaining products in the background
+    }, 2200);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Centralized real-time listener for products with progressive limit
+  useEffect(() => {
+    const updateLocalCache = (newData: any) => {
+      setTimeout(() => {
+        try {
+          const currentCache = JSON.parse(localStorage.getItem('home_cache') || '{}');
+          if (newData.allProducts) {
+            newData.allProducts = newData.allProducts.slice(0, 60);
+          }
+          localStorage.setItem('home_cache', JSON.stringify({ ...currentCache, ...newData }));
+        } catch (e) {
+          console.warn('Silent cache update failure in App:', e);
+        }
+      }, 800);
+    };
+
+    const unsubAllProds = onSnapshot(query(collection(db, 'products'), limit(productsLimit)), (snapshot) => {
+      const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      setAllProducts(prods);
+      setInitialDataLoading(false);
+      updateLocalCache({ allProducts: prods });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
+
+    return () => {
+      unsubAllProds();
+    };
+  }, [productsLimit]);
+
+  // Centralized real-time listener for Categories and Banners
   useEffect(() => {
     // 1. First feed from localCache immediately for a 0ms paint
     const cachedHome = localStorage.getItem('home_cache');
@@ -64,13 +101,6 @@ export default function App() {
       setCategories(cats);
       updateLocalCache({ categories: cats });
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
-
-    const unsubAllProds = onSnapshot(query(collection(db, 'products'), limit(1000)), (snapshot) => {
-      const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-      setAllProducts(prods);
-      setInitialDataLoading(false);
-      updateLocalCache({ allProducts: prods });
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
 
     const unsubBanners = onSnapshot(query(collection(db, 'banners'), where('active', '==', true)), (snapshot) => {
       const bannersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Banner));
@@ -101,7 +131,6 @@ export default function App() {
 
     return () => {
       unsubCats();
-      unsubAllProds();
       unsubBanners();
     };
   }, []);
