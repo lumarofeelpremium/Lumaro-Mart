@@ -84,16 +84,19 @@ export default function App() {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'banners'));
 
     const updateLocalCache = (newData: any) => {
-      try {
-        const currentCache = JSON.parse(localStorage.getItem('home_cache') || '{}');
-        // Slice cached products slightly to respect localStorage limit
-        if (newData.allProducts) {
-          newData.allProducts = newData.allProducts.slice(0, 80);
+      // Defer synchronous localStorage writes to avoid main-thread rendering bottlenecks
+      setTimeout(() => {
+        try {
+          const currentCache = JSON.parse(localStorage.getItem('home_cache') || '{}');
+          // Slice cached products slightly to respect localStorage limit and optimize parsing
+          if (newData.allProducts) {
+            newData.allProducts = newData.allProducts.slice(0, 60);
+          }
+          localStorage.setItem('home_cache', JSON.stringify({ ...currentCache, ...newData }));
+        } catch (e) {
+          console.warn('Silent cache update failure in App:', e);
         }
-        localStorage.setItem('home_cache', JSON.stringify({ ...currentCache, ...newData }));
-      } catch (e) {
-        console.warn('Silent cache update failure in App:', e);
-      }
+      }, 800);
     };
 
     return () => {
@@ -106,6 +109,9 @@ export default function App() {
   // Auto-Update checker effect
   useEffect(() => {
     let active = true;
+    let firstCheckTimeout: any;
+    let interval: any;
+
     const checkUpdate = async () => {
       try {
         const res = await fetch(`/version.json?t=${Date.now()}`);
@@ -117,6 +123,14 @@ export default function App() {
         const localVersion = typeof __BUILD_TIME__ !== 'undefined' ? Number(__BUILD_TIME__) : 0;
 
         if (serverVersion && localVersion && serverVersion > localVersion) {
+          // Check for reload protection loop
+          const now = Date.now();
+          const lastReload = sessionStorage.getItem('last_auto_update_reload');
+          if (lastReload && now - Number(lastReload) < 30000) {
+            console.warn('[AutoUpdate] Blocked potential infinite reload loop.');
+            return;
+          }
+
           console.log(`[AutoUpdate] New version detected: ${serverVersion} (local: ${localVersion})`);
           setIsUpdating(true);
 
@@ -135,6 +149,9 @@ export default function App() {
             }
           });
 
+          // Mark reload timestamp to prevent infinite reload loop
+          sessionStorage.setItem('last_auto_update_reload', String(now));
+
           // Wait a brief moment for the user to see the update message, then hard reload
           setTimeout(() => {
             window.location.reload();
@@ -145,8 +162,10 @@ export default function App() {
       }
     };
 
-    // Run immediately on load
-    checkUpdate();
+    // Delay the very first startup check by 5 seconds so it doesn't run during critical rendering path
+    firstCheckTimeout = setTimeout(() => {
+      checkUpdate();
+    }, 5000);
 
     // Check when user resumes the app (brings tab to foreground)
     const handleVisibilityChange = () => {
@@ -156,13 +175,14 @@ export default function App() {
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Check periodically every 2 minutes
-    const interval = setInterval(checkUpdate, 120000);
+    // Check periodically every 15 minutes (900,000 ms) instead of 2 minutes to conserve battery, data, and CPU on mobile
+    interval = setInterval(checkUpdate, 900000);
 
     return () => {
       active = false;
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearTimeout(firstCheckTimeout);
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 
@@ -368,7 +388,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Router>
-        <div className="max-w-md mx-auto bg-white min-h-screen relative shadow-2xl shadow-black/10 overflow-x-hidden overflow-y-auto pb-24 mb-safe">
+        <div className="max-w-md mx-auto bg-white min-h-screen relative shadow-2xl shadow-black/10 overflow-x-hidden pb-24">
           <Routes>
             <Route path="/" element={<Home user={user} onAddToCart={handleAddToCart} categories={categories} allProducts={allProducts} banners={banners} initialDataLoading={initialDataLoading} />} />
             <Route path="/signup" element={<Signup setUser={setUser} />} />

@@ -16,7 +16,7 @@ export const BottomNav = ({ cartCount }: { cartCount: number }) => {
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-100 flex justify-around items-center z-50 pb-safe shadow-[0_-5px_15px_rgba(0,0,0,0.05)] min-h-[72px] h-[calc(72px+env(safe-area-inset-bottom))]">
+    <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white/95 backdrop-blur-md border-t border-gray-100 flex justify-around items-center z-50 pb-safe shadow-[0_-5px_15px_rgba(0,0,0,0.05)] min-h-[72px] h-[calc(72px+env(safe-area-inset-bottom))]">
       {navItems.map((item) => (
         <NavLink
           key={item.path}
