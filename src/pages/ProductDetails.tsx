@@ -73,6 +73,12 @@ export const ProductDetails = ({
 
   // Load cached product and reviews on mount
   useEffect(() => {
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTo(0, 0);
+    document.body.scrollTo(0, 0);
+  }, [id]);
+
+  useEffect(() => {
     if (!id) return;
     const cachedProduct = cacheUtils.getItem(`product_detail_${id}`);
     if (cachedProduct) {

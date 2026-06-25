@@ -17,11 +17,71 @@ import { OrderConfirmation } from './pages/OrderConfirmation';
 import { ProductDetails } from './pages/ProductDetails';
 import { BottomNav } from './components/BottomNav';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import ScrollToTop from './components/ScrollToTop';
 import { User, CartItem, Product, Category, Banner } from './types';
 
 import firebaseConfig from '../firebase-applet-config.json';
 
 declare const __BUILD_TIME__: number;
+
+// Helper to serialize deep objects safely for localStorage to avoid circular structure JSON issues
+const serializeForCache = (val: any, seen = new Set<any>()): any => {
+  if (val === null || typeof val !== 'object') {
+    return val;
+  }
+  if (seen.has(val)) {
+    return undefined; // Break circular reference safely
+  }
+  if (typeof val.seconds === 'number' && typeof val.nanoseconds === 'number') {
+    return { seconds: val.seconds, nanoseconds: val.nanoseconds };
+  }
+  if (val instanceof Date) {
+    return val.toISOString();
+  }
+  // Safe check for constructor names of minified or unminified classes to prevent crash
+  if (val.constructor && (val.constructor.name === 'DocumentReference' || val.constructor.name === 'Query' || val.constructor.name === 'Firestore')) {
+    return val.path || undefined;
+  }
+  if (val.path && typeof val.path === 'string' && val.firestore) {
+    return val.path;
+  }
+  if (Array.isArray(val)) {
+    seen.add(val);
+    const arrCopy = [];
+    for (const item of val) {
+      arrCopy.push(serializeForCache(item, seen));
+    }
+    seen.delete(val);
+    return arrCopy;
+  }
+  seen.add(val);
+  const objCopy: any = {};
+  for (const key of Object.keys(val)) {
+    const propVal = val[key];
+    if (typeof propVal === 'function' || typeof propVal === 'symbol') {
+      continue;
+    }
+    objCopy[key] = serializeForCache(propVal, seen);
+  }
+  seen.delete(val);
+  return objCopy;
+};
+
+const updateLocalCache = (newData: any) => {
+  setTimeout(() => {
+    try {
+      const currentCache = JSON.parse(localStorage.getItem('home_cache') || '{}');
+      if (newData.allProducts) {
+        newData.allProducts = newData.allProducts.slice(0, 60);
+      }
+      const combined = { ...currentCache, ...newData };
+      const serialized = serializeForCache(combined);
+      localStorage.setItem('home_cache', JSON.stringify(serialized));
+    } catch (e) {
+      console.warn('Silent cache update failure in App:', e);
+    }
+  }, 800);
+};
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -47,20 +107,6 @@ export default function App() {
 
   // Centralized real-time listener for products with progressive limit
   useEffect(() => {
-    const updateLocalCache = (newData: any) => {
-      setTimeout(() => {
-        try {
-          const currentCache = JSON.parse(localStorage.getItem('home_cache') || '{}');
-          if (newData.allProducts) {
-            newData.allProducts = newData.allProducts.slice(0, 60);
-          }
-          localStorage.setItem('home_cache', JSON.stringify({ ...currentCache, ...newData }));
-        } catch (e) {
-          console.warn('Silent cache update failure in App:', e);
-        }
-      }, 800);
-    };
-
     const unsubAllProds = onSnapshot(query(collection(db, 'products'), limit(productsLimit)), (snapshot) => {
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setAllProducts(prods);
@@ -112,22 +158,6 @@ export default function App() {
       setBanners(sortedBanners);
       updateLocalCache({ banners: sortedBanners });
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'banners'));
-
-    const updateLocalCache = (newData: any) => {
-      // Defer synchronous localStorage writes to avoid main-thread rendering bottlenecks
-      setTimeout(() => {
-        try {
-          const currentCache = JSON.parse(localStorage.getItem('home_cache') || '{}');
-          // Slice cached products slightly to respect localStorage limit and optimize parsing
-          if (newData.allProducts) {
-            newData.allProducts = newData.allProducts.slice(0, 60);
-          }
-          localStorage.setItem('home_cache', JSON.stringify({ ...currentCache, ...newData }));
-        } catch (e) {
-          console.warn('Silent cache update failure in App:', e);
-        }
-      }, 800);
-    };
 
     return () => {
       unsubCats();
@@ -417,6 +447,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Router>
+        <ScrollToTop />
         <div className="max-w-md mx-auto bg-white min-h-screen relative shadow-2xl shadow-black/10 overflow-x-hidden pb-24">
           <Routes>
             <Route path="/" element={<Home user={user} onAddToCart={handleAddToCart} categories={categories} allProducts={allProducts} banners={banners} initialDataLoading={initialDataLoading} />} />

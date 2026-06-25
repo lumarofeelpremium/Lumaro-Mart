@@ -164,13 +164,18 @@ export const Cart = ({
             const sData = sDoc.data();
             if (sData.telegramEnabled && sData.telegramBotToken && sData.telegramChatId) {
               const cleanToken = sData.telegramBotToken.trim().replace(/^bot/i, '');
+              const itemsDetails = items.map((item, idx) => {
+                const itemPrice = item.discountPrice || item.price;
+                return `🔹 ${idx + 1}. <b>${item.name}</b> x ${item.quantity} (₹${itemPrice})`;
+              }).join('\n');
+
               const tgMessage = `🚀 <b>NEW ORDER RECEIVED</b>\n\n` +
                 `📦 <b>Order ID:</b> #${orderRef.id.slice(-6)}\n` +
                 `👤 <b>Customer:</b> ${user.displayName || 'Guest'}\n` +
                 `💰 <b>Total:</b> ₹${total}\n` +
                 `📍 <b>Pincode:</b> ${pincode || user.pincode || 'N/A'}\n` +
                 `📞 <b>Phone:</b> ${user.phoneNumber || 'N/A'}\n\n` +
-                `🛒 <b>Items:</b> ${items.length}\n` +
+                `🛒 <b>Items Ordered:</b>\n${itemsDetails}\n\n` +
                 `Check Admin Dashboard for details.`;
               
               await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
