@@ -965,7 +965,6 @@ const ProductList = ({
                     key={p.id} 
                     onClick={() => {
                       onEdit(p);
-                      setIsAlertsExpanded(false);
                     }}
                     className="w-full flex justify-between items-center bg-white/50 p-3 rounded-xl border border-orange-100/50 hover:bg-white hover:border-orange-300 transition-all text-left group"
                     title="Click to edit product stock"
