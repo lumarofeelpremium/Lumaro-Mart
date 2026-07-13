@@ -27,7 +27,14 @@ declare const __BUILD_TIME__: number;
 const isPlainObject = (obj: any): boolean => {
   if (typeof obj !== 'object' || obj === null) return false;
   const proto = Object.getPrototypeOf(obj);
-  return proto === Object.prototype || proto === null;
+  if (proto !== Object.prototype && proto !== null) return false;
+  
+  // Extra safety: Check if constructor is Object or undefined to filter out minified SDK classes
+  if (obj.constructor !== undefined && obj.constructor !== Object) {
+    return false;
+  }
+  
+  return true;
 };
 
 // Helper to serialize deep objects safely for localStorage to avoid circular structure JSON issues
@@ -87,9 +94,13 @@ const serializeForCache = (val: any, seen = new Set<any>()): any => {
   // For any other non-plain object (like Firestore internal class instances), do not traverse them!
   // Instead, convert to string if helpful, or return undefined to prevent circular/deep serialization crash.
   if (typeof val.toString === 'function') {
-    const str = val.toString();
-    if (str !== '[object Object]') {
-      return str;
+    try {
+      const str = val.toString();
+      if (str !== '[object Object]') {
+        return str;
+      }
+    } catch (e) {
+      // Ignore toString errors
     }
   }
   return undefined;

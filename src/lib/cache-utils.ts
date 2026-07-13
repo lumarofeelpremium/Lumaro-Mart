@@ -5,7 +5,14 @@
 const isPlainObject = (obj: any): boolean => {
   if (typeof obj !== 'object' || obj === null) return false;
   const proto = Object.getPrototypeOf(obj);
-  return proto === Object.prototype || proto === null;
+  if (proto !== Object.prototype && proto !== null) return false;
+  
+  // Extra safety: Check if constructor is Object or undefined to filter out minified SDK classes
+  if (obj.constructor !== undefined && obj.constructor !== Object) {
+    return false;
+  }
+  
+  return true;
 };
 
 const sanitizeForStringify = (val: any, seen = new Set<any>()): any => {
@@ -68,9 +75,13 @@ const sanitizeForStringify = (val: any, seen = new Set<any>()): any => {
   }
   
   if (typeof val.toString === 'function') {
-    const str = val.toString();
-    if (str !== '[object Object]') {
-      return str;
+    try {
+      const str = val.toString();
+      if (str !== '[object Object]') {
+        return str;
+      }
+    } catch (e) {
+      // Ignore toString errors and fallback to [Class: Name]
     }
   }
 
