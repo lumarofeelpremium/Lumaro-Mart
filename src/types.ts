@@ -87,6 +87,7 @@ export interface AppSettings {
   stockThreshold?: number;
   supportNumber?: string;
   supportEnabled?: boolean;
+  orderTimingEnabled?: boolean;
 }
 
 export interface Banner {

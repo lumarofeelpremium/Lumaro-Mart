@@ -2,57 +2,96 @@
  * Utility for safe localStorage operations to prevent QuotaExceededError
  */
 
+const isPlainObject = (obj: any): boolean => {
+  if (typeof obj !== 'object' || obj === null) return false;
+  const proto = Object.getPrototypeOf(obj);
+  return proto === Object.prototype || proto === null;
+};
+
+const sanitizeForStringify = (val: any, seen = new Set<any>()): any => {
+  if (val === null || val === undefined) {
+    return val;
+  }
+
+  const valType = typeof val;
+  if (valType !== 'object') {
+    return val;
+  }
+
+  if (seen.has(val)) {
+    return '[Circular]';
+  }
+
+  if (val instanceof Date) {
+    return val.toISOString();
+  }
+
+  // Handle Firestore Timestamp
+  if (typeof val.seconds === 'number' && typeof val.nanoseconds === 'number') {
+    return { seconds: val.seconds, nanoseconds: val.nanoseconds };
+  }
+
+  // Handle Firestore DocumentReference (has a path string and firestore property)
+  if (typeof val.path === 'string' && val.firestore) {
+    return val.path;
+  }
+
+  if (Array.isArray(val)) {
+    seen.add(val);
+    const arrCopy = [];
+    for (const item of val) {
+      arrCopy.push(sanitizeForStringify(item, seen));
+    }
+    seen.delete(val);
+    return arrCopy;
+  }
+
+  // If it's a plain object, traverse its keys
+  if (isPlainObject(val)) {
+    seen.add(val);
+    const objCopy: any = {};
+    for (const key of Object.keys(val)) {
+      const propVal = val[key];
+      if (typeof propVal === 'function' || typeof propVal === 'symbol') {
+        continue;
+      }
+      objCopy[key] = sanitizeForStringify(propVal, seen);
+    }
+    seen.delete(val);
+    return objCopy;
+  }
+
+  // If it's some other non-plain object (like Firestore internal class instances), do not traverse them!
+  const constructorName = val.constructor?.name || 'Object';
+  if (constructorName === 'HTMLImageElement' || constructorName === 'Image') {
+    return `[Image: ${val.src || ''}]`;
+  }
+  
+  if (typeof val.toString === 'function') {
+    const str = val.toString();
+    if (str !== '[object Object]') {
+      return str;
+    }
+  }
+
+  return `[Class: ${constructorName}]`;
+};
+
 export const cacheUtils = {
+  /**
+   * Safely sanitize complex, circular, or non-plain structures into plain JSON objects
+   */
+  sanitize: (obj: any) => {
+    return sanitizeForStringify(obj);
+  },
+
   /**
    * Safe stringify to avoid circular structure errors
    */
   safeStringify: (obj: any) => {
     try {
-      const seen = new WeakSet();
-      return JSON.stringify(obj, (key, value) => {
-        if (value === null || value === undefined) return value;
-        
-        if (typeof value === 'object') {
-          if (seen.has(value)) {
-            return '[Circular]';
-          }
-          seen.add(value);
-
-          if (Array.isArray(value)) {
-            return value;
-          }
-
-          if (value instanceof Date) {
-            return value.toISOString();
-          }
-
-          if (value instanceof Error) {
-            return { name: value.name, message: value.message, stack: value.stack, _type: 'Error' };
-          }
-
-          if (typeof value.toMillis === 'function') {
-            return { seconds: value.seconds, nanoseconds: value.nanoseconds, _type: 'Timestamp' };
-          }
-
-          if (
-            typeof window !== 'undefined' && 
-            (value === window || value === document || value instanceof Node || value instanceof Event)
-          ) {
-            return '[Browser Object]';
-          }
-
-          const proto = Object.getPrototypeOf(value);
-          const isPlain = proto === null || proto === Object.prototype;
-          if (!isPlain && typeof value.toJSON !== 'function') {
-            const constructorName = value.constructor?.name || 'Object';
-            if (constructorName === 'HTMLImageElement' || constructorName === 'Image') {
-              return `[Image: ${value.src || ''}]`;
-            }
-            return `[Class: ${constructorName}]`;
-          }
-        }
-        return value;
-      });
+      const sanitized = sanitizeForStringify(obj);
+      return JSON.stringify(sanitized);
     } catch (e) {
       console.warn('Safe stringify failed, falling back to String():', e);
       return String(obj);

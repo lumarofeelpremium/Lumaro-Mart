@@ -24,27 +24,41 @@ import firebaseConfig from '../firebase-applet-config.json';
 
 declare const __BUILD_TIME__: number;
 
+const isPlainObject = (obj: any): boolean => {
+  if (typeof obj !== 'object' || obj === null) return false;
+  const proto = Object.getPrototypeOf(obj);
+  return proto === Object.prototype || proto === null;
+};
+
 // Helper to serialize deep objects safely for localStorage to avoid circular structure JSON issues
 const serializeForCache = (val: any, seen = new Set<any>()): any => {
-  if (val === null || typeof val !== 'object') {
+  if (val === null || val === undefined) {
     return val;
   }
+
+  const valType = typeof val;
+  if (valType !== 'object') {
+    return val;
+  }
+
   if (seen.has(val)) {
     return undefined; // Break circular reference safely
   }
-  if (typeof val.seconds === 'number' && typeof val.nanoseconds === 'number') {
-    return { seconds: val.seconds, nanoseconds: val.nanoseconds };
-  }
+
   if (val instanceof Date) {
     return val.toISOString();
   }
-  // Safe check for constructor names of minified or unminified classes to prevent crash
-  if (val.constructor && (val.constructor.name === 'DocumentReference' || val.constructor.name === 'Query' || val.constructor.name === 'Firestore')) {
-    return val.path || undefined;
+
+  // Handle Firestore Timestamp
+  if (typeof val.seconds === 'number' && typeof val.nanoseconds === 'number') {
+    return { seconds: val.seconds, nanoseconds: val.nanoseconds };
   }
-  if (val.path && typeof val.path === 'string' && val.firestore) {
+
+  // Handle Firestore DocumentReference (has a path string and firestore property)
+  if (typeof val.path === 'string' && val.firestore) {
     return val.path;
   }
+
   if (Array.isArray(val)) {
     seen.add(val);
     const arrCopy = [];
@@ -54,17 +68,31 @@ const serializeForCache = (val: any, seen = new Set<any>()): any => {
     seen.delete(val);
     return arrCopy;
   }
-  seen.add(val);
-  const objCopy: any = {};
-  for (const key of Object.keys(val)) {
-    const propVal = val[key];
-    if (typeof propVal === 'function' || typeof propVal === 'symbol') {
-      continue;
+
+  // ONLY walk properties of PLAIN OBJECTS to prevent traversing Firestore SDK internals (like minified 'Y' and 'Ka' classes)
+  if (isPlainObject(val)) {
+    seen.add(val);
+    const objCopy: any = {};
+    for (const key of Object.keys(val)) {
+      const propVal = val[key];
+      if (typeof propVal === 'function' || typeof propVal === 'symbol') {
+        continue;
+      }
+      objCopy[key] = serializeForCache(propVal, seen);
     }
-    objCopy[key] = serializeForCache(propVal, seen);
+    seen.delete(val);
+    return objCopy;
   }
-  seen.delete(val);
-  return objCopy;
+
+  // For any other non-plain object (like Firestore internal class instances), do not traverse them!
+  // Instead, convert to string if helpful, or return undefined to prevent circular/deep serialization crash.
+  if (typeof val.toString === 'function') {
+    const str = val.toString();
+    if (str !== '[object Object]') {
+      return str;
+    }
+  }
+  return undefined;
 };
 
 const updateLocalCache = (newData: any) => {

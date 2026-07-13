@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Minus, Plus, Trash2, Loader2, MapPin, X, Star, CheckCircle2, ShoppingCart, User as UserIcon } from 'lucide-react';
+import { ChevronLeft, Minus, Plus, Trash2, Loader2, MapPin, X, Star, CheckCircle2, ShoppingCart, User as UserIcon, Clock } from 'lucide-react';
 import { Button, Input } from '../components/ui/Base';
 import { useNavigate } from 'react-router-dom';
 import { CartItem, User, AppSettings } from '../types';
@@ -8,6 +8,7 @@ import { db } from '../firebase';
 import { cn } from '../lib/utils';
 import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc, increment, writeBatch, getDocs, query, where } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
+import { cacheUtils } from '../lib/cache-utils';
 
 export const Cart = ({ 
   user,
@@ -33,6 +34,7 @@ export const Cart = ({
   const [pincode, setPincode] = useState(user?.pincode || '');
   const [whatsappNumber, setWhatsappNumber] = useState('');
   const [whatsappEnabled, setWhatsappEnabled] = useState(true);
+  const [orderTimingEnabled, setOrderTimingEnabled] = useState(true);
   const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
   const [isFirstOrder, setIsFirstOrder] = useState(false);
 
@@ -81,6 +83,7 @@ export const Cart = ({
           const data = settingsDoc.data();
           setWhatsappNumber(data.whatsappNumber);
           setWhatsappEnabled(data.whatsappEnabled ?? true);
+          setOrderTimingEnabled(data.orderTimingEnabled ?? true);
         }
       } catch (error) {
         console.error("Error fetching settings:", error);
@@ -89,7 +92,27 @@ export const Cart = ({
     fetchSettings();
   }, []);
 
+  const checkIsOrderingOpen = () => {
+    if (!orderTimingEnabled) return true;
+
+    const now = new Date();
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const totalMinutes = hours * 60 + minutes;
+    const startMinutes = 6 * 60; // 6:00 AM
+    const endMinutes = 22 * 60; // 10:00 PM
+    
+    return totalMinutes >= startMinutes && totalMinutes <= endMinutes;
+  };
+
+  const isOrderingOpen = checkIsOrderingOpen();
+
   const handleConfirmOrder = async () => {
+    if (!checkIsOrderingOpen()) {
+      setError("सॉरी! आप केवल सुबह 6:00 AM से रात 10:00 PM के बीच ही ऑर्डर कर सकते हैं।");
+      return;
+    }
+
     if (!user) {
       setShowLoginPrompt(true);
       return;
@@ -218,7 +241,7 @@ export const Cart = ({
 
       // 2. Navigate FIRST to ensure user sees the success page
       navigate('/order-confirmation', { 
-        state: confirmationState,
+        state: cacheUtils.sanitize(confirmationState),
         replace: true 
       });
 
@@ -258,6 +281,18 @@ export const Cart = ({
         <div className="mx-6 mt-4 p-4 bg-red-50 text-red-600 rounded-2xl text-sm font-medium border border-red-100 flex items-center gap-3">
           <div className="w-1.5 h-1.5 bg-red-600 rounded-full animate-pulse flex-shrink-0" />
           <p>{error.includes('{') ? 'Payment/Order verification failed. Please check your connection.' : error}</p>
+        </div>
+      )}
+
+      {!isOrderingOpen && (
+        <div className="mx-6 mt-4 p-4 bg-amber-50 text-amber-800 rounded-2xl text-sm font-medium border border-amber-200/60 flex items-start gap-3 shadow-sm">
+          <Clock className="text-amber-600 flex-shrink-0 mt-0.5" size={18} />
+          <div>
+            <p className="font-bold text-amber-950">ऑर्डर बंद है (Ordering Closed)</p>
+            <p className="text-xs text-amber-700 leading-relaxed mt-0.5">
+              आप केवल सुबह <strong>6:00 AM से रात 10:00 PM</strong> के बीच ही ऑर्डर कर सकते हैं।
+            </p>
+          </div>
         </div>
       )}
 
@@ -443,17 +478,19 @@ export const Cart = ({
               <Button 
                 className={cn(
                   "w-full py-5 text-lg rounded-3xl shadow-lg flex items-center justify-center gap-2 transition-all",
-                  (isProcessing || hasOutOfStockItems || hasInsufficientStock)
+                  (isProcessing || hasOutOfStockItems || hasInsufficientStock || !isOrderingOpen)
                     ? "bg-gray-300 shadow-none cursor-not-allowed"
                     : "shadow-[#66D2A4]/20"
                 )}
                 onClick={handleConfirmOrder}
-                disabled={isProcessing || hasOutOfStockItems || hasInsufficientStock}
+                disabled={isProcessing || hasOutOfStockItems || hasInsufficientStock || !isOrderingOpen}
               >
                 {isProcessing ? (
                   <>
                     <Loader2 className="animate-spin" size={20} /> Processing...
                   </>
+                ) : !isOrderingOpen ? (
+                  'Ordering Closed (6 AM - 10 PM)'
                 ) : hasOutOfStockItems ? (
                   'Items Out of Stock'
                 ) : hasInsufficientStock ? (

@@ -8,6 +8,7 @@ import { auth, db } from '../firebase';
 import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, where, getDoc, increment, writeBatch, deleteField, limit } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { compressImage } from '../lib/utils';
+import { cacheUtils } from '../lib/cache-utils';
 import * as XLSX from 'xlsx';
 import { useReactToPrint } from 'react-to-print';
 
@@ -17,9 +18,46 @@ export const AdminDashboard = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userCurrentPage, setUserCurrentPage] = useState(1);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [products, setProducts] = useState<Product[]>(() => {
+    try {
+      const cached = localStorage.getItem('admin_products_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [categories, setCategories] = useState<Category[]>(() => {
+    try {
+      const cached = localStorage.getItem('admin_categories_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [orders, setOrders] = useState<Order[]>(() => {
+    try {
+      const cached = localStorage.getItem('admin_orders_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [recentOrders, setRecentOrders] = useState<Order[]>(() => {
+    try {
+      const cached = localStorage.getItem('admin_orders_cache');
+      return cached ? JSON.parse(cached).slice(0, 15) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [olderOrders, setOlderOrders] = useState<Order[]>(() => {
+    try {
+      const cached = localStorage.getItem('admin_orders_cache');
+      return cached ? JSON.parse(cached).slice(15) : [];
+    } catch {
+      return [];
+    }
+  });
   const [banners, setBanners] = useState<Banner[]>([]);
   const [appSettings, setAppSettings] = useState<AppSettings>({ whatsappNumber: '', whatsappEnabled: true });
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
@@ -54,6 +92,35 @@ export const AdminDashboard = () => {
     }
   }, [successMessage]);
 
+  // Merge recent (ultra-fast) and older (delayed) orders dynamically
+  useEffect(() => {
+    const combinedMap = new Map<string, Order>();
+    
+    // Add older ones first, then let recent ones overwrite them for fresh real-time values
+    olderOrders.forEach(order => {
+      combinedMap.set(order.id, order);
+    });
+    recentOrders.forEach(order => {
+      combinedMap.set(order.id, order);
+    });
+    
+    const combined = Array.from(combinedMap.values());
+    combined.sort((a, b) => {
+      const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+      const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+      return timeB - timeA;
+    });
+    
+    setOrders(combined);
+    
+    // Cache the merged list so it is displayed instantly on next mount
+    try {
+      localStorage.setItem('admin_orders_cache', cacheUtils.safeStringify(combined.slice(0, 100)));
+    } catch (e) {
+      console.warn('Failed to cache merged admin orders:', e);
+    }
+  }, [recentOrders, olderOrders]);
+
   useEffect(() => {
     if (!auth.currentUser) return;
 
@@ -71,7 +138,13 @@ export const AdminDashboard = () => {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
 
     const unsubProducts = onSnapshot(query(collection(db, 'products'), orderBy('name')), (snapshot) => {
-      setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
+      const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      setProducts(prods);
+      try {
+        localStorage.setItem('admin_products_cache', cacheUtils.safeStringify(prods));
+      } catch (e) {
+        console.warn('Failed to cache admin products:', e);
+      }
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
 
     const unsubCategories = onSnapshot(collection(db, 'categories'), (snapshot) => {
@@ -86,10 +159,15 @@ export const AdminDashboard = () => {
       });
       
       setCategories(cats);
+      try {
+        localStorage.setItem('admin_categories_cache', cacheUtils.safeStringify(cats));
+      } catch (e) {
+        console.warn('Failed to cache admin categories:', e);
+      }
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
 
-    const unsubOrders = onSnapshot(query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(ordersLimit)), (snapshot) => {
-      const newOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
+    const unsubRecentOrders = onSnapshot(query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(15)), (snapshot) => {
+      const recent = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
       
       // Play sound for NEW orders arriving while dashboard is open
       if (!isInitialLoad.current) {
@@ -113,9 +191,18 @@ export const AdminDashboard = () => {
         });
       }
       
-      setOrders(newOrders);
+      setRecentOrders(recent);
       isInitialLoad.current = false;
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'orders'));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'recent-orders'));
+
+    // Delayed background listener for older orders to prevent initial load bottlenecks
+    let unsubOlderOrders: (() => void) | null = null;
+    const delayTimer = setTimeout(() => {
+      unsubOlderOrders = onSnapshot(query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(ordersLimit)), (snapshot) => {
+        const older = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
+        setOlderOrders(older);
+      }, (error) => handleFirestoreError(error, OperationType.LIST, 'older-orders'));
+    }, 1500);
 
     const unsubSettings = onSnapshot(doc(db, 'settings', 'global'), (snapshot) => {
       if (snapshot.exists()) {
@@ -142,7 +229,11 @@ export const AdminDashboard = () => {
       unsubUsers();
       unsubProducts();
       unsubCategories();
-      unsubOrders();
+      unsubRecentOrders();
+      clearTimeout(delayTimer);
+      if (unsubOlderOrders) {
+        unsubOlderOrders();
+      }
       unsubSettings();
       unsubBanners();
     };
@@ -1725,6 +1816,7 @@ const SettingsTab = ({
   const [telegramBotToken, setTelegramBotToken] = useState(settings.telegramBotToken || '');
   const [telegramChatId, setTelegramChatId] = useState(settings.telegramChatId || '');
   const [telegramEnabled, setTelegramEnabled] = useState(settings.telegramEnabled ?? false);
+  const [orderTimingEnabled, setOrderTimingEnabled] = useState(settings.orderTimingEnabled ?? true);
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
@@ -1743,6 +1835,7 @@ const SettingsTab = ({
     setTelegramBotToken(settings.telegramBotToken || '');
     setTelegramChatId(settings.telegramChatId || '');
     setTelegramEnabled(settings.telegramEnabled ?? false);
+    setOrderTimingEnabled(settings.orderTimingEnabled ?? true);
   }, [settings]);
 
   const handleRequestPermission = () => {
@@ -1769,7 +1862,8 @@ const SettingsTab = ({
       supportEnabled,
       telegramEnabled,
       telegramBotToken,
-      telegramChatId
+      telegramChatId,
+      orderTimingEnabled
     });
     setIsSaving(false);
     
@@ -1879,6 +1973,36 @@ const SettingsTab = ({
               className="bg-white"
             />
             <p className="text-[9px] text-gray-400 mt-1 italic">Users can call or WhatsApp this number from Profile</p>
+          </div>
+
+          <div className="h-px bg-blue-100 my-4" />
+
+          {/* Order Timing Settings */}
+          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-blue-100">
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                orderTimingEnabled ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-400"
+              )}>
+                <Clock size={20} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-[#1A1A1A]">ऑर्डर टाइमिंग लिमिट (6 AM - 10 PM)</p>
+                <p className="text-[10px] text-gray-400">Enable/Disable 6:00 AM to 10:00 PM order limit</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setOrderTimingEnabled(!orderTimingEnabled)}
+              className={cn(
+                "w-12 h-6 rounded-full transition-all relative",
+                orderTimingEnabled ? "bg-amber-500" : "bg-gray-200"
+              )}
+            >
+              <div className={cn(
+                "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                orderTimingEnabled ? "right-1" : "left-1"
+              )} />
+            </button>
           </div>
 
           <div className="h-px bg-blue-100 my-4" />

@@ -81,7 +81,15 @@
       "description": "Global application settings.",
       "type": "object",
       "properties": {
-        "whatsappNumber": { "type": "string" }
+        "whatsappNumber": { "type": "string" },
+        "whatsappEnabled": { "type": "boolean" },
+        "telegramEnabled": { "type": "boolean" },
+        "telegramBotToken": { "type": "string" },
+        "telegramChatId": { "type": "string" },
+        "stockThreshold": { "type": "number" },
+        "supportNumber": { "type": "string" },
+        "supportEnabled": { "type": "boolean" },
+        "orderTimingEnabled": { "type": "boolean" }
       },
       "required": ["whatsappNumber"]
     },
