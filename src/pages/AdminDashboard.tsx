@@ -77,6 +77,7 @@ export const AdminDashboard = () => {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [ordersLimit, setOrdersLimit] = useState(150);
   const [usersLimit, setUsersLimit] = useState(150);
+  const [updatingOrderIds, setUpdatingOrderIds] = useState<Record<string, boolean>>({});
   const isInitialLoad = React.useRef(true);
   const notificationAudio = React.useRef<HTMLAudioElement | null>(null);
 
@@ -398,6 +399,8 @@ export const AdminDashboard = () => {
   };
 
   const handleUpdateOrderStatus = async (orderId: string, newStatus: Order['status']) => {
+    if (updatingOrderIds[orderId]) return;
+    setUpdatingOrderIds(prev => ({ ...prev, [orderId]: true }));
     try {
       const orderRef = doc(db, 'orders', orderId);
       const orderSnap = await getDoc(orderRef);
@@ -455,6 +458,8 @@ export const AdminDashboard = () => {
       setSuccessMessage(`Order status updated to ${newStatus}`);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
+    } finally {
+      setUpdatingOrderIds(prev => ({ ...prev, [orderId]: false }));
     }
   };
 
@@ -515,6 +520,7 @@ export const AdminDashboard = () => {
           {activeTab === 'users' && (
             <UserList 
               users={users} 
+              orders={orders}
               onDelete={(u) => setDeleteConfirmation({ id: u.uid, type: 'user', name: u.displayName })} 
               onViewOrders={(user) => setSelectedUserStats(user)}
               currentPage={userCurrentPage}
@@ -569,6 +575,7 @@ export const AdminDashboard = () => {
               onPageChange={setOrderCurrentPage}
               ordersLimit={ordersLimit}
               setOrdersLimit={setOrdersLimit}
+              updatingOrderIds={updatingOrderIds}
             />
           )}
           {activeTab === 'reports' && (
@@ -653,20 +660,25 @@ export const AdminDashboard = () => {
             order={selectedOrder} 
             onClose={() => setSelectedOrder(null)} 
             onUpdateStatus={handleUpdateOrderStatus}
+            isUpdating={!!updatingOrderIds[selectedOrder.id]}
           />
         )}
-        {selectedUserStats && (
-          <UserStatsModal 
-            user={selectedUserStats} 
-            orders={orders.filter(o => o.userId === selectedUserStats.uid)}
-            onClose={() => setSelectedUserStats(null)}
-            onViewAllOrders={() => {
-              setOrderSearchQuery(selectedUserStats.uid);
-              setActiveTab('orders');
-              setSelectedUserStats(null);
-            }}
-          />
-        )}
+        {selectedUserStats && (() => {
+          const realTimeUser = users.find(u => u.uid === selectedUserStats.uid) || selectedUserStats;
+          return (
+            <UserStatsModal 
+              user={realTimeUser} 
+              orders={orders.filter(o => o.userId === realTimeUser.uid)}
+              onClose={() => setSelectedUserStats(null)}
+              onViewAllOrders={() => {
+                setOrderSearchQuery(realTimeUser.uid);
+                setOrderCurrentPage(1);
+                setActiveTab('orders');
+                setSelectedUserStats(null);
+              }}
+            />
+          );
+        })()}
       </AnimatePresence>
 
       <AnimatePresence>
@@ -707,6 +719,7 @@ const TabButton = ({ active, onClick, label }: any) => (
 
 const UserList = ({ 
   users, 
+  orders,
   onDelete,
   onViewOrders,
   currentPage,
@@ -717,6 +730,7 @@ const UserList = ({
   setUsersLimit
 }: { 
   users: User[], 
+  orders: Order[],
   onDelete: (u: User) => void,
   onViewOrders: (user: User) => void,
   currentPage: number,
@@ -779,8 +793,18 @@ const UserList = ({
               <div>
                 <h4 className="font-bold text-sm text-[#1A1A1A]">{u.displayName || 'No Name'}</h4>
                 <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                  <p className="text-[10px] text-gray-400">
-                    {u.email || 'No email'} • {u.phoneNumber || 'No phone'}
+                  <p className="text-[10px] text-gray-400 flex items-center gap-1 flex-wrap">
+                    <span>{u.email || 'No email'}</span>
+                    <span>•</span>
+                    <span>{u.phoneNumber || 'No phone'}</span>
+                    <span>•</span>
+                    <span className="inline-flex items-center gap-0.5 text-amber-600 font-bold bg-amber-50 px-1 py-0.5 rounded border border-amber-100" title="Available Loyalty Points">
+                      ⭐ {u.loyaltyPoints || 0} pts
+                    </span>
+                    <span>•</span>
+                    <span className="inline-flex items-center gap-0.5 text-red-600 font-bold bg-red-50 px-1.5 py-0.5 rounded border border-red-100" title="Total Redeemed Points">
+                      🛍️ {orders.filter(o => o.userId === u.uid).reduce((acc, o) => acc + (o.pointsRedeemed || 0), 0)} redeemed
+                    </span>
                   </p>
                   {u.password && (
                     <>
@@ -1202,7 +1226,8 @@ const OrderList = ({
   currentPage,
   onPageChange,
   ordersLimit,
-  setOrdersLimit
+  setOrdersLimit,
+  updatingOrderIds = {}
 }: { 
   orders: Order[], 
   onUpdateStatus: (id: string, status: Order['status']) => void,
@@ -1212,11 +1237,13 @@ const OrderList = ({
   currentPage: number,
   onPageChange: (page: number) => void,
   ordersLimit: number,
-  setOrdersLimit: (l: number) => void
+  setOrdersLimit: (l: number) => void,
+  updatingOrderIds?: Record<string, boolean>
 }) => {
   const filteredOrders = orders.filter(order => 
     (order.userPhone || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
     (order.userName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (order.userId || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
     order.id.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -1268,7 +1295,7 @@ const OrderList = ({
               <div className="flex flex-col items-end gap-9">
                 <select 
                   className={cn(
-                    "px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase outline-none border-none cursor-pointer",
+                    "px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase outline-none border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
                     order.status === 'pending' ? "bg-orange-50 text-orange-500" :
                     order.status === 'confirmed' ? "bg-blue-50 text-blue-500" :
                     order.status === 'delivered' ? "bg-green-50 text-green-500" :
@@ -1276,6 +1303,7 @@ const OrderList = ({
                   )}
                   value={order.status}
                   onChange={(e) => onUpdateStatus(order.id, e.target.value as Order['status'])}
+                  disabled={updatingOrderIds[order.id]}
                 >
                   <option value="pending">Pending</option>
                   <option value="confirmed">Confirmed</option>
@@ -1612,11 +1640,13 @@ const SalesReport = ({ orders }: { orders: Order[] }) => {
 const OrderDetailsModal = ({ 
   order, 
   onClose,
-  onUpdateStatus
+  onUpdateStatus,
+  isUpdating = false
 }: { 
   order: Order, 
   onClose: () => void,
-  onUpdateStatus: (id: string, status: Order['status']) => void
+  onUpdateStatus: (id: string, status: Order['status']) => void,
+  isUpdating?: boolean
 }) => {
   const [customer, setCustomer] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1669,7 +1699,7 @@ const OrderDetailsModal = ({
             </div>
             <select 
               className={cn(
-                "px-4 py-2 rounded-2xl text-xs font-bold uppercase outline-none border-none cursor-pointer shadow-sm",
+                "px-4 py-2 rounded-2xl text-xs font-bold uppercase outline-none border-none cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed",
                 order.status === 'pending' ? "bg-orange-500 text-white" :
                 order.status === 'confirmed' ? "bg-blue-500 text-white" :
                 order.status === 'delivered' ? "bg-green-500 text-white" :
@@ -1677,6 +1707,7 @@ const OrderDetailsModal = ({
               )}
               value={order.status}
               onChange={(e) => onUpdateStatus(order.id, e.target.value as Order['status'])}
+              disabled={isUpdating}
             >
               <option value="pending">Pending</option>
               <option value="confirmed">Confirmed</option>
@@ -1780,8 +1811,18 @@ const OrderDetailsModal = ({
             )}
             {order.pointsEarned !== undefined && order.pointsEarned > 0 && (
               <div className="flex justify-between text-[10px] text-green-400 font-bold uppercase tracking-wider bg-white/5 p-2 rounded-lg border border-white/5">
-                <span>Will Earn Points</span>
-                <span>+{order.pointsEarned} Points</span>
+                <span>
+                  {order.status === 'delivered' 
+                    ? 'Points Earned' 
+                    : order.status === 'canceled' 
+                      ? 'No Points (Canceled)' 
+                      : 'Will Earn Points'}
+                </span>
+                <span>
+                  {order.status === 'canceled' 
+                    ? '0 Points' 
+                    : `+${order.pointsEarned} Points`}
+                </span>
               </div>
             )}
             <div className="pt-3 border-t border-white/10 flex justify-between items-center">
@@ -2814,6 +2855,16 @@ const UserStatsModal = ({ user, orders, onClose, onViewAllOrders }: { user: User
               <div>
                 <p className="text-[10px] text-amber-600 font-bold uppercase tracking-wider">Loyalty Points</p>
                 <p className="text-lg font-bold text-amber-900">{user.loyaltyPoints || 0} pts</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-3 border-l border-amber-200/50 pl-6 pr-2">
+              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-red-500 shadow-sm">
+                <ShoppingBag size={20} />
+              </div>
+              <div>
+                <p className="text-[10px] text-red-600 font-bold uppercase tracking-wider">Points Redeemed</p>
+                <p className="text-lg font-bold text-red-900">{orders.reduce((acc, o) => acc + (o.pointsRedeemed || 0), 0)} pts</p>
               </div>
             </div>
           </div>
