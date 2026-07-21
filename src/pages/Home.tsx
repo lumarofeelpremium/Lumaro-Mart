@@ -43,7 +43,16 @@ export const Home = ({
     if (!allProducts || allProducts.length === 0) return [];
     const populars = allProducts.filter(product => product.isPopular);
     if (populars.length > 0) {
-      return populars;
+      return [...populars].sort((a, b) => {
+        const timeA = a.popularUpdatedAt?.toMillis ? a.popularUpdatedAt.toMillis() : (a.popularUpdatedAt?.seconds ? a.popularUpdatedAt.seconds * 1000 : (a.popularUpdatedAt || 0));
+        const timeB = b.popularUpdatedAt?.toMillis ? b.popularUpdatedAt.toMillis() : (b.popularUpdatedAt?.seconds ? b.popularUpdatedAt.seconds * 1000 : (b.popularUpdatedAt || 0));
+        if (timeA !== timeB) {
+          return timeA - timeB;
+        }
+        const creatA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+        const creatB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+        return creatA - creatB;
+      });
     } else {
       const sortedPopular = [...allProducts].sort((a, b) => (b.salesCount || 0) - (a.salesCount || 0));
       return sortedPopular.slice(0, 10);

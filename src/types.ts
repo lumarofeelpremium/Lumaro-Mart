@@ -8,6 +8,7 @@ export interface Product {
   category: string;
   stock: number;
   isPopular?: boolean;
+  popularUpdatedAt?: any;
   description?: string;
   rating?: number;
   salesCount?: number;

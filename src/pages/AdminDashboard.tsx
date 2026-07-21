@@ -2234,12 +2234,21 @@ const ProductFormModal = ({
         }
       }
 
-      if (!finalData.isPopular) {
+      if (finalData.isPopular) {
+        const wasPopular = mode === 'edit' && product?.isPopular;
+        const hasTimestamp = mode === 'edit' && product?.popularUpdatedAt;
+        if (!wasPopular || !hasTimestamp) {
+          finalData.popularUpdatedAt = serverTimestamp();
+        }
+      } else {
         if (mode === 'edit') {
           // @ts-ignore
           finalData.isPopular = deleteField();
+          // @ts-ignore
+          finalData.popularUpdatedAt = deleteField();
         } else {
           delete finalData.isPopular;
+          delete finalData.popularUpdatedAt;
         }
       }
 

@@ -28,6 +28,8 @@
         "image": { "type": "string", "format": "uri" },
         "category": { "type": "string" },
         "stock": { "type": "number" },
+        "isPopular": { "type": "boolean" },
+        "popularUpdatedAt": { "type": "string", "format": "date-time" },
         "description": { "type": "string" },
         "rating": { "type": "number" },
         "salesCount": { "type": "number" },
