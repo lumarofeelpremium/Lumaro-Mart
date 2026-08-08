@@ -134,7 +134,7 @@ export default function App() {
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [banners, setBanners] = useState<Banner[]>([]);
   const [initialDataLoading, setInitialDataLoading] = useState(true);
-  const [productsLimit, setProductsLimit] = useState(45); // Start with a small batch to load instantly
+  const [productsLimit, setProductsLimit] = useState(100); // Start with batch to load instantly
 
   // Progressive background expansion of product limit after first paint
   useEffect(() => {

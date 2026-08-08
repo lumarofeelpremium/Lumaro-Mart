@@ -34,7 +34,7 @@ export const Home = ({
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const [jumpPage, setJumpPage] = useState('');
-  const itemsPerPage = 30;
+  const itemsPerPage = 50;
 
   // Deriving immediate states from properties for instant responses
   const loading = initialDataLoading && categories.length === 0 && allProducts.length === 0;
