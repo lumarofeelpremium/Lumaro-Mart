@@ -576,6 +576,7 @@ export const AdminDashboard = () => {
               ordersLimit={ordersLimit}
               setOrdersLimit={setOrdersLimit}
               updatingOrderIds={updatingOrderIds}
+              storeSettings={appSettings}
             />
           )}
           {activeTab === 'reports' && (
@@ -661,6 +662,7 @@ export const AdminDashboard = () => {
             onClose={() => setSelectedOrder(null)} 
             onUpdateStatus={handleUpdateOrderStatus}
             isUpdating={!!updatingOrderIds[selectedOrder.id]}
+            storeSettings={appSettings}
           />
         )}
         {selectedUserStats && (() => {
@@ -1217,6 +1219,128 @@ const CategoryList = ({ categories, onEdit, onDelete, onAdd, onReorder, onNormal
   </div>
 );
 
+const PrintableOrderReceipt = React.forwardRef<HTMLDivElement, { 
+  order: Order; 
+  customer?: User | null; 
+  storeSettings?: AppSettings;
+}>(({ order, customer, storeSettings }, ref) => {
+  const orderDate = order.createdAt?.toDate 
+    ? order.createdAt.toDate() 
+    : (order.createdAt?.seconds ? new Date(order.createdAt.seconds * 1000) : new Date());
+    
+  const formattedDate = orderDate.toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
+  const formattedTime = orderDate.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+
+  const totalQuantity = (order.items || []).reduce((sum, it) => sum + (it.quantity || 1), 0);
+  const calculatedSubtotal = order.subtotal || (order.items || []).reduce((sum, it) => sum + (it.price * it.quantity), 0);
+
+  return (
+    <div ref={ref} className="p-8 max-w-xl mx-auto bg-white text-gray-900 font-sans text-sm print:p-4 print:text-black">
+      {/* Header */}
+      <div className="text-center pb-4 border-b-2 border-gray-900">
+        <h1 className="text-2xl font-black tracking-wider uppercase text-gray-900">LUMARO MART</h1>
+        <p className="text-xs text-gray-600 font-medium mt-0.5">Grocery & Daily Essentials Store</p>
+        {storeSettings?.supportNumber && (
+          <p className="text-xs text-gray-600 mt-0.5">Helpline: +91 {storeSettings.supportNumber}</p>
+        )}
+        <div className="mt-2 inline-block px-3 py-1 bg-gray-100 rounded-full text-xs font-bold uppercase tracking-widest text-gray-800 border border-gray-200">
+          Order Bill / Receipt
+        </div>
+      </div>
+
+      {/* Meta & Customer Details */}
+      <div className="grid grid-cols-2 gap-4 py-4 border-b border-gray-200 text-xs">
+        <div>
+          <p className="text-gray-500 font-bold uppercase text-[10px] tracking-wider">Order Details</p>
+          <p className="font-bold text-sm text-gray-900 mt-0.5">#{order.id.slice(-8).toUpperCase()}</p>
+          <p className="text-gray-600 mt-1"><span className="font-semibold text-gray-800">Date:</span> {formattedDate} {formattedTime}</p>
+          <p className="text-gray-600 mt-0.5"><span className="font-semibold text-gray-800">Status:</span> <span className="uppercase font-bold text-gray-900">{order.status}</span></p>
+        </div>
+        <div className="text-right">
+          <p className="text-gray-500 font-bold uppercase text-[10px] tracking-wider">Customer Details</p>
+          <p className="font-bold text-sm text-gray-900 mt-0.5">{order.userName || customer?.displayName || 'Customer'}</p>
+          <p className="text-gray-600 mt-1"><span className="font-semibold text-gray-800">Phone:</span> {order.userPhone || customer?.phoneNumber || 'N/A'}</p>
+          {(customer?.address || customer?.pincode) && (
+            <p className="text-gray-600 mt-0.5 break-words">
+              <span className="font-semibold text-gray-800">Address:</span> {customer?.address || ''} {customer?.pincode ? `(${customer.pincode})` : ''}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Items Table */}
+      <div className="py-4">
+        <table className="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr className="border-b-2 border-gray-900 text-gray-800">
+              <th className="py-2 px-1 text-center w-8 font-bold">#</th>
+              <th className="py-2 px-2 font-bold">Item Description</th>
+              <th className="py-2 px-2 text-center w-14 font-bold">Qty</th>
+              <th className="py-2 px-2 text-right w-16 font-bold">Price</th>
+              <th className="py-2 px-2 text-right w-20 font-bold">Total</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200">
+            {(order.items || []).map((item, idx) => (
+              <tr key={idx} className="border-b border-gray-100">
+                <td className="py-2 px-1 text-center font-mono text-gray-500">{idx + 1}</td>
+                <td className="py-2 px-2 font-semibold text-gray-900">{item.name}</td>
+                <td className="py-2 px-2 text-center font-bold text-gray-800">{item.quantity}</td>
+                <td className="py-2 px-2 text-right font-medium text-gray-700">₹{item.price}</td>
+                <td className="py-2 px-2 text-right font-bold text-gray-900">₹{item.price * item.quantity}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Bill Calculation */}
+      <div className="pt-2 pb-4 border-t-2 border-gray-900 space-y-1.5 text-xs">
+        <div className="flex justify-between text-gray-700">
+          <span>Items Subtotal ({totalQuantity} {totalQuantity === 1 ? 'item' : 'items'})</span>
+          <span className="font-semibold text-gray-900">₹{calculatedSubtotal}</span>
+        </div>
+        {order.delivery !== undefined && (
+          <div className="flex justify-between text-gray-700">
+            <span>Delivery Fee</span>
+            <span className="font-semibold text-gray-900">{order.delivery === 0 ? 'FREE' : `₹${order.delivery}`}</span>
+          </div>
+        )}
+        {order.pointsRedeemed !== undefined && order.pointsRedeemed > 0 && (
+          <div className="flex justify-between text-red-600 font-semibold">
+            <span>Discount / Points Redeemed</span>
+            <span>-₹{order.pointsRedeemed}</span>
+          </div>
+        )}
+        <div className="pt-2.5 border-t border-gray-400 flex justify-between items-center text-base font-black text-gray-900">
+          <span>GRAND TOTAL</span>
+          <span>₹{order.total}</span>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="mt-4 pt-4 border-t border-dashed border-gray-400 text-center space-y-2 text-[11px] text-gray-600">
+        <p className="font-bold text-gray-800">Thank you for shopping with Lumaro Mart!</p>
+        <p className="text-[10px] text-gray-500">Please check all items at the time of delivery.</p>
+        <div className="pt-6 flex justify-between items-end text-[10px] text-gray-500">
+          <span>Authorized Signature: ________________</span>
+          <span>Customer Signature: ________________</span>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+PrintableOrderReceipt.displayName = 'PrintableOrderReceipt';
+
 const OrderList = ({ 
   orders, 
   onUpdateStatus,
@@ -1227,7 +1351,8 @@ const OrderList = ({
   onPageChange,
   ordersLimit,
   setOrdersLimit,
-  updatingOrderIds = {}
+  updatingOrderIds = {},
+  storeSettings
 }: { 
   orders: Order[], 
   onUpdateStatus: (id: string, status: Order['status']) => void,
@@ -1238,8 +1363,35 @@ const OrderList = ({
   onPageChange: (page: number) => void,
   ordersLimit: number,
   setOrdersLimit: (l: number) => void,
-  updatingOrderIds?: Record<string, boolean>
+  updatingOrderIds?: Record<string, boolean>,
+  storeSettings?: AppSettings
 }) => {
+  const [printingOrder, setPrintingOrder] = useState<Order | null>(null);
+  const [printingCustomer, setPrintingCustomer] = useState<User | null>(null);
+  const printReceiptRef = useRef<HTMLDivElement>(null);
+
+  const handleTriggerPrint = useReactToPrint({
+    contentRef: printReceiptRef,
+    documentTitle: printingOrder ? `Bill-${printingOrder.id.slice(-6)}` : 'Order-Bill',
+  });
+
+  const handleQuickPrint = async (order: Order) => {
+    setPrintingOrder(order);
+    try {
+      const userDoc = await getDoc(doc(db, 'users', order.userId));
+      if (userDoc.exists()) {
+        setPrintingCustomer({ uid: userDoc.id, ...userDoc.data() } as User);
+      } else {
+        setPrintingCustomer(null);
+      }
+    } catch {
+      setPrintingCustomer(null);
+    }
+    setTimeout(() => {
+      handleTriggerPrint();
+    }, 150);
+  };
+
   const filteredOrders = orders.filter(order => 
     (order.userPhone || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
     (order.userName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1256,6 +1408,18 @@ const OrderList = ({
 
   return (
     <div className="space-y-4">
+      {/* Hidden printable receipt container */}
+      <div style={{ position: 'fixed', left: '-9999px', top: '-9999px', width: '210mm', opacity: 0, pointerEvents: 'none' }}>
+        {printingOrder && (
+          <PrintableOrderReceipt 
+            ref={printReceiptRef} 
+            order={printingOrder} 
+            customer={printingCustomer} 
+            storeSettings={storeSettings} 
+          />
+        )}
+      </div>
+
       <div className="relative mb-4">
         <Input 
           placeholder="Search by Name, Mobile or Order ID..." 
@@ -1292,7 +1456,7 @@ const OrderList = ({
                   {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleString() : 'Just now'}
                 </p>
               </div>
-              <div className="flex flex-col items-end gap-9">
+              <div className="flex flex-col items-end gap-3">
                 <select 
                   className={cn(
                     "px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase outline-none border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
@@ -1310,12 +1474,22 @@ const OrderList = ({
                   <option value="delivered">Delivered</option>
                   <option value="canceled">Canceled</option>
                 </select>
-                <button 
-                  onClick={() => onViewDetails(order)}
-                  className="text-[10px] font-bold text-[#66D2A4] uppercase tracking-wider hover:underline"
-                >
-                  View Details
-                </button>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => handleQuickPrint(order)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-emerald-50 text-gray-700 hover:text-emerald-700 rounded-xl text-[10px] font-bold border border-gray-200 hover:border-emerald-300 shadow-2xs transition-all active:scale-95 cursor-pointer"
+                    title="Print Bill / Receipt"
+                  >
+                    <Printer size={12} className="text-[#66D2A4]" />
+                    <span>Print Bill</span>
+                  </button>
+                  <button 
+                    onClick={() => onViewDetails(order)}
+                    className="text-[10px] font-bold text-[#66D2A4] uppercase tracking-wider hover:underline"
+                  >
+                    View Details
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1639,17 +1813,25 @@ const SalesReport = ({ orders }: { orders: Order[] }) => {
 
 const OrderDetailsModal = ({ 
   order, 
-  onClose,
+  onClose, 
   onUpdateStatus,
-  isUpdating = false
+  isUpdating = false,
+  storeSettings
 }: { 
   order: Order, 
   onClose: () => void,
   onUpdateStatus: (id: string, status: Order['status']) => void,
-  isUpdating?: boolean
+  isUpdating?: boolean,
+  storeSettings?: AppSettings
 }) => {
   const [customer, setCustomer] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const printReceiptRef = useRef<HTMLDivElement>(null);
+
+  const handlePrint = useReactToPrint({
+    contentRef: printReceiptRef,
+    documentTitle: `Bill-${order.id.slice(-6)}`,
+  });
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -1674,6 +1856,16 @@ const OrderDetailsModal = ({
       exit={{ opacity: 0 }}
       className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4"
     >
+      {/* Hidden printable receipt */}
+      <div style={{ position: 'fixed', left: '-9999px', top: '-9999px', width: '210mm', opacity: 0, pointerEvents: 'none' }}>
+        <PrintableOrderReceipt 
+          ref={printReceiptRef} 
+          order={order} 
+          customer={customer} 
+          storeSettings={storeSettings} 
+        />
+      </div>
+
       <motion.div 
         initial={{ y: '100%' }}
         animate={{ y: 0 }}
@@ -1685,9 +1877,19 @@ const OrderDetailsModal = ({
             <h2 className="text-2xl font-bold text-[#1A1A1A]">Order Details</h2>
             <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mt-1">#{order.id.slice(-8)}</p>
           </div>
-          <button onClick={onClose} className="p-2 bg-gray-100 rounded-full text-gray-500">
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => handlePrint()} 
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#66D2A4]/15 hover:bg-[#66D2A4]/25 text-[#137a4e] rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              title="Print Bill / Receipt"
+            >
+              <Printer size={15} />
+              <span>Print Bill</span>
+            </button>
+            <button onClick={onClose} className="p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200 transition-colors cursor-pointer">
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         <div className="space-y-8">
@@ -1832,9 +2034,17 @@ const OrderDetailsModal = ({
           </div>
         </div>
 
-        <Button onClick={onClose} className="w-full mt-8 py-4 rounded-2xl bg-gray-100 text-gray-900 border-none hover:bg-gray-200">
-          Close Details
-        </Button>
+        <div className="flex gap-3 mt-8">
+          <Button 
+            onClick={() => handlePrint()} 
+            className="flex-1 py-4 rounded-2xl bg-[#66D2A4] hover:bg-[#52ba8e] text-white font-bold border-none shadow-lg shadow-[#66D2A4]/20 flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Printer size={18} /> Print Bill
+          </Button>
+          <Button onClick={onClose} className="px-6 py-4 rounded-2xl bg-gray-100 text-gray-900 border-none hover:bg-gray-200 font-bold cursor-pointer">
+            Close
+          </Button>
+        </div>
       </motion.div>
     </motion.div>
   );
