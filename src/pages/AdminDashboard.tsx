@@ -1241,6 +1241,9 @@ const PrintableOrderReceipt = React.forwardRef<HTMLDivElement, {
 
   const totalQuantity = (order.items || []).reduce((sum, it) => sum + (it.quantity || 1), 0);
   const calculatedSubtotal = order.subtotal || (order.items || []).reduce((sum, it) => sum + (it.price * it.quantity), 0);
+  const earnedLoyaltyPoints = order.pointsEarned !== undefined 
+    ? order.pointsEarned 
+    : Math.floor((calculatedSubtotal || order.total || 0) / 100) * 5;
 
   return (
     <div ref={ref} className="p-8 max-w-xl mx-auto bg-white text-gray-900 font-sans text-sm print:p-4 print:text-black">
@@ -1262,7 +1265,6 @@ const PrintableOrderReceipt = React.forwardRef<HTMLDivElement, {
           <p className="text-gray-500 font-bold uppercase text-[10px] tracking-wider">Order Details</p>
           <p className="font-bold text-sm text-gray-900 mt-0.5">#{order.id.slice(-8).toUpperCase()}</p>
           <p className="text-gray-600 mt-1"><span className="font-semibold text-gray-800">Date:</span> {formattedDate} {formattedTime}</p>
-          <p className="text-gray-600 mt-0.5"><span className="font-semibold text-gray-800">Status:</span> <span className="uppercase font-bold text-gray-900">{order.status}</span></p>
         </div>
         <div className="text-right">
           <p className="text-gray-500 font-bold uppercase text-[10px] tracking-wider">Customer Details</p>
@@ -1326,14 +1328,20 @@ const PrintableOrderReceipt = React.forwardRef<HTMLDivElement, {
         </div>
       </div>
 
+      {/* Loyalty Points Earned Highlight Box */}
+      <div className="mt-4 p-4 bg-emerald-50 rounded-2xl border-2 border-emerald-600 text-center space-y-1 print:border-2 print:border-black print:bg-gray-100">
+        <p className="text-base sm:text-lg font-black tracking-wide text-emerald-950 print:text-black uppercase">
+          🎉 YOU EARNED {earnedLoyaltyPoints} LOYALTY POINTS ON THIS ORDER!
+        </p>
+        <p className="text-[11px] font-bold text-emerald-800 print:text-gray-900">
+          (1 Point = ₹1 • You can redeem these points for discounts on your next order)
+        </p>
+      </div>
+
       {/* Footer */}
-      <div className="mt-4 pt-4 border-t border-dashed border-gray-400 text-center space-y-2 text-[11px] text-gray-600">
+      <div className="mt-4 pt-3 border-t border-dashed border-gray-400 text-center space-y-1 text-[11px] text-gray-600">
         <p className="font-bold text-gray-800">Thank you for shopping with Lumaro Mart!</p>
         <p className="text-[10px] text-gray-500">Please check all items at the time of delivery.</p>
-        <div className="pt-6 flex justify-between items-end text-[10px] text-gray-500">
-          <span>Authorized Signature: ________________</span>
-          <span>Customer Signature: ________________</span>
-        </div>
       </div>
     </div>
   );
