@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp, onSnapshot, collection, query, limit, orderBy, where } from 'firebase/firestore';
@@ -19,103 +19,22 @@ import { BottomNav } from './components/BottomNav';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import ScrollToTop from './components/ScrollToTop';
 import { User, CartItem, Product, Category, Banner } from './types';
+import { cacheUtils } from './lib/cache-utils';
 
 import firebaseConfig from '../firebase-applet-config.json';
 
 declare const __BUILD_TIME__: number;
 
-const isPlainObject = (obj: any): boolean => {
-  if (typeof obj !== 'object' || obj === null) return false;
-  const proto = Object.getPrototypeOf(obj);
-  if (proto !== Object.prototype && proto !== null) return false;
-  
-  // Extra safety: Check if constructor is Object or undefined to filter out minified SDK classes
-  if (obj.constructor !== undefined && obj.constructor !== Object) {
-    return false;
-  }
-  
-  return true;
-};
-
-// Helper to serialize deep objects safely for localStorage to avoid circular structure JSON issues
-const serializeForCache = (val: any, seen = new Set<any>()): any => {
-  if (val === null || val === undefined) {
-    return val;
-  }
-
-  const valType = typeof val;
-  if (valType !== 'object') {
-    return val;
-  }
-
-  if (seen.has(val)) {
-    return undefined; // Break circular reference safely
-  }
-
-  if (val instanceof Date) {
-    return val.toISOString();
-  }
-
-  // Handle Firestore Timestamp
-  if (typeof val.seconds === 'number' && typeof val.nanoseconds === 'number') {
-    return { seconds: val.seconds, nanoseconds: val.nanoseconds };
-  }
-
-  // Handle Firestore DocumentReference (has a path string and firestore property)
-  if (typeof val.path === 'string' && val.firestore) {
-    return val.path;
-  }
-
-  if (Array.isArray(val)) {
-    seen.add(val);
-    const arrCopy = [];
-    for (const item of val) {
-      arrCopy.push(serializeForCache(item, seen));
-    }
-    seen.delete(val);
-    return arrCopy;
-  }
-
-  // ONLY walk properties of PLAIN OBJECTS to prevent traversing Firestore SDK internals (like minified 'Y' and 'Ka' classes)
-  if (isPlainObject(val)) {
-    seen.add(val);
-    const objCopy: any = {};
-    for (const key of Object.keys(val)) {
-      const propVal = val[key];
-      if (typeof propVal === 'function' || typeof propVal === 'symbol') {
-        continue;
-      }
-      objCopy[key] = serializeForCache(propVal, seen);
-    }
-    seen.delete(val);
-    return objCopy;
-  }
-
-  // For any other non-plain object (like Firestore internal class instances), do not traverse them!
-  // Instead, convert to string if helpful, or return undefined to prevent circular/deep serialization crash.
-  if (typeof val.toString === 'function') {
-    try {
-      const str = val.toString();
-      if (str !== '[object Object]') {
-        return str;
-      }
-    } catch (e) {
-      // Ignore toString errors
-    }
-  }
-  return undefined;
-};
-
 const updateLocalCache = (newData: any) => {
   setTimeout(() => {
     try {
-      const currentCache = JSON.parse(localStorage.getItem('home_cache') || '{}');
+      const currentCacheStr = cacheUtils.getItem('home_cache');
+      const currentCache = currentCacheStr ? JSON.parse(currentCacheStr) : {};
       if (newData.allProducts) {
         newData.allProducts = newData.allProducts.slice(0, 60);
       }
       const combined = { ...currentCache, ...newData };
-      const serialized = serializeForCache(combined);
-      localStorage.setItem('home_cache', JSON.stringify(serialized));
+      cacheUtils.setItem('home_cache', combined);
     } catch (e) {
       console.warn('Silent cache update failure in App:', e);
     }
@@ -475,6 +394,24 @@ export default function App() {
     );
   }
 
+  // Category visibility filtering for customer/user store views
+  const visibleCategories = useMemo(() => {
+    return categories.filter(c => c.isActive !== false);
+  }, [categories]);
+
+  const activeCategoryNameSet = useMemo(() => {
+    if (categories.length === 0) return null;
+    return new Set(categories.filter(c => c.isActive !== false).map(c => c.name.trim().toLowerCase()));
+  }, [categories]);
+
+  const visibleProducts = useMemo(() => {
+    if (!activeCategoryNameSet) return allProducts;
+    return allProducts.filter(p => {
+      if (!p.category) return true;
+      return activeCategoryNameSet.has(p.category.trim().toLowerCase());
+    });
+  }, [allProducts, activeCategoryNameSet]);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#F8FBF9]">
@@ -489,10 +426,10 @@ export default function App() {
         <ScrollToTop />
         <div className="max-w-md mx-auto bg-white min-h-screen relative shadow-2xl shadow-black/10 overflow-x-hidden pb-24">
           <Routes>
-            <Route path="/" element={<Home user={user} onAddToCart={handleAddToCart} categories={categories} allProducts={allProducts} banners={banners} initialDataLoading={initialDataLoading} />} />
+            <Route path="/" element={<Home user={user} onAddToCart={handleAddToCart} categories={visibleCategories} allProducts={visibleProducts} banners={banners} initialDataLoading={initialDataLoading} />} />
             <Route path="/signup" element={<Signup setUser={setUser} />} />
             <Route path="/login" element={<Login setUser={setUser} />} />
-            <Route path="/categories" element={<Categories user={user} onAddToCart={handleAddToCart} categories={categories} allProducts={allProducts} />} />
+            <Route path="/categories" element={<Categories user={user} onAddToCart={handleAddToCart} categories={visibleCategories} allProducts={visibleProducts} />} />
             <Route path="/cart" element={<Cart 
               user={user}
               setUser={setUser}

@@ -20,6 +20,7 @@ export interface Category {
   name: string;
   icon: string;
   order?: number;
+  isActive?: boolean;
   createdAt?: any;
 }
 
@@ -48,6 +49,8 @@ export interface Order {
   userId: string;
   userName?: string;
   userPhone?: string;
+  address?: string;
+  pincode?: string;
   items: CartItem[];
   total: number;
   status: 'pending' | 'confirmed' | 'delivered' | 'canceled';

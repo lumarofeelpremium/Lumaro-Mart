@@ -43,7 +43,9 @@
       "type": "object",
       "properties": {
         "name": { "type": "string" },
-        "icon": { "type": "string" }
+        "icon": { "type": "string" },
+        "order": { "type": "number" },
+        "isActive": { "type": "boolean" }
       },
       "required": ["name", "icon"]
     },

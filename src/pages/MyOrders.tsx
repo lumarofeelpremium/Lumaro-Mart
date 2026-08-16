@@ -1,14 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Package, Clock, X, Star, MapPin, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ChevronLeft, Package, Clock, X, Star, MapPin, Loader2, Download, Send, Printer } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, writeBatch, getDoc } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Order } from '../types';
+import { User, Order, AppSettings } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { Button } from '../components/ui/Base';
 import { cacheUtils } from '../lib/cache-utils';
 import { cn } from '../lib/utils';
+import { downloadReceiptPdf, sendWhatsAppBill, calculateEarnedPoints } from '../lib/receipt-utils';
+import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
 
 export const MyOrders = ({ user }: { user: User | null }) => {
   const navigate = useNavigate();
@@ -16,8 +18,42 @@ export const MyOrders = ({ user }: { user: User | null }) => {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [storeSettings, setStoreSettings] = useState<AppSettings | undefined>(undefined);
+  const printReceiptRef = useRef<HTMLDivElement>(null);
 
   const unreadCount = orders.filter(o => !o.viewed).length;
+
+  useEffect(() => {
+    // Fetch store settings for helpline / receipt info
+    const fetchSettings = async () => {
+      try {
+        const sDoc = await getDoc(doc(db, 'settings', 'general'));
+        if (sDoc.exists()) {
+          setStoreSettings(sDoc.data() as AppSettings);
+        }
+      } catch (err) {
+        console.error('Settings fetch error in MyOrders:', err);
+      }
+    };
+    fetchSettings();
+  }, []);
+
+  const handleDownloadPdf = async (order: Order) => {
+    if (!printReceiptRef.current) return;
+    setIsDownloadingPdf(true);
+    try {
+      await downloadReceiptPdf(printReceiptRef.current, `Bill-${order.id.slice(-8).toUpperCase()}.pdf`);
+    } catch (err) {
+      console.error('PDF error in MyOrders:', err);
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
+  const handleSendWhatsApp = (order: Order) => {
+    sendWhatsAppBill(order, user, storeSettings);
+  };
 
   // Load cached orders on mount
   useEffect(() => {
@@ -220,6 +256,16 @@ export const MyOrders = ({ user }: { user: User | null }) => {
               </div>
 
               <div className="space-y-6">
+                {/* Hidden printable receipt for PDF export */}
+                <div style={{ position: 'fixed', left: '-9999px', top: '-9999px', width: '210mm', opacity: 0, pointerEvents: 'none' }}>
+                  <PrintableOrderReceipt 
+                    ref={printReceiptRef} 
+                    order={selectedOrder} 
+                    customer={user} 
+                    storeSettings={storeSettings} 
+                  />
+                </div>
+
                 <div className="flex items-center justify-between p-5 bg-[#F0F7F4] rounded-[32px]">
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-white rounded-2xl text-[#66D2A4] shadow-sm">
@@ -288,12 +334,30 @@ export const MyOrders = ({ user }: { user: User | null }) => {
                    </div>
                 </div>
 
-                <div className="pt-4">
-                  <Button className="w-full py-5 rounded-3xl shadow-lg shadow-[#66D2A4]/20" onClick={() => setSelectedOrder(null)}>
+                <div className="space-y-3 pt-2">
+                  <div className="grid grid-cols-2 gap-3">
+                    <button 
+                      onClick={() => handleSendWhatsApp(selectedOrder)}
+                      className="py-3.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center justify-center gap-2 text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Send size={15} /> WhatsApp Bill
+                    </button>
+                    <button 
+                      onClick={() => handleDownloadPdf(selectedOrder)}
+                      disabled={isDownloadingPdf}
+                      className="py-3.5 px-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center justify-center gap-2 text-xs shadow-md shadow-blue-600/20 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isDownloadingPdf ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                      <span>Instant PDF</span>
+                    </button>
+                  </div>
+
+                  <Button className="w-full py-4 rounded-2xl shadow-lg shadow-[#66D2A4]/20" onClick={() => setSelectedOrder(null)}>
                     Close Details
                   </Button>
                 </div>
               </div>
+
             </motion.div>
           </motion.div>
         )}

@@ -1,9 +1,15 @@
 /**
- * Utility for safe localStorage operations to prevent QuotaExceededError
+ * Utility for safe localStorage operations to prevent QuotaExceededError and circular structure crashes
  */
 
 const isPlainObject = (obj: any): boolean => {
   if (typeof obj !== 'object' || obj === null) return false;
+  
+  // Guard against DOM elements, Windows, Events, and React Fibers
+  if (typeof (obj as any).nodeType === 'number' || (obj as any).$$typeof) {
+    return false;
+  }
+
   const proto = Object.getPrototypeOf(obj);
   if (proto !== Object.prototype && proto !== null) return false;
   
@@ -15,19 +21,23 @@ const isPlainObject = (obj: any): boolean => {
   return true;
 };
 
-const sanitizeForStringify = (val: any, seen = new Set<any>()): any => {
+const sanitizeForStringify = (val: any, seen = new WeakSet<any>()): any => {
   if (val === null || val === undefined) {
     return val;
   }
 
   const valType = typeof val;
   if (valType !== 'object') {
+    if (valType === 'function' || valType === 'symbol') {
+      return undefined;
+    }
     return val;
   }
 
   if (seen.has(val)) {
-    return '[Circular]';
+    return undefined; // Break circular reference safely
   }
+  seen.add(val);
 
   if (val instanceof Date) {
     return val.toISOString();
@@ -44,48 +54,34 @@ const sanitizeForStringify = (val: any, seen = new Set<any>()): any => {
   }
 
   if (Array.isArray(val)) {
-    seen.add(val);
-    const arrCopy = [];
+    const arrCopy: any[] = [];
     for (const item of val) {
-      arrCopy.push(sanitizeForStringify(item, seen));
+      const sanitizedItem = sanitizeForStringify(item, seen);
+      if (sanitizedItem !== undefined) {
+        arrCopy.push(sanitizedItem);
+      }
     }
-    seen.delete(val);
     return arrCopy;
   }
 
   // If it's a plain object, traverse its keys
   if (isPlainObject(val)) {
-    seen.add(val);
     const objCopy: any = {};
     for (const key of Object.keys(val)) {
       const propVal = val[key];
       if (typeof propVal === 'function' || typeof propVal === 'symbol') {
         continue;
       }
-      objCopy[key] = sanitizeForStringify(propVal, seen);
+      const sanitizedProp = sanitizeForStringify(propVal, seen);
+      if (sanitizedProp !== undefined) {
+        objCopy[key] = sanitizedProp;
+      }
     }
-    seen.delete(val);
     return objCopy;
   }
 
-  // If it's some other non-plain object (like Firestore internal class instances), do not traverse them!
-  const constructorName = val.constructor?.name || 'Object';
-  if (constructorName === 'HTMLImageElement' || constructorName === 'Image') {
-    return `[Image: ${val.src || ''}]`;
-  }
-  
-  if (typeof val.toString === 'function') {
-    try {
-      const str = val.toString();
-      if (str !== '[object Object]') {
-        return str;
-      }
-    } catch (e) {
-      // Ignore toString errors and fallback to [Class: Name]
-    }
-  }
-
-  return `[Class: ${constructorName}]`;
+  // For any other non-plain object (like Firestore internal class instances), do not traverse them!
+  return undefined;
 };
 
 export const cacheUtils = {
@@ -97,15 +93,45 @@ export const cacheUtils = {
   },
 
   /**
-   * Safe stringify to avoid circular structure errors
+   * Safe stringify with native replacer & WeakSet to prevent circular structure errors
    */
-  safeStringify: (obj: any) => {
+  safeStringify: (obj: any): string => {
     try {
-      const sanitized = sanitizeForStringify(obj);
-      return JSON.stringify(sanitized);
+      const seen = new WeakSet();
+      return JSON.stringify(obj, (key, value) => {
+        if (value instanceof Date) {
+          return value.toISOString();
+        }
+        if (value && typeof value.seconds === 'number' && typeof value.nanoseconds === 'number') {
+          return { seconds: value.seconds, nanoseconds: value.nanoseconds };
+        }
+        if (value && typeof value.path === 'string' && value.firestore) {
+          return value.path;
+        }
+        if (typeof value === 'function' || typeof value === 'symbol') {
+          return undefined;
+        }
+        if (typeof value === 'object' && value !== null) {
+          // Guard against DOM nodes and React elements
+          if (typeof (value as any).nodeType === 'number' || (value as any).$$typeof) {
+            return undefined;
+          }
+          if (seen.has(value)) {
+            return undefined; // Break circular reference cleanly
+          }
+          seen.add(value);
+        }
+        return value;
+      });
     } catch (e) {
-      console.warn('Safe stringify failed, falling back to String():', e);
-      return String(obj);
+      console.warn('Safe native stringify failed, falling back to sanitize:', e);
+      try {
+        const sanitized = sanitizeForStringify(obj);
+        return JSON.stringify(sanitized);
+      } catch (err) {
+        console.error('Final stringify fallback failed:', err);
+        return '{}';
+      }
     }
   },
 
@@ -116,12 +142,19 @@ export const cacheUtils = {
   setItem: (key: string, value: any) => {
     try {
       const stringValue = typeof value === 'string' ? value : cacheUtils.safeStringify(value);
+      
+      // If a single item is excessively large (> 1.5MB), avoid filling up the limited 5MB localStorage
+      if (stringValue.length > 1.5 * 1024 * 1024) {
+        console.warn(`Item '${key}' is too large (${Math.round(stringValue.length / 1024)}KB) for localStorage, skipping cache.`);
+        return;
+      }
+
       localStorage.setItem(key, stringValue);
     } catch (e: any) {
-      if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
-        console.warn('LocalStorage quota exceeded. Attempting to clear old cache...');
+      if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014) {
+        console.warn('LocalStorage quota exceeded. Clearing non-essential cache...');
         
-        // Strategy: Clear all items that start with specific prefixes
+        // Strategy: Clear older product & home cache items
         const prefixesToClear = [
           'product_detail_', 
           'product_reviews_', 
@@ -129,7 +162,10 @@ export const cacheUtils = {
           'home_cache',
           'notifications_cache',
           'orders_cache_',
-          'wishlist_cache_'
+          'wishlist_cache_',
+          'admin_products_cache',
+          'admin_orders_cache',
+          'admin_categories_cache'
         ];
 
         try {
@@ -142,13 +178,15 @@ export const cacheUtils = {
 
           // Try setting the item again after clearing
           const stringValue = typeof value === 'string' ? value : cacheUtils.safeStringify(value);
-          localStorage.setItem(key, stringValue);
-          console.log(`Successfully set ${key} after clearing cache.`);
+          if (stringValue.length <= 1.5 * 1024 * 1024) {
+            localStorage.setItem(key, stringValue);
+          }
         } catch (retryError) {
-          console.error('Failed to set item even after clearing cache:', retryError);
+          // Gracefully suppress repeated quota errors instead of breaking the app
+          console.warn('Skipping cache write due to persistent quota limit:', key);
         }
       } else {
-        console.error('Error setting item in localStorage:', e);
+        console.warn('Non-fatal error writing to localStorage:', e);
       }
     }
   },
@@ -170,3 +208,4 @@ export const cacheUtils = {
     }
   }
 };
+

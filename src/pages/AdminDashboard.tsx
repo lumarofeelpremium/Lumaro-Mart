@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner } from '../types';
@@ -11,6 +11,8 @@ import { compressImage } from '../lib/utils';
 import { cacheUtils } from '../lib/cache-utils';
 import * as XLSX from 'xlsx';
 import { useReactToPrint } from 'react-to-print';
+import { downloadReceiptPdf, sendWhatsAppBill } from '../lib/receipt-utils';
+import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
 
 export const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -116,7 +118,7 @@ export const AdminDashboard = () => {
     
     // Cache the merged list so it is displayed instantly on next mount
     try {
-      localStorage.setItem('admin_orders_cache', cacheUtils.safeStringify(combined.slice(0, 100)));
+      cacheUtils.setItem('admin_orders_cache', combined.slice(0, 100));
     } catch (e) {
       console.warn('Failed to cache merged admin orders:', e);
     }
@@ -142,7 +144,18 @@ export const AdminDashboard = () => {
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(prods);
       try {
-        localStorage.setItem('admin_products_cache', cacheUtils.safeStringify(prods));
+        // Strip heavy base64 strings and limit cache items to keep localStorage slim
+        const slimProds = prods.slice(0, 100).map(p => {
+          const isBase64 = p.image && typeof p.image === 'string' && p.image.startsWith('data:');
+          if (isBase64) {
+            return {
+              ...p,
+              image: ''
+            };
+          }
+          return p;
+        });
+        cacheUtils.setItem('admin_products_cache', slimProds);
       } catch (e) {
         console.warn('Failed to cache admin products:', e);
       }
@@ -161,7 +174,7 @@ export const AdminDashboard = () => {
       
       setCategories(cats);
       try {
-        localStorage.setItem('admin_categories_cache', cacheUtils.safeStringify(cats));
+        cacheUtils.setItem('admin_categories_cache', cats);
       } catch (e) {
         console.warn('Failed to cache admin categories:', e);
       }
@@ -240,8 +253,51 @@ export const AdminDashboard = () => {
     };
   }, [auth.currentUser, ordersLimit, usersLimit]);
 
+  // Helper to ensure max 10 popular products by unchecking older items beyond rank 10
+  const trimExcessPopularProducts = async (currentPromotedProductId?: string) => {
+    try {
+      // Get all popular products except currently promoted one (which is becoming #1)
+      const otherPopulars = products
+        .filter(p => p.isPopular && p.id !== currentPromotedProductId)
+        .sort((a, b) => {
+          const timeA = a.popularUpdatedAt?.toMillis 
+            ? a.popularUpdatedAt.toMillis() 
+            : (a.popularUpdatedAt?.seconds ? a.popularUpdatedAt.seconds * 1000 : (typeof a.popularUpdatedAt === 'number' ? a.popularUpdatedAt : 0));
+          const timeB = b.popularUpdatedAt?.toMillis 
+            ? b.popularUpdatedAt.toMillis() 
+            : (b.popularUpdatedAt?.seconds ? b.popularUpdatedAt.seconds * 1000 : (typeof b.popularUpdatedAt === 'number' ? b.popularUpdatedAt : 0));
+          if (timeA !== timeB) return timeB - timeA;
+          const creatA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+          const creatB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+          return creatB - creatA;
+        });
+
+      // If current promoted product is popular, we keep at most 9 other popular products (total = 10)
+      // If none promoted (e.g. bulk trim), keep at most 10
+      const maxAllowedOthers = currentPromotedProductId ? 9 : 10;
+      const excessItems = otherPopulars.slice(maxAllowedOthers);
+
+      if (excessItems.length > 0) {
+        const batch = writeBatch(db);
+        excessItems.forEach(item => {
+          batch.update(doc(db, 'products', item.id), {
+            isPopular: deleteField(),
+            popularUpdatedAt: deleteField()
+          });
+        });
+        await batch.commit();
+        return excessItems.map(i => i.name);
+      }
+      return [];
+    } catch (err) {
+      console.error("Error trimming popular products:", err);
+      return [];
+    }
+  };
+
   const handleSaveProduct = async (productData: any) => {
     try {
+      let savedProductId = editingProduct?.id;
       if (editingProduct) {
         await updateDoc(doc(db, 'products', editingProduct.id), productData);
         setSuccessMessage('Product updated successfully!');
@@ -251,6 +307,7 @@ export const AdminDashboard = () => {
           salesCount: 0,
           createdAt: serverTimestamp()
         });
+        savedProductId = productRef.id;
         setSuccessMessage('Product added successfully!');
         
         // Add notification for users
@@ -262,6 +319,15 @@ export const AdminDashboard = () => {
           productId: productRef.id
         });
       }
+
+      // If product was set as popular, automatically uncheck items beyond 10
+      if (productData.isPopular && savedProductId) {
+        const removedNames = await trimExcessPopularProducts(savedProductId);
+        if (removedNames.length > 0) {
+          setSuccessMessage(`⭐ Product saved as #1 Popular! (${removedNames.join(', ')} automatically unchecked to maintain 10 popular items limit)`);
+        }
+      }
+
       setEditingProduct(null);
       setIsAddingProduct(false);
     } catch (error) {
@@ -273,6 +339,44 @@ export const AdminDashboard = () => {
     setDeleteConfirmation({ id: product.id, type: 'product', name: product.name });
   };
 
+  const handleToggleProductPopular = async (product: Product) => {
+    try {
+      const newStatus = !product.isPopular;
+      if (newStatus) {
+        // 1. Mark this product as popular with current timestamp so it becomes #1
+        await updateDoc(doc(db, 'products', product.id), {
+          isPopular: true,
+          popularUpdatedAt: serverTimestamp()
+        });
+
+        // 2. Automatically uncheck any products beyond top 10 limit
+        const removedNames = await trimExcessPopularProducts(product.id);
+        if (removedNames.length > 0) {
+          setSuccessMessage(`⭐ "${product.name}" added as #1 Popular! ("${removedNames.join('", "')}" automatically unchecked to keep max 10 limit)`);
+        } else {
+          setSuccessMessage(`⭐ "${product.name}" added to Popular Items! (Will appear first on Home screen)`);
+        }
+      } else {
+        await updateDoc(doc(db, 'products', product.id), {
+          isPopular: deleteField(),
+          popularUpdatedAt: deleteField()
+        });
+        setSuccessMessage(`"${product.name}" removed from Popular Items.`);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `products/${product.id}`);
+    }
+  };
+
+  const handleTrimPopularToTen = async () => {
+    const removedNames = await trimExcessPopularProducts();
+    if (removedNames.length > 0) {
+      setSuccessMessage(`⭐ Popular items trimmed to 10. Unchecked: ${removedNames.join(', ')}`);
+    } else {
+      setSuccessMessage(`Popular list is already within 10 items limit.`);
+    }
+  };
+
   const handleSaveCategory = async (categoryData: any) => {
     try {
       if (editingCategory) {
@@ -282,10 +386,13 @@ export const AdminDashboard = () => {
         const batch = writeBatch(db);
         
         // Update the category itself
-        batch.update(doc(db, 'categories', editingCategory.id), categoryData);
+        batch.update(doc(db, 'categories', editingCategory.id), {
+          ...categoryData,
+          isActive: categoryData.isActive !== false
+        });
         
         // If name changed, update all associated products
-        if (oldName !== newName) {
+        if (oldName !== newName && newName) {
           const associatedProducts = products.filter(p => p.category === oldName);
           associatedProducts.forEach(p => {
             batch.update(doc(db, 'products', p.id), { category: newName });
@@ -293,10 +400,11 @@ export const AdminDashboard = () => {
         }
         
         await batch.commit();
-        setSuccessMessage('Category and associated products updated successfully!');
+        setSuccessMessage('Category updated successfully!');
       } else {
         await addDoc(collection(db, 'categories'), {
           ...categoryData,
+          isActive: categoryData.isActive !== false,
           order: categories.length, // Set order to current length to put it at the end
           createdAt: serverTimestamp()
         });
@@ -306,6 +414,25 @@ export const AdminDashboard = () => {
       setIsAddingCategory(false);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'categories');
+    }
+  };
+
+  const handleToggleCategoryVisibility = async (category: Category) => {
+    try {
+      const newStatus = category.isActive === false ? true : false;
+      await updateDoc(doc(db, 'categories', category.id), {
+        isActive: newStatus
+      });
+      const matchingCount = products.filter(
+        p => (p.category || '').trim().toLowerCase() === category.name.trim().toLowerCase()
+      ).length;
+      if (newStatus) {
+        setSuccessMessage(`"${category.name}" & ${matchingCount} product(s) are now VISIBLE to users!`);
+      } else {
+        setSuccessMessage(`"${category.name}" & ${matchingCount} product(s) are now HIDDEN from users!`);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `categories/${category.id}`);
     }
   };
 
@@ -537,8 +664,11 @@ export const AdminDashboard = () => {
           {activeTab === 'products' && (
             <ProductList 
               products={products} 
+              categories={categories}
               onEdit={setEditingProduct} 
               onDelete={handleDeleteProduct}
+              onTogglePopular={handleToggleProductPopular}
+              onTrimPopular={handleTrimPopularToTen}
               onAdd={() => setIsAddingProduct(true)}
               stockThreshold={stockThreshold}
               onThresholdChange={handleUpdateStockThreshold}
@@ -554,11 +684,13 @@ export const AdminDashboard = () => {
           {activeTab === 'categories' && (
             <CategoryList 
               categories={categories} 
+              products={products}
               onEdit={setEditingCategory} 
               onDelete={handleDeleteCategory}
               onAdd={() => setIsAddingCategory(true)}
               onReorder={handleReorderCategory}
               onNormalize={handleNormalizeCategoryOrders}
+              onToggleVisibility={handleToggleCategoryVisibility}
             />
           )}
           {activeTab === 'orders' && (
@@ -909,8 +1041,11 @@ const UserList = ({
 
 const ProductList = ({ 
   products, 
+  categories = [],
   onEdit, 
   onDelete, 
+  onTogglePopular,
+  onTrimPopular,
   onAdd,
   stockThreshold,
   onThresholdChange,
@@ -920,8 +1055,11 @@ const ProductList = ({
   onPageChange
 }: { 
   products: Product[], 
+  categories?: Category[],
   onEdit: (p: Product) => void, 
   onDelete: (p: Product) => void, 
+  onTogglePopular?: (p: Product) => void,
+  onTrimPopular?: () => void,
   onAdd: () => void,
   stockThreshold: number,
   onThresholdChange: (val: number) => void,
@@ -931,8 +1069,57 @@ const ProductList = ({
   onPageChange: (page: number) => void
 }) => {
   const [isAlertsExpanded, setIsAlertsExpanded] = useState(false);
+  const [filterTab, setFilterTab] = useState<'all' | 'popular' | 'low-stock'>('all');
   const lowStockItems = products.filter(p => p.stock <= stockThreshold);
-  const filteredProducts = products.filter(p => 
+  
+  const hiddenCategoryNames = useMemo(() => {
+    return new Set(
+      categories
+        .filter(c => c.isActive === false)
+        .map(c => (c.name || '').trim().toLowerCase())
+    );
+  }, [categories]);
+
+  // Compute sorted popular products (descending by popularUpdatedAt)
+  const sortedPopularProducts = useMemo(() => {
+    const populars = products.filter(p => p.isPopular);
+    return [...populars].sort((a, b) => {
+      const timeA = a.popularUpdatedAt?.toMillis 
+        ? a.popularUpdatedAt.toMillis() 
+        : (a.popularUpdatedAt?.seconds ? a.popularUpdatedAt.seconds * 1000 : (typeof a.popularUpdatedAt === 'number' ? a.popularUpdatedAt : 0));
+      const timeB = b.popularUpdatedAt?.toMillis 
+        ? b.popularUpdatedAt.toMillis() 
+        : (b.popularUpdatedAt?.seconds ? b.popularUpdatedAt.seconds * 1000 : (typeof b.popularUpdatedAt === 'number' ? b.popularUpdatedAt : 0));
+      
+      if (timeA !== timeB) {
+        return timeB - timeA;
+      }
+      const creatA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+      const creatB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+      return creatB - creatA;
+    });
+  }, [products]);
+
+  // Map of productId to popular rank (1-indexed)
+  const popularRankMap = useMemo(() => {
+    const map = new Map<string, number>();
+    sortedPopularProducts.forEach((p, idx) => {
+      map.set(p.id, idx + 1);
+    });
+    return map;
+  }, [sortedPopularProducts]);
+
+  const displayedSourceList = useMemo(() => {
+    if (filterTab === 'popular') {
+      return sortedPopularProducts;
+    }
+    if (filterTab === 'low-stock') {
+      return lowStockItems;
+    }
+    return products;
+  }, [filterTab, products, sortedPopularProducts, lowStockItems]);
+
+  const filteredProducts = displayedSourceList.filter(p => 
     p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     p.category.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -943,6 +1130,10 @@ const ProductList = ({
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
+
+  const hiddenProductsCount = products.filter(p => 
+    hiddenCategoryNames.has((p.category || '').trim().toLowerCase())
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -1025,6 +1216,77 @@ const ProductList = ({
           <Plus size={20} /> Add New Product
         </Button>
 
+        {/* Filter Tabs */}
+        <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+          <button
+            onClick={() => {
+              setFilterTab('all');
+              onPageChange(1);
+            }}
+            className={cn(
+              "px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0",
+              filterTab === 'all'
+                ? "bg-[#1A1A1A] text-white shadow-sm"
+                : "bg-white text-gray-500 hover:bg-gray-100 border border-gray-100"
+            )}
+          >
+            All Products ({products.length})
+          </button>
+          <button
+            onClick={() => {
+              setFilterTab('popular');
+              onPageChange(1);
+            }}
+            className={cn(
+              "px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5",
+              filterTab === 'popular'
+                ? "bg-amber-500 text-white shadow-sm"
+                : "bg-white text-amber-600 hover:bg-amber-50 border border-amber-100"
+            )}
+          >
+            <Star size={14} className={filterTab === 'popular' ? "fill-white" : "fill-amber-500"} />
+            Popular Items ({sortedPopularProducts.length}/10 Max)
+          </button>
+          <button
+            onClick={() => {
+              setFilterTab('low-stock');
+              onPageChange(1);
+            }}
+            className={cn(
+              "px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0",
+              filterTab === 'low-stock'
+                ? "bg-orange-500 text-white shadow-sm"
+                : "bg-white text-orange-600 hover:bg-orange-50 border border-orange-100"
+            )}
+          >
+            Low Stock ({lowStockItems.length})
+          </button>
+        </div>
+
+        {/* Popular items explanation banner */}
+        {filterTab === 'popular' && (
+          <div className="bg-amber-50/90 border border-amber-200 rounded-2xl p-4 text-xs text-amber-900 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-bold text-amber-800">
+                <Star size={16} className="fill-amber-500 text-amber-600" />
+                <span>Popular Items Live Order (Auto Max 10 Items)</span>
+              </div>
+              {sortedPopularProducts.length > 10 && onTrimPopular && (
+                <button
+                  type="button"
+                  onClick={onTrimPopular}
+                  className="px-3 py-1 bg-amber-600 text-white rounded-xl text-[10px] font-bold hover:bg-amber-700 transition-all shadow-sm"
+                >
+                  Trim to Max 10 Now
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-amber-700 leading-relaxed">
+              ⭐ <strong>Auto Max 10 Rule Active:</strong> Customer Home Screen par strictly <strong>Top 10</strong> popular items dikhte hain. Jab bhi aap kisi naye product ko Popular banate hain, woh automatically <strong>#1 position (sabse upar)</strong> par aa jata hai aur <strong>10 se upar jaane par sabse purana item apne aap popular list se uncheck/remove ho jata hai</strong>.
+            </p>
+          </div>
+        )}
+
         {/* Search Input */}
         <div className="relative mb-4">
           <Input 
@@ -1044,58 +1306,107 @@ const ProductList = ({
           )}
         </div>
 
+        {hiddenProductsCount > 0 && (
+          <div className="bg-amber-50 border border-amber-200/70 rounded-2xl p-3 flex items-center justify-between text-xs text-amber-800">
+            <div className="flex items-center gap-2">
+              <EyeOff size={16} className="text-amber-600 shrink-0" />
+              <span>
+                <strong>{hiddenProductsCount} product(s)</strong> are currently hidden from customers because their category is turned OFF.
+              </span>
+            </div>
+          </div>
+        )}
+
         {paginatedProducts.length === 0 ? (
           <p className="text-center py-8 text-gray-400">No products found</p>
         ) : (
-          paginatedProducts.map((product) => (
-            <div key={product.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-2xl transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center">
-                  {product.image ? (
-                    <img src={product.image} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    <Image size={20} className="text-gray-300" />
-                  )}
-                </div>
-                <div>
-                  <h4 className="font-bold text-sm text-[#1A1A1A] flex items-center gap-2 flex-wrap">
-                    {product.name}
-                    {product.offerLabel && (
-                      <span className="text-[9px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full uppercase font-bold">
-                        {product.offerLabel}
-                      </span>
+          paginatedProducts.map((product) => {
+            const isCatHidden = hiddenCategoryNames.has((product.category || '').trim().toLowerCase());
+            const popularRank = popularRankMap.get(product.id);
+            const isTop10Popular = popularRank !== undefined && popularRank <= 10;
+            return (
+              <div key={product.id} className={cn("flex items-center justify-between p-3 rounded-2xl transition-colors", isCatHidden ? "bg-amber-50/40 border border-amber-200/50" : "hover:bg-gray-50")}>
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center relative">
+                    {product.image ? (
+                      <img src={product.image} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <Image size={20} className="text-gray-300" />
                     )}
-                    {product.isPopular && (
-                      <span className="text-[9px] bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full uppercase font-bold">
-                        Popular
-                      </span>
+                    {isCatHidden && (
+                      <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                        <EyeOff size={14} className="text-white" />
+                      </div>
                     )}
-                  </h4>
-                  <div className="flex items-center gap-1">
-                    <p className="text-[10px] text-gray-400">₹{product.discountPrice || product.price}</p>
-                    {product.discountPrice && (
-                      <p className="text-[8px] text-red-400 line-through">₹{product.price}</p>
-                    )}
-                    <span className="text-[10px] text-gray-400">• {product.stock} in stock • {product.category}</span>
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm text-[#1A1A1A] flex items-center gap-2 flex-wrap">
+                      {product.name}
+                      {product.offerLabel && (
+                        <span className="text-[9px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full uppercase font-bold">
+                          {product.offerLabel}
+                        </span>
+                      )}
+                      {product.isPopular && (
+                        <span className={cn(
+                          "text-[9px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1",
+                          isTop10Popular 
+                            ? "bg-amber-100 text-amber-800 border border-amber-300" 
+                            : "bg-gray-100 text-gray-600"
+                        )}>
+                          <Star size={10} className={isTop10Popular ? "fill-amber-500 text-amber-600" : "text-gray-400"} />
+                          {popularRank ? `#${popularRank} Popular${popularRank === 1 ? ' (First on Home)' : ''}` : 'Popular'}
+                        </span>
+                      )}
+                      {isCatHidden && (
+                        <span className="text-[9px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                          <EyeOff size={10} /> Hidden Category
+                        </span>
+                      )}
+                    </h4>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <p className="text-[10px] text-gray-400">₹{product.discountPrice || product.price}</p>
+                      {product.discountPrice && (
+                        <p className="text-[8px] text-red-400 line-through">₹{product.price}</p>
+                      )}
+                      <span className="text-[10px] text-gray-400">• {product.stock} in stock • {product.category}</span>
+                    </div>
                   </div>
                 </div>
+                <div className="flex items-center gap-1.5">
+                  {onTogglePopular && (
+                    <button
+                      type="button"
+                      onClick={() => onTogglePopular(product)}
+                      className={cn(
+                        "p-2 rounded-xl transition-all",
+                        product.isPopular 
+                          ? "text-amber-500 bg-amber-50 hover:bg-amber-100 border border-amber-200" 
+                          : "text-gray-400 hover:text-amber-500 hover:bg-gray-100 border border-transparent"
+                      )}
+                      title={product.isPopular ? `Popular Rank #${popularRank || 1} (Click to remove from Popular list)` : "Click to mark as Popular (Will appear #1 on Home Screen)"}
+                    >
+                      <Star size={18} className={product.isPopular ? "fill-amber-400 text-amber-500" : "text-gray-400"} />
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => onEdit(product)}
+                    className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                    title="Edit Product"
+                  >
+                    <Edit2 size={18} />
+                  </button>
+                  <button 
+                    onClick={() => onDelete(product)}
+                    className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Delete Product"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => onEdit(product)}
-                  className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
-                >
-                  <Edit2 size={18} />
-                </button>
-                <button 
-                  onClick={() => onDelete(product)}
-                  className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                >
-                  <Trash2 size={18} />
-                </button>
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
 
         {/* Pagination Controls */}
@@ -1155,199 +1466,256 @@ const ProductList = ({
   );
 };
 
-const CategoryList = ({ categories, onEdit, onDelete, onAdd, onReorder, onNormalize }: { categories: Category[], onEdit: (c: Category) => void, onDelete: (c: Category) => void, onAdd: () => void, onReorder: (id: string, dir: 'up' | 'down') => void, onNormalize: () => void }) => (
-  <div className="space-y-4">
-    <div className="flex gap-2">
-      <Button 
-        onClick={onAdd}
-        className="flex-1 py-3 rounded-2xl flex items-center justify-center gap-2"
-      >
-        <Plus size={20} /> Add New Category
-      </Button>
-      <button 
-        onClick={onNormalize}
-        className="p-3 bg-gray-100 text-gray-400 rounded-2xl hover:bg-gray-200 transition-colors"
-        title="Repair & Sync All Orders"
-      >
-        <Settings size={20} />
-      </button>
-    </div>
+const CategoryList = ({ 
+  categories, 
+  products = [],
+  onEdit, 
+  onDelete, 
+  onAdd, 
+  onReorder, 
+  onNormalize,
+  onToggleVisibility
+}: { 
+  categories: Category[], 
+  products?: Product[],
+  onEdit: (c: Category) => void, 
+  onDelete: (c: Category) => void, 
+  onAdd: () => void, 
+  onReorder: (id: string, dir: 'up' | 'down') => void, 
+  onNormalize: () => void,
+  onToggleVisibility: (c: Category) => void
+}) => {
+  const [filter, setFilter] = useState<'all' | 'active' | 'hidden'>('all');
+  const [search, setSearch] = useState('');
 
-    {categories.map((category, index) => (
-      <div key={category.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-2xl transition-colors">
-        <div className="flex items-center gap-3">
-          <div className="flex flex-col gap-1 mr-1">
-            <button 
-              onClick={() => onReorder(category.id, 'up')}
-              disabled={index === 0}
-              className={cn("p-1 rounded-md hover:bg-gray-200 transition-colors", index === 0 ? "text-gray-200" : "text-gray-400")}
-            >
-              <ChevronUp size={16} />
-            </button>
-            <button 
-              onClick={() => onReorder(category.id, 'down')}
-              disabled={index === categories.length - 1}
-              className={cn("p-1 rounded-md hover:bg-gray-200 transition-colors", index === categories.length - 1 ? "text-gray-200" : "text-gray-400")}
-            >
-              <ChevronDown size={16} />
-            </button>
-          </div>
-          <div className="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center text-xl">
-            {category.icon}
-          </div>
-          <div>
-            <h4 className="font-bold text-sm text-[#1A1A1A]">{category.name}</h4>
-            <p className="text-[10px] text-gray-400">Order: {category.order ?? index} • ID: {category.id.slice(-6)}</p>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <button 
-            onClick={() => onEdit(category)}
-            className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
-          >
-            <Edit2 size={18} />
-          </button>
-          <button 
-            onClick={() => onDelete(category)}
-            className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-          >
-            <Trash2 size={18} />
-          </button>
-        </div>
-      </div>
-    ))}
-  </div>
-);
+  const activeCount = categories.filter(c => c.isActive !== false).length;
+  const hiddenCount = categories.filter(c => c.isActive === false).length;
 
-const PrintableOrderReceipt = React.forwardRef<HTMLDivElement, { 
-  order: Order; 
-  customer?: User | null; 
-  storeSettings?: AppSettings;
-}>(({ order, customer, storeSettings }, ref) => {
-  const orderDate = order.createdAt?.toDate 
-    ? order.createdAt.toDate() 
-    : (order.createdAt?.seconds ? new Date(order.createdAt.seconds * 1000) : new Date());
-    
-  const formattedDate = orderDate.toLocaleDateString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric'
+  const filteredCategories = categories.filter(category => {
+    const isVisible = category.isActive !== false;
+    const matchesFilter = 
+      filter === 'all' ? true :
+      filter === 'active' ? isVisible :
+      !isVisible;
+    const matchesSearch = !search.trim() || category.name.toLowerCase().includes(search.toLowerCase());
+    return matchesFilter && matchesSearch;
   });
-  const formattedTime = orderDate.toLocaleTimeString('en-IN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true
-  });
-
-  const totalQuantity = (order.items || []).reduce((sum, it) => sum + (it.quantity || 1), 0);
-  const calculatedSubtotal = order.subtotal || (order.items || []).reduce((sum, it) => sum + (it.price * it.quantity), 0);
-  const earnedLoyaltyPoints = order.pointsEarned !== undefined 
-    ? order.pointsEarned 
-    : Math.floor((calculatedSubtotal || order.total || 0) / 100) * 5;
 
   return (
-    <div ref={ref} className="p-8 max-w-xl mx-auto bg-white text-gray-900 font-sans text-sm print:p-4 print:text-black">
-      {/* Header */}
-      <div className="text-center pb-4 border-b-2 border-gray-900">
-        <h1 className="text-2xl font-black tracking-wider uppercase text-gray-900">LUMARO MART</h1>
-        <p className="text-xs text-gray-600 font-medium mt-0.5">Grocery & Daily Essentials Store</p>
-        {storeSettings?.supportNumber && (
-          <p className="text-xs text-gray-600 mt-0.5">Helpline: +91 {storeSettings.supportNumber}</p>
-        )}
-        <div className="mt-2 inline-block px-3 py-1 bg-gray-100 rounded-full text-xs font-bold uppercase tracking-widest text-gray-800 border border-gray-200">
-          Order Bill / Receipt
+    <div className="space-y-4">
+      {/* Top Action Header */}
+      <div className="flex gap-2">
+        <Button 
+          onClick={onAdd}
+          className="flex-1 py-3 rounded-2xl flex items-center justify-center gap-2"
+        >
+          <Plus size={20} /> Add New Category
+        </Button>
+        <button 
+          onClick={onNormalize}
+          className="p-3 bg-gray-100 text-gray-400 rounded-2xl hover:bg-gray-200 transition-colors"
+          title="Repair & Sync All Orders"
+        >
+          <Settings size={20} />
+        </button>
+      </div>
+
+      {/* Visibility Guidance Banner */}
+      <div className="bg-emerald-50/80 border border-emerald-100 rounded-2xl p-3.5 flex items-start gap-3">
+        <div className="w-8 h-8 rounded-xl bg-[#66D2A4]/20 text-[#66D2A4] flex items-center justify-center shrink-0 mt-0.5">
+          <Eye size={18} />
+        </div>
+        <div className="text-xs text-gray-600">
+          <p className="font-bold text-[#1A1A1A] mb-0.5">Category & Product Visibility Control</p>
+          <p className="leading-relaxed text-gray-500">
+            Use the <strong>ON / OFF</strong> switch on any category. When turned OFF, that category and all its items are instantly hidden from users without needing to delete or re-upload anything!
+          </p>
         </div>
       </div>
 
-      {/* Meta & Customer Details */}
-      <div className="grid grid-cols-2 gap-4 py-4 border-b border-gray-200 text-xs">
-        <div>
-          <p className="text-gray-500 font-bold uppercase text-[10px] tracking-wider">Order Details</p>
-          <p className="font-bold text-sm text-gray-900 mt-0.5">#{order.id.slice(-8).toUpperCase()}</p>
-          <p className="text-gray-600 mt-1"><span className="font-semibold text-gray-800">Date:</span> {formattedDate} {formattedTime}</p>
+      {/* Filter Tabs & Search Bar */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+          <button
+            onClick={() => setFilter('all')}
+            className={cn(
+              "px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0",
+              filter === 'all' ? "bg-[#1A1A1A] text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+            )}
+          >
+            All ({categories.length})
+          </button>
+          <button
+            onClick={() => setFilter('active')}
+            className={cn(
+              "px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5",
+              filter === 'active' ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+            )}
+          >
+            <Eye size={13} /> Visible ({activeCount})
+          </button>
+          <button
+            onClick={() => setFilter('hidden')}
+            className={cn(
+              "px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5",
+              filter === 'hidden' ? "bg-amber-600 text-white" : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+            )}
+          >
+            <EyeOff size={13} /> Hidden ({hiddenCount})
+          </button>
         </div>
-        <div className="text-right">
-          <p className="text-gray-500 font-bold uppercase text-[10px] tracking-wider">Customer Details</p>
-          <p className="font-bold text-sm text-gray-900 mt-0.5">{order.userName || customer?.displayName || 'Customer'}</p>
-          <p className="text-gray-600 mt-1"><span className="font-semibold text-gray-800">Phone:</span> {order.userPhone || customer?.phoneNumber || 'N/A'}</p>
-          {(customer?.address || customer?.pincode) && (
-            <p className="text-gray-600 mt-0.5 break-words">
-              <span className="font-semibold text-gray-800">Address:</span> {customer?.address || ''} {customer?.pincode ? `(${customer.pincode})` : ''}
-            </p>
-          )}
-        </div>
-      </div>
 
-      {/* Items Table */}
-      <div className="py-4">
-        <table className="w-full text-left text-xs border-collapse">
-          <thead>
-            <tr className="border-b-2 border-gray-900 text-gray-800">
-              <th className="py-2 px-1 text-center w-8 font-bold">#</th>
-              <th className="py-2 px-2 font-bold">Item Description</th>
-              <th className="py-2 px-2 text-center w-14 font-bold">Qty</th>
-              <th className="py-2 px-2 text-right w-16 font-bold">Price</th>
-              <th className="py-2 px-2 text-right w-20 font-bold">Total</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
-            {(order.items || []).map((item, idx) => (
-              <tr key={idx} className="border-b border-gray-100">
-                <td className="py-2 px-1 text-center font-mono text-gray-500">{idx + 1}</td>
-                <td className="py-2 px-2 font-semibold text-gray-900">{item.name}</td>
-                <td className="py-2 px-2 text-center font-bold text-gray-800">{item.quantity}</td>
-                <td className="py-2 px-2 text-right font-medium text-gray-700">₹{item.price}</td>
-                <td className="py-2 px-2 text-right font-bold text-gray-900">₹{item.price * item.quantity}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Bill Calculation */}
-      <div className="pt-2 pb-4 border-t-2 border-gray-900 space-y-1.5 text-xs">
-        <div className="flex justify-between text-gray-700">
-          <span>Items Subtotal ({totalQuantity} {totalQuantity === 1 ? 'item' : 'items'})</span>
-          <span className="font-semibold text-gray-900">₹{calculatedSubtotal}</span>
-        </div>
-        {order.delivery !== undefined && (
-          <div className="flex justify-between text-gray-700">
-            <span>Delivery Fee</span>
-            <span className="font-semibold text-gray-900">{order.delivery === 0 ? 'FREE' : `₹${order.delivery}`}</span>
+        {categories.length > 5 && (
+          <div className="relative">
+            <Input
+              placeholder="Search categories..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="bg-gray-50 border-none text-xs"
+              icon={<Search size={14} />}
+            />
           </div>
         )}
-        {order.pointsRedeemed !== undefined && order.pointsRedeemed > 0 && (
-          <div className="flex justify-between text-red-600 font-semibold">
-            <span>Discount / Points Redeemed</span>
-            <span>-₹{order.pointsRedeemed}</span>
-          </div>
-        )}
-        <div className="pt-2.5 border-t border-gray-400 flex justify-between items-center text-base font-black text-gray-900">
-          <span>GRAND TOTAL</span>
-          <span>₹{order.total}</span>
+      </div>
+
+      {/* Categories List */}
+      {filteredCategories.length === 0 ? (
+        <div className="p-8 text-center bg-gray-50 rounded-2xl border border-gray-100">
+          <p className="text-sm font-semibold text-gray-400">No categories found matching filter</p>
         </div>
-      </div>
+      ) : (
+        filteredCategories.map((category, index) => {
+          const isVisible = category.isActive !== false;
+          const matchingProductsCount = products.filter(
+            p => (p.category || '').trim().toLowerCase() === category.name.trim().toLowerCase()
+          ).length;
 
-      {/* Loyalty Points Earned Highlight Box */}
-      <div className="mt-4 p-4 bg-emerald-50 rounded-2xl border-2 border-emerald-600 text-center space-y-1 print:border-2 print:border-black print:bg-gray-100">
-        <p className="text-base sm:text-lg font-black tracking-wide text-emerald-950 print:text-black uppercase">
-          🎉 YOU EARNED {earnedLoyaltyPoints} LOYALTY POINTS ON THIS ORDER!
-        </p>
-        <p className="text-[11px] font-bold text-emerald-800 print:text-gray-900">
-          (1 Point = ₹1 • You can redeem these points for discounts on your next order)
-        </p>
-      </div>
+          return (
+            <div 
+              key={category.id} 
+              className={cn(
+                "p-3.5 rounded-2xl transition-all border",
+                isVisible 
+                  ? "bg-white border-gray-100 hover:border-gray-200 shadow-sm" 
+                  : "bg-amber-50/40 border-amber-200/70"
+              )}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  {/* Reorder Buttons */}
+                  <div className="flex flex-col gap-0.5 shrink-0">
+                    <button 
+                      onClick={() => onReorder(category.id, 'up')}
+                      disabled={index === 0}
+                      className={cn("p-1 rounded-md hover:bg-gray-200 transition-colors", index === 0 ? "text-gray-200" : "text-gray-400")}
+                      title="Move Up"
+                    >
+                      <ChevronUp size={15} />
+                    </button>
+                    <button 
+                      onClick={() => onReorder(category.id, 'down')}
+                      disabled={index === categories.length - 1}
+                      className={cn("p-1 rounded-md hover:bg-gray-200 transition-colors", index === categories.length - 1 ? "text-gray-200" : "text-gray-400")}
+                      title="Move Down"
+                    >
+                      <ChevronDown size={15} />
+                    </button>
+                  </div>
 
-      {/* Footer */}
-      <div className="mt-4 pt-3 border-t border-dashed border-gray-400 text-center space-y-1 text-[11px] text-gray-600">
-        <p className="font-bold text-gray-800">Thank you for shopping with Lumaro Mart!</p>
-        <p className="text-[10px] text-gray-500">Please check all items at the time of delivery.</p>
-      </div>
+                  {/* Icon */}
+                  <div className={cn(
+                    "w-11 h-11 rounded-xl flex items-center justify-center text-xl shrink-0 transition-colors",
+                    isVisible ? "bg-orange-50 text-orange-600" : "bg-gray-100 text-gray-400 opacity-60"
+                  )}>
+                    {category.icon || '📦'}
+                  </div>
+
+                  {/* Category Details */}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className={cn("font-bold text-sm truncate", isVisible ? "text-[#1A1A1A]" : "text-gray-500")}>
+                        {category.name}
+                      </h4>
+                      {/* Active/Hidden Badge */}
+                      {isVisible ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-full">
+                          <Eye size={11} /> Visible
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
+                          <EyeOff size={11} /> Hidden
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-0.5">
+                      {matchingProductsCount} product{matchingProductsCount === 1 ? '' : 's'} • Order: {category.order ?? index} • ID: {category.id.slice(-6)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Right controls: 1-Click Toggle Switch & Action Buttons */}
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Quick 1-click Toggle Switch */}
+                  <div className="flex flex-col items-end mr-1">
+                    <button
+                      type="button"
+                      onClick={() => onToggleVisibility(category)}
+                      className={cn(
+                        "w-11 h-6 rounded-full transition-colors relative p-0.5 cursor-pointer shadow-inner",
+                        isVisible ? "bg-[#66D2A4]" : "bg-gray-300"
+                      )}
+                      title={isVisible ? "Click to Hide category & its products" : "Click to Show category & its products"}
+                    >
+                      <div className={cn(
+                        "w-5 h-5 bg-white rounded-full transition-transform shadow-md",
+                        isVisible ? "translate-x-5" : "translate-x-0"
+                      )} />
+                    </button>
+                    <span className={cn(
+                      "text-[9px] font-bold mt-0.5",
+                      isVisible ? "text-[#66D2A4]" : "text-gray-400"
+                    )}>
+                      {isVisible ? "ON" : "OFF"}
+                    </span>
+                  </div>
+
+                  <button 
+                    onClick={() => onEdit(category)}
+                    className="p-2 text-blue-500 hover:bg-blue-50 rounded-xl transition-colors"
+                    title="Edit Category"
+                  >
+                    <Edit2 size={16} />
+                  </button>
+                  <button 
+                    onClick={() => onDelete(category)}
+                    className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                    title="Delete Category"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {!isVisible && (
+                <div className="mt-2.5 pt-2 border-t border-amber-200/60 flex items-center justify-between text-[11px] text-amber-700">
+                  <span className="flex items-center gap-1.5">
+                    <EyeOff size={12} /> This category & all its {matchingProductsCount} products are currently hidden from user app.
+                  </span>
+                  <button
+                    onClick={() => onToggleVisibility(category)}
+                    className="font-bold underline hover:text-amber-900"
+                  >
+                    Turn ON
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
     </div>
   );
-});
-
-PrintableOrderReceipt.displayName = 'PrintableOrderReceipt';
+};
 
 const OrderList = ({ 
   orders, 
@@ -1376,6 +1744,7 @@ const OrderList = ({
 }) => {
   const [printingOrder, setPrintingOrder] = useState<Order | null>(null);
   const [printingCustomer, setPrintingCustomer] = useState<User | null>(null);
+  const [downloadingOrderId, setDownloadingOrderId] = useState<string | null>(null);
   const printReceiptRef = useRef<HTMLDivElement>(null);
 
   const handleTriggerPrint = useReactToPrint({
@@ -1383,21 +1752,44 @@ const OrderList = ({
     documentTitle: printingOrder ? `Bill-${printingOrder.id.slice(-6)}` : 'Order-Bill',
   });
 
-  const handleQuickPrint = async (order: Order) => {
-    setPrintingOrder(order);
+  const fetchCustomerForOrder = async (order: Order): Promise<User | null> => {
     try {
       const userDoc = await getDoc(doc(db, 'users', order.userId));
       if (userDoc.exists()) {
-        setPrintingCustomer({ uid: userDoc.id, ...userDoc.data() } as User);
-      } else {
-        setPrintingCustomer(null);
+        return { uid: userDoc.id, ...userDoc.data() } as User;
       }
     } catch {
-      setPrintingCustomer(null);
+      // ignore
     }
+    return null;
+  };
+
+  const handleQuickPrint = async (order: Order) => {
+    setPrintingOrder(order);
+    const cust = await fetchCustomerForOrder(order);
+    setPrintingCustomer(cust);
     setTimeout(() => {
       handleTriggerPrint();
     }, 150);
+  };
+
+  const handleQuickWhatsApp = async (order: Order) => {
+    const cust = await fetchCustomerForOrder(order);
+    sendWhatsAppBill(order, cust, storeSettings);
+  };
+
+  const handleQuickPdfDownload = async (order: Order) => {
+    setDownloadingOrderId(order.id);
+    setPrintingOrder(order);
+    const cust = await fetchCustomerForOrder(order);
+    setPrintingCustomer(cust);
+
+    setTimeout(async () => {
+      if (printReceiptRef.current) {
+        await downloadReceiptPdf(printReceiptRef.current, `Bill-${order.id.slice(-8).toUpperCase()}.pdf`);
+      }
+      setDownloadingOrderId(null);
+    }, 200);
   };
 
   const filteredOrders = orders.filter(order => 
@@ -1450,9 +1842,9 @@ const OrderList = ({
         <p className="text-center py-8 text-gray-400">No orders found</p>
       ) : (
         paginatedOrders.map((order) => (
-          <div key={order.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
-            <div className="flex justify-between items-start mb-4">
-              <div className="cursor-pointer" onClick={() => onViewDetails(order)}>
+          <div key={order.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-3">
+            <div className="flex justify-between items-start">
+              <div className="cursor-pointer flex-1" onClick={() => onViewDetails(order)}>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Order #{order.id.slice(-6)}</p>
                 <h4 className="font-bold text-sm text-[#1A1A1A] mt-1">{order.userName || 'Unknown User'}</h4>
                 <p className="text-[10px] text-blue-500 font-bold mb-1">Mobile: {order.userPhone || 'N/A'}</p>
@@ -1464,7 +1856,7 @@ const OrderList = ({
                   {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleString() : 'Just now'}
                 </p>
               </div>
-              <div className="flex flex-col items-end gap-3">
+              <div className="flex flex-col items-end gap-2">
                 <select 
                   className={cn(
                     "px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase outline-none border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
@@ -1482,27 +1874,53 @@ const OrderList = ({
                   <option value="delivered">Delivered</option>
                   <option value="canceled">Canceled</option>
                 </select>
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => handleQuickPrint(order)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-emerald-50 text-gray-700 hover:text-emerald-700 rounded-xl text-[10px] font-bold border border-gray-200 hover:border-emerald-300 shadow-2xs transition-all active:scale-95 cursor-pointer"
-                    title="Print Bill / Receipt"
-                  >
-                    <Printer size={12} className="text-[#66D2A4]" />
-                    <span>Print Bill</span>
-                  </button>
-                  <button 
-                    onClick={() => onViewDetails(order)}
-                    className="text-[10px] font-bold text-[#66D2A4] uppercase tracking-wider hover:underline"
-                  >
-                    View Details
-                  </button>
-                </div>
+                <button 
+                  onClick={() => onViewDetails(order)}
+                  className="text-[10px] font-bold text-[#66D2A4] uppercase tracking-wider hover:underline"
+                >
+                  View Details
+                </button>
               </div>
+            </div>
+
+            {/* Quick Action Buttons for WhatsApp, PDF, and Print */}
+            <div className="pt-2.5 border-t border-gray-200/70 flex flex-wrap items-center gap-1.5 justify-end">
+              <button 
+                onClick={() => handleQuickWhatsApp(order)}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-[10px] font-bold border border-emerald-200 shadow-2xs transition-all active:scale-95 cursor-pointer"
+                title="Send Bill via WhatsApp"
+              >
+                <Send size={11} className="text-emerald-600" />
+                <span>WhatsApp Bill</span>
+              </button>
+
+              <button 
+                onClick={() => handleQuickPdfDownload(order)}
+                disabled={downloadingOrderId === order.id}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-[10px] font-bold border border-blue-200 shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                title="Download Instant PDF Receipt (Mobile & PC)"
+              >
+                {downloadingOrderId === order.id ? (
+                  <Loader2 size={11} className="animate-spin text-blue-600" />
+                ) : (
+                  <Download size={11} className="text-blue-600" />
+                )}
+                <span>Instant PDF</span>
+              </button>
+
+              <button 
+                onClick={() => handleQuickPrint(order)}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-gray-100 text-gray-700 rounded-xl text-[10px] font-bold border border-gray-200 shadow-2xs transition-all active:scale-95 cursor-pointer"
+                title="Print Bill / Receipt"
+              >
+                <Printer size={11} className="text-gray-600" />
+                <span>Print</span>
+              </button>
             </div>
           </div>
         ))
       )}
+
 
       {/* Pagination Controls */}
       {totalPages > 1 && (
@@ -1834,12 +2252,29 @@ const OrderDetailsModal = ({
 }) => {
   const [customer, setCustomer] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const printReceiptRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = useReactToPrint({
     contentRef: printReceiptRef,
     documentTitle: `Bill-${order.id.slice(-6)}`,
   });
+
+  const handleWhatsApp = () => {
+    sendWhatsAppBill(order, customer, storeSettings);
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!printReceiptRef.current) return;
+    setIsDownloadingPdf(true);
+    try {
+      await downloadReceiptPdf(printReceiptRef.current, `Bill-${order.id.slice(-8).toUpperCase()}.pdf`);
+    } catch (err) {
+      console.error('PDF error:', err);
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -1885,20 +2320,35 @@ const OrderDetailsModal = ({
             <h2 className="text-2xl font-bold text-[#1A1A1A]">Order Details</h2>
             <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mt-1">#{order.id.slice(-8)}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <button 
+              onClick={handleWhatsApp} 
+              className="p-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-full transition-colors cursor-pointer"
+              title="Send WhatsApp Bill"
+            >
+              <Send size={16} />
+            </button>
+            <button 
+              onClick={handleDownloadPdf} 
+              disabled={isDownloadingPdf}
+              className="p-2 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-full transition-colors cursor-pointer disabled:opacity-50"
+              title="Download Instant PDF"
+            >
+              {isDownloadingPdf ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+            </button>
             <button 
               onClick={() => handlePrint()} 
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#66D2A4]/15 hover:bg-[#66D2A4]/25 text-[#137a4e] rounded-xl text-xs font-bold transition-colors cursor-pointer"
-              title="Print Bill / Receipt"
+              className="p-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-full transition-colors cursor-pointer"
+              title="Print Bill"
             >
-              <Printer size={15} />
-              <span>Print Bill</span>
+              <Printer size={16} />
             </button>
-            <button onClick={onClose} className="p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200 transition-colors cursor-pointer">
+            <button onClick={onClose} className="p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200 transition-colors cursor-pointer ml-1">
               <X size={20} />
             </button>
           </div>
         </div>
+
 
         <div className="space-y-8">
           {/* Status Section */}
@@ -2042,17 +2492,40 @@ const OrderDetailsModal = ({
           </div>
         </div>
 
-        <div className="flex gap-3 mt-8">
-          <Button 
-            onClick={() => handlePrint()} 
-            className="flex-1 py-4 rounded-2xl bg-[#66D2A4] hover:bg-[#52ba8e] text-white font-bold border-none shadow-lg shadow-[#66D2A4]/20 flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <Printer size={18} /> Print Bill
-          </Button>
-          <Button onClick={onClose} className="px-6 py-4 rounded-2xl bg-gray-100 text-gray-900 border-none hover:bg-gray-200 font-bold cursor-pointer">
-            Close
-          </Button>
+        <div className="space-y-2.5 mt-8">
+          <div className="grid grid-cols-2 gap-2.5">
+            <Button 
+              onClick={handleWhatsApp} 
+              className="py-3.5 px-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold border-none shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer text-xs"
+            >
+              <Send size={15} /> WhatsApp Bill
+            </Button>
+            <Button 
+              onClick={handleDownloadPdf} 
+              disabled={isDownloadingPdf}
+              className="py-3.5 px-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold border-none shadow-md shadow-blue-600/20 flex items-center justify-center gap-2 cursor-pointer text-xs disabled:opacity-50"
+            >
+              {isDownloadingPdf ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+              <span>Instant PDF</span>
+            </Button>
+          </div>
+
+          <div className="flex gap-2.5">
+            <Button 
+              onClick={() => handlePrint()} 
+              className="flex-1 py-3.5 rounded-2xl bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold border border-gray-200 flex items-center justify-center gap-2 cursor-pointer text-xs"
+            >
+              <Printer size={15} /> Print Receipt
+            </Button>
+            <Button 
+              onClick={onClose} 
+              className="px-6 py-3.5 rounded-2xl bg-gray-100 text-gray-900 border-none hover:bg-gray-200 font-bold cursor-pointer text-xs"
+            >
+              Close
+            </Button>
+          </div>
         </div>
+
       </motion.div>
     </motion.div>
   );
@@ -2453,11 +2926,7 @@ const ProductFormModal = ({
       }
 
       if (finalData.isPopular) {
-        const wasPopular = mode === 'edit' && product?.isPopular;
-        const hasTimestamp = mode === 'edit' && product?.popularUpdatedAt;
-        if (!wasPopular || !hasTimestamp) {
-          finalData.popularUpdatedAt = serverTimestamp();
-        }
+        finalData.popularUpdatedAt = serverTimestamp();
       } else {
         if (mode === 'edit') {
           // @ts-ignore
@@ -2611,15 +3080,20 @@ const ProductFormModal = ({
 
           <div className="flex items-center justify-between p-4 bg-[#F0F7F4] rounded-3xl">
             <div className="flex flex-col pr-4">
-              <span className="text-sm font-bold text-[#1A1A1A]">Popular Item</span>
-              <span className="text-[10px] text-gray-500">Show this product in the 'Popular Items' section on the home screen</span>
+              <span className="text-sm font-bold text-[#1A1A1A] flex items-center gap-1.5">
+                <Star size={14} className={formData.isPopular ? "fill-amber-400 text-amber-500" : "text-gray-400"} />
+                Popular Item (Top 10 on Home Screen)
+              </span>
+              <span className="text-[10px] text-gray-500">
+                Mark karne par yeh product customer Home Screen par 'Popular Items' mein sabse upar (#1) dikhega.
+              </span>
             </div>
             <button
               type="button"
               onClick={() => setFormData(prev => ({ ...prev, isPopular: !prev.isPopular }))}
               className={cn(
                 "w-12 h-6 rounded-full p-0.5 transition-colors duration-200 focus:outline-none relative flex items-center shrink-0",
-                formData.isPopular ? "bg-[#66D2A4]" : "bg-gray-300"
+                formData.isPopular ? "bg-amber-400" : "bg-gray-300"
               )}
             >
               <div 
@@ -2675,13 +3149,17 @@ const CategoryFormModal = ({
 }) => {
   const [formData, setFormData] = useState<Partial<Category>>(category || {
     name: '',
-    icon: '📦'
+    icon: '📦',
+    isActive: true
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await onSave(formData);
+      await onSave({
+        ...formData,
+        isActive: formData.isActive !== false
+      });
     } catch (error: any) {
       console.error("Error saving category:", error);
       alert(error.message || "Failed to save category.");
@@ -2729,6 +3207,49 @@ const CategoryFormModal = ({
               placeholder="e.g. 🥕"
               required
             />
+          </div>
+
+          {/* Visibility Toggle Switch */}
+          <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                {formData.isActive !== false ? (
+                  <div className="w-8 h-8 rounded-xl bg-[#66D2A4]/20 text-[#66D2A4] flex items-center justify-center">
+                    <Eye size={18} />
+                  </div>
+                ) : (
+                  <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center">
+                    <EyeOff size={18} />
+                  </div>
+                )}
+                <div>
+                  <p className="font-bold text-xs text-[#1A1A1A]">
+                    {formData.isActive !== false ? "Category Active (Visible to users)" : "Category Inactive (Hidden from users)"}
+                  </p>
+                  <p className="text-[10px] text-gray-400">
+                    {formData.isActive !== false
+                      ? "Category and all its products are visible in app"
+                      : "Category and all its products will be hidden"}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, isActive: prev.isActive === false ? true : false }))}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-colors relative p-0.5 shrink-0 shadow-inner",
+                  formData.isActive !== false ? "bg-[#66D2A4]" : "bg-gray-300"
+                )}
+              >
+                <div className={cn(
+                  "w-5 h-5 bg-white rounded-full transition-transform shadow-md",
+                  formData.isActive !== false ? "translate-x-6" : "translate-x-0"
+                )} />
+              </button>
+            </div>
+            <p className="text-[10px] text-gray-500 bg-white p-2 rounded-xl border border-gray-100">
+              💡 No need to delete or re-upload products. Toggling this instantly controls visibility for users.
+            </p>
           </div>
 
           <div className="pt-4 flex gap-3">

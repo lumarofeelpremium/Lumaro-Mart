@@ -36,10 +36,13 @@ export const Categories = ({
     window.scrollTo(0, 0);
   }, []);
 
-  // Set default selected category to first category once loaded, if not already set
+  // Set default selected category to first category once loaded, or update if current selected category is hidden/inactive
   useEffect(() => {
-    if (!selectedCategory && categories.length > 0) {
-      setSelectedCategory(categories[0].name);
+    if (categories.length > 0) {
+      const existsInActive = categories.some(cat => cat.name === selectedCategory);
+      if (!selectedCategory || !existsInActive) {
+        setSelectedCategory(categories[0].name);
+      }
     }
   }, [categories, selectedCategory]);
 
