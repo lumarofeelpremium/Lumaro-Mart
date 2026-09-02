@@ -55,6 +55,7 @@ export interface Order {
   total: number;
   status: 'pending' | 'confirmed' | 'delivered' | 'canceled';
   createdAt: any;
+  canceledAt?: any;
   viewed?: boolean;
   subtotal?: number;
   delivery?: number;

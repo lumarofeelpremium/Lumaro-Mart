@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner } from '../types';
 import { auth, db } from '../firebase';
-import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, where, getDoc, increment, writeBatch, deleteField, limit } from 'firebase/firestore';
+import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, where, getDoc, getDocs, increment, writeBatch, deleteField, limit } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { compressImage } from '../lib/utils';
 import { cacheUtils } from '../lib/cache-utils';
@@ -80,6 +80,7 @@ export const AdminDashboard = () => {
   const [ordersLimit, setOrdersLimit] = useState(150);
   const [usersLimit, setUsersLimit] = useState(150);
   const [updatingOrderIds, setUpdatingOrderIds] = useState<Record<string, boolean>>({});
+  const [isCleaningCanceledOrders, setIsCleaningCanceledOrders] = useState(false);
   const isInitialLoad = React.useRef(true);
   const notificationAudio = React.useRef<HTMLAudioElement | null>(null);
 
@@ -294,6 +295,74 @@ export const AdminDashboard = () => {
       return [];
     }
   };
+
+  // Helper to auto-purge canceled orders older than 1 month (30 days) from Firestore
+  const cleanupExpiredCanceledOrders = async (silent = true) => {
+    if (isCleaningCanceledOrders) return 0;
+    setIsCleaningCanceledOrders(true);
+    try {
+      const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
+      const now = Date.now();
+
+      // Query canceled orders from Firebase
+      const qCanceled = query(collection(db, 'orders'), where('status', '==', 'canceled'));
+      const snapshot = await getDocs(qCanceled);
+
+      const expiredDocs = snapshot.docs.filter(docSnap => {
+        const data = docSnap.data() as Order;
+        // Check canceled timestamp, falling back to created timestamp
+        const timeVal = data.canceledAt?.toMillis 
+          ? data.canceledAt.toMillis() 
+          : (data.canceledAt?.seconds 
+              ? data.canceledAt.seconds * 1000 
+              : (data.createdAt?.toMillis 
+                  ? data.createdAt.toMillis() 
+                  : (data.createdAt?.seconds 
+                      ? data.createdAt.seconds * 1000 
+                      : (data.createdAt ? new Date(data.createdAt).getTime() : 0))));
+
+        return timeVal > 0 && (now - timeVal) > ONE_MONTH_MS;
+      });
+
+      if (expiredDocs.length > 0) {
+        // Chunk deletions in batches of 400 (Firestore max 500 per batch)
+        const chunkSize = 400;
+        for (let i = 0; i < expiredDocs.length; i += chunkSize) {
+          const chunk = expiredDocs.slice(i, i + chunkSize);
+          const batch = writeBatch(db);
+          chunk.forEach(d => {
+            batch.delete(doc(db, 'orders', d.id));
+          });
+          await batch.commit();
+        }
+
+        setSuccessMessage(`🧹 ${expiredDocs.length} canceled order(s) older than 1 month were automatically purged from database!`);
+        return expiredDocs.length;
+      } else {
+        if (!silent) {
+          setSuccessMessage('No canceled orders older than 1 month found.');
+        }
+        return 0;
+      }
+    } catch (err) {
+      console.error('Error during expired canceled orders cleanup:', err);
+      if (!silent) {
+        handleFirestoreError(err, OperationType.DELETE, 'orders/canceled_cleanup');
+      }
+      return 0;
+    } finally {
+      setIsCleaningCanceledOrders(false);
+    }
+  };
+
+  // Automatic background runner for purging 1-month-old canceled orders on dashboard load
+  useEffect(() => {
+    if (!auth.currentUser) return;
+    const timer = setTimeout(() => {
+      cleanupExpiredCanceledOrders(true);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [auth.currentUser]);
 
   const handleSaveProduct = async (productData: any) => {
     try {
@@ -543,7 +612,7 @@ export const AdminDashboard = () => {
       const batch = writeBatch(db);
       
       // Handle Stock Restoration/Reduction based on status change
-      // Case 1: Order is being canceled (Restore Stock)
+      // Case 1: Order is being canceled (Restore Stock & set canceledAt timestamp)
       if (newStatus === 'canceled' && oldStatus !== 'canceled') {
         orderData.items.forEach(item => {
           const productRef = doc(db, 'products', item.id);
@@ -551,8 +620,12 @@ export const AdminDashboard = () => {
             stock: increment(item.quantity)
           });
         });
+        batch.update(orderRef, { 
+          status: 'canceled',
+          canceledAt: serverTimestamp()
+        });
       }
-      // Case 2: Order was canceled but is now being re-activated (Reduce Stock again)
+      // Case 2: Order was canceled but is now being re-activated (Reduce Stock again & clear canceledAt)
       else if (oldStatus === 'canceled' && newStatus !== 'canceled') {
         orderData.items.forEach(item => {
           const productRef = doc(db, 'products', item.id);
@@ -560,10 +633,14 @@ export const AdminDashboard = () => {
             stock: increment(-item.quantity)
           });
         });
+        batch.update(orderRef, { 
+          status: newStatus,
+          canceledAt: deleteField()
+        });
+      } else {
+        // Update the order status
+        batch.update(orderRef, { status: newStatus });
       }
-      
-      // Update the order status
-      batch.update(orderRef, { status: newStatus });
       
       // Award Loyalty Points on Delivery
       if (newStatus === 'delivered' && oldStatus !== 'delivered' && orderData.pointsEarned && orderData.pointsEarned > 0) {
@@ -697,6 +774,8 @@ export const AdminDashboard = () => {
             <OrderList 
               orders={orders} 
               onUpdateStatus={handleUpdateOrderStatus}
+              onRunCanceledCleanup={() => cleanupExpiredCanceledOrders(false)}
+              isCleaningCanceledOrders={isCleaningCanceledOrders}
               searchQuery={orderSearchQuery}
               onSearchChange={(val) => {
                 setOrderSearchQuery(val);
@@ -1720,6 +1799,8 @@ const CategoryList = ({
 const OrderList = ({ 
   orders, 
   onUpdateStatus,
+  onRunCanceledCleanup,
+  isCleaningCanceledOrders = false,
   searchQuery,
   onSearchChange,
   onViewDetails,
@@ -1732,6 +1813,8 @@ const OrderList = ({
 }: { 
   orders: Order[], 
   onUpdateStatus: (id: string, status: Order['status']) => void,
+  onRunCanceledCleanup?: () => void,
+  isCleaningCanceledOrders?: boolean,
   searchQuery: string,
   onSearchChange: (val: string) => void,
   onViewDetails: (order: Order) => void,
@@ -1742,6 +1825,7 @@ const OrderList = ({
   updatingOrderIds?: Record<string, boolean>,
   storeSettings?: AppSettings
 }) => {
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'confirmed' | 'delivered' | 'canceled'>('all');
   const [printingOrder, setPrintingOrder] = useState<Order | null>(null);
   const [printingCustomer, setPrintingCustomer] = useState<User | null>(null);
   const [downloadingOrderId, setDownloadingOrderId] = useState<string | null>(null);
@@ -1792,12 +1876,20 @@ const OrderList = ({
     }, 200);
   };
 
-  const filteredOrders = orders.filter(order => 
-    (order.userPhone || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (order.userName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (order.userId || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-    order.id.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Status counts
+  const pendingCount = orders.filter(o => o.status === 'pending').length;
+  const confirmedCount = orders.filter(o => o.status === 'confirmed').length;
+  const deliveredCount = orders.filter(o => o.status === 'delivered').length;
+  const canceledCount = orders.filter(o => o.status === 'canceled').length;
+
+  const filteredOrders = orders.filter(order => {
+    const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
+    const matchesSearch = (order.userPhone || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (order.userName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (order.userId || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      order.id.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesStatus && matchesSearch;
+  });
 
   const itemsPerPage = 10;
   const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
@@ -1818,6 +1910,99 @@ const OrderList = ({
             storeSettings={storeSettings} 
           />
         )}
+      </div>
+
+      {/* 1-Month Canceled Orders Purge Banner */}
+      <div className="p-3.5 bg-red-50/90 border border-red-200/90 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+        <div className="flex items-start gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center text-red-600 shrink-0 mt-0.5">
+            <Clock size={16} />
+          </div>
+          <div>
+            <p className="font-bold text-red-900 flex items-center gap-1.5">
+              <span>Auto 1-Month Canceled Orders Purge Active</span>
+              <span className="bg-red-200 text-red-800 text-[10px] px-2 py-0.5 rounded-full font-bold">30 Days Auto-Delete</span>
+            </p>
+            <p className="text-[11px] text-red-700 mt-0.5 leading-relaxed">
+              1 mahine (30 din) se purane sabhi cancel orders Firebase database se automatically delete ho jate hain taaki manual cleanup na karna pade.
+            </p>
+          </div>
+        </div>
+        {onRunCanceledCleanup && (
+          <button
+            type="button"
+            onClick={onRunCanceledCleanup}
+            disabled={isCleaningCanceledOrders}
+            className="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-[11px] transition-all shrink-0 flex items-center justify-center gap-1.5 shadow-2xs active:scale-95 disabled:opacity-50 cursor-pointer"
+          >
+            {isCleaningCanceledOrders ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+            <span>Purge 1M+ Canceled Now</span>
+          </button>
+        )}
+      </div>
+
+      {/* Filter Tabs for Order Statuses */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+        <button
+          type="button"
+          onClick={() => { setStatusFilter('all'); onPageChange(1); }}
+          className={cn(
+            "px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer",
+            statusFilter === 'all' 
+              ? "bg-[#1A1A1A] text-white shadow-xs" 
+              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+          )}
+        >
+          All ({orders.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => { setStatusFilter('pending'); onPageChange(1); }}
+          className={cn(
+            "px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer",
+            statusFilter === 'pending' 
+              ? "bg-orange-500 text-white shadow-xs" 
+              : "bg-orange-50 text-orange-700 hover:bg-orange-100"
+          )}
+        >
+          Pending ({pendingCount})
+        </button>
+        <button
+          type="button"
+          onClick={() => { setStatusFilter('confirmed'); onPageChange(1); }}
+          className={cn(
+            "px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer",
+            statusFilter === 'confirmed' 
+              ? "bg-blue-600 text-white shadow-xs" 
+              : "bg-blue-50 text-blue-700 hover:bg-blue-100"
+          )}
+        >
+          Confirmed ({confirmedCount})
+        </button>
+        <button
+          type="button"
+          onClick={() => { setStatusFilter('delivered'); onPageChange(1); }}
+          className={cn(
+            "px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer",
+            statusFilter === 'delivered' 
+              ? "bg-emerald-600 text-white shadow-xs" 
+              : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+          )}
+        >
+          Delivered ({deliveredCount})
+        </button>
+        <button
+          type="button"
+          onClick={() => { setStatusFilter('canceled'); onPageChange(1); }}
+          className={cn(
+            "px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer",
+            statusFilter === 'canceled' 
+              ? "bg-red-600 text-white shadow-xs" 
+              : "bg-red-50 text-red-700 hover:bg-red-100"
+          )}
+        >
+          Canceled ({canceledCount})
+        </button>
       </div>
 
       <div className="relative mb-4">
@@ -1845,7 +2030,14 @@ const OrderList = ({
           <div key={order.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-3">
             <div className="flex justify-between items-start">
               <div className="cursor-pointer flex-1" onClick={() => onViewDetails(order)}>
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Order #{order.id.slice(-6)}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Order #{order.id.slice(-6)}</p>
+                  {order.status === 'canceled' && (
+                    <span className="bg-red-100 text-red-700 text-[9px] font-bold px-1.5 py-0.5 rounded-md">
+                      Canceled (Auto-purges after 30d)
+                    </span>
+                  )}
+                </div>
                 <h4 className="font-bold text-sm text-[#1A1A1A] mt-1">{order.userName || 'Unknown User'}</h4>
                 <p className="text-[10px] text-blue-500 font-bold mb-1">Mobile: {order.userPhone || 'N/A'}</p>
                 <div className="flex items-center gap-2">
@@ -1853,7 +2045,12 @@ const OrderList = ({
                   <span className="text-blue-500 text-[10px] font-bold">Del: ₹{order.delivery || 0}</span>
                 </div>
                 <p className="text-[10px] text-gray-400 mt-1">
-                  {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleString() : 'Just now'}
+                  Ordered: {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleString() : 'Just now'}
+                  {order.canceledAt && (
+                    <span className="text-red-500 ml-1">
+                      • Canceled: {order.canceledAt?.toDate ? order.canceledAt.toDate().toLocaleDateString() : 'Recently'}
+                    </span>
+                  )}
                 </p>
               </div>
               <div className="flex flex-col items-end gap-2">
