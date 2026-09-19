@@ -23,8 +23,6 @@ import { cacheUtils } from './lib/cache-utils';
 
 import firebaseConfig from '../firebase-applet-config.json';
 
-declare const __BUILD_TIME__: number;
-
 const updateLocalCache = (newData: any) => {
   setTimeout(() => {
     try {
@@ -45,7 +43,6 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [isUpdating, setIsUpdating] = useState(false);
   const isSyncingRef = useRef(false);
 
   // Centralized real-time store for lightning fast routing Transitions
@@ -120,86 +117,6 @@ export default function App() {
     return () => {
       unsubCats();
       unsubBanners();
-    };
-  }, []);
-
-  // Auto-Update checker effect
-  useEffect(() => {
-    let active = true;
-    let firstCheckTimeout: any;
-    let interval: any;
-
-    const checkUpdate = async () => {
-      try {
-        const res = await fetch(`/version.json?t=${Date.now()}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!active) return;
-
-        const serverVersion = Number(data.version);
-        const localVersion = typeof __BUILD_TIME__ !== 'undefined' ? Number(__BUILD_TIME__) : 0;
-
-        if (serverVersion && localVersion && serverVersion > localVersion) {
-          // Check for reload protection loop
-          const now = Date.now();
-          const lastReload = sessionStorage.getItem('last_auto_update_reload');
-          if (lastReload && now - Number(lastReload) < 30000) {
-            console.warn('[AutoUpdate] Blocked potential infinite reload loop.');
-            return;
-          }
-
-          console.log(`[AutoUpdate] New version detected: ${serverVersion} (local: ${localVersion})`);
-          setIsUpdating(true);
-
-          // Clear local cache elements to ensure fresh content is fetched from Firestore
-          const keys = Object.keys(localStorage);
-          keys.forEach(k => {
-            if (
-              k.startsWith('product_detail_') ||
-              k.startsWith('product_reviews_') ||
-              k.startsWith('category_prods_') ||
-              k.startsWith('home_cache') ||
-              k.startsWith('notifications_cache') ||
-              k.includes('cache')
-            ) {
-              localStorage.removeItem(k);
-            }
-          });
-
-          // Mark reload timestamp to prevent infinite reload loop
-          sessionStorage.setItem('last_auto_update_reload', String(now));
-
-          // Wait a brief moment for the user to see the update message, then hard reload
-          setTimeout(() => {
-            window.location.reload();
-          }, 1500);
-        }
-      } catch (err) {
-        console.warn('[AutoUpdate] Check skipped or failed info:', err);
-      }
-    };
-
-    // Delay the very first startup check by 5 seconds so it doesn't run during critical rendering path
-    firstCheckTimeout = setTimeout(() => {
-      checkUpdate();
-    }, 5000);
-
-    // Check when user resumes the app (brings tab to foreground)
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        checkUpdate();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    // Check periodically every 15 minutes (900,000 ms) instead of 2 minutes to conserve battery, data, and CPU on mobile
-    interval = setInterval(checkUpdate, 900000);
-
-    return () => {
-      active = false;
-      clearTimeout(firstCheckTimeout);
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 
@@ -375,24 +292,6 @@ export default function App() {
       setCart([]);
     }
   };
-
-  if (isUpdating) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[#F8FBF9] p-6 text-center">
-        <div className="relative mb-6">
-          <div className="w-16 h-16 rounded-full border-4 border-[#66D2A4]/20 border-t-4 border-t-[#66D2A4] animate-spin"></div>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <svg className="w-6 h-6 text-[#66D2A4]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89H18V4" />
-            </svg>
-          </div>
-        </div>
-        <h3 className="text-lg font-bold text-[#1A1A1A] mb-1">नया अपडेट उपलब्ध है!</h3>
-        <p className="text-sm text-gray-500 mb-6 font-medium">नवीनतम बदलावों को लागू किया जा रहा है...</p>
-        <span className="text-xs text-gray-400 font-mono tracking-wider">Loading latest version...</span>
-      </div>
-    );
-  }
 
   // Category visibility filtering for customer/user store views
   const visibleCategories = useMemo(() => {

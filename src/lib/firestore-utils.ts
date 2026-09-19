@@ -75,7 +75,6 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     return; // graceful return, do not throw to crash the app
   }
 
-  console.error('Firestore Error Details:', errString);
-  // We throw a plain error message to avoid circular structure issues in the component's catch block
-  throw new Error(errString);
+  console.warn(`Firestore operation '${operationType}' on '${path}' failed:`, errorMessage);
+  console.debug('Firestore Error Details:', errString);
 }

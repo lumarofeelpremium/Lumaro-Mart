@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Star, Plus, Minus, ShoppingCart, MessageSquare, Send, Loader2, Heart } from 'lucide-react';
+import { ChevronLeft, Star, Plus, Minus, ShoppingCart, MessageSquare, Send, Loader2, Heart, Zap, Sparkles } from 'lucide-react';
 import { Button, Input, Skeleton } from '../components/ui/Base';
 import { Product, Review, User } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -8,6 +8,8 @@ import { db } from '../firebase';
 import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { WishlistButton } from '../components/WishlistButton';
+import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
+import { getMultiQuantitySavings } from '../lib/savings-utils';
 import { cacheUtils } from '../lib/cache-utils';
 
 // Mock products for fallback if not in Firestore
@@ -234,6 +236,8 @@ export const ProductDetails = ({
     ? (reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length).toFixed(1)
     : '0.0';
 
+  const savingsInfo = product ? getMultiQuantitySavings(product, quantity) : null;
+
   return (
     <div className="min-h-screen bg-[#F8FBF9] pb-32">
       {/* Header */}
@@ -289,6 +293,9 @@ export const ProductDetails = ({
                 </span>
               )}
             </div>
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <MultiSavingsBadge product={product} variant="chip" />
+            </div>
           </div>
           <div className={cn(
             "flex items-center gap-3 bg-[#F0F7F4] rounded-2xl p-1",
@@ -311,6 +318,96 @@ export const ProductDetails = ({
             </button>
           </div>
         </div>
+
+        {/* Multi-Quantity Savings Interactive Helper Card */}
+        {savingsInfo && savingsInfo.hasSavings && product.stock >= 2 && (
+          <div className="mb-6 p-3.5 rounded-3xl bg-gradient-to-br from-emerald-50/90 via-teal-50/70 to-emerald-50/90 border border-emerald-200/80 shadow-2xs">
+            <div className="flex items-center justify-between gap-2 mb-2.5">
+              <div className="flex items-center gap-1.5 text-emerald-800 font-extrabold text-xs">
+                <Zap size={14} className="fill-emerald-600 text-emerald-600" />
+                <span>Multi-Quantity Savings Offer</span>
+              </div>
+              <span className="text-[10px] font-extrabold text-emerald-700 bg-white/95 border border-emerald-200 px-2.5 py-0.5 rounded-full shadow-2xs">
+                Save up to {savingsInfo.percentSaved}%
+              </span>
+            </div>
+
+            {/* Quick Bundle Quantity Selectors */}
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => setQuantity(1)}
+                className={cn(
+                  "p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center cursor-pointer",
+                  quantity === 1 
+                    ? "bg-white border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs" 
+                    : "bg-white/70 border-gray-200/80 hover:bg-white"
+                )}
+              >
+                <span className="text-[10px] text-gray-500 font-bold">1 Item</span>
+                <span className="text-xs font-extrabold text-[#1A1A1A]">₹{savingsInfo.unitPrice}</span>
+                <span className="text-[9px] text-gray-400">Regular</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setQuantity(2)}
+                className={cn(
+                  "p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center relative cursor-pointer",
+                  quantity === 2 
+                    ? "bg-white border-emerald-500 ring-2 ring-emerald-500/30 shadow-xs" 
+                    : "bg-white/70 border-emerald-200/90 hover:bg-white"
+                )}
+              >
+                <div className="absolute -top-2 bg-emerald-600 text-white text-[8px] font-extrabold px-2 py-0.2 rounded-full uppercase tracking-tighter shadow-2xs">
+                  Popular
+                </div>
+                <span className="text-[10px] text-emerald-800 font-bold">2 Items</span>
+                <span className="text-xs font-extrabold text-emerald-700">₹{savingsInfo.unitPrice * 2}</span>
+                <span className="text-[9px] font-extrabold text-emerald-600">Save ₹{savingsInfo.unitSaving * 2}</span>
+              </button>
+
+              {product.stock >= 3 ? (
+                <button
+                  type="button"
+                  onClick={() => setQuantity(3)}
+                  className={cn(
+                    "p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center relative cursor-pointer",
+                    quantity === 3 
+                      ? "bg-white border-teal-500 ring-2 ring-teal-500/30 shadow-xs" 
+                      : "bg-white/70 border-teal-200/90 hover:bg-white"
+                  )}
+                >
+                  <div className="absolute -top-2 bg-teal-600 text-white text-[8px] font-extrabold px-2 py-0.2 rounded-full uppercase tracking-tighter shadow-2xs">
+                    Best Value
+                  </div>
+                  <span className="text-[10px] text-teal-800 font-bold">3 Items</span>
+                  <span className="text-xs font-extrabold text-teal-700">₹{savingsInfo.unitPrice * 3}</span>
+                  <span className="text-[9px] font-extrabold text-teal-600">Save ₹{savingsInfo.unitSaving * 3}</span>
+                </button>
+              ) : (
+                <div className="p-2.5 rounded-2xl border border-dashed border-gray-200 flex flex-col items-center justify-center opacity-50 bg-white/40">
+                  <span className="text-[10px] text-gray-400 font-medium">Limited Stock</span>
+                </div>
+              )}
+            </div>
+
+            {/* Dynamic Savings Feedback */}
+            <div className="mt-2.5 pt-2 border-t border-emerald-200/60 flex items-center justify-between text-[11px]">
+              <span className="text-gray-600 font-medium">
+                {quantity === 1 ? (
+                  <span>💡 Add 1 more to save <strong>₹{savingsInfo.unitSaving * 2}</strong> total!</span>
+                ) : (
+                  <span className="text-emerald-800 font-bold flex items-center gap-1">
+                    <Sparkles size={12} className="text-emerald-600" />
+                    You save ₹{savingsInfo.unitSaving * quantity} with {quantity} items!
+                  </span>
+                )}
+              </span>
+              <span className="font-extrabold text-[#1A1A1A]">Total: ₹{savingsInfo.unitPrice * quantity}</span>
+            </div>
+          </div>
+        )}
         
         <p className="text-gray-400 text-sm leading-relaxed mb-6">
           {product.description || "No description available for this product."}

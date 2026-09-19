@@ -11,6 +11,7 @@ import { cn } from '../lib/utils';
 import { cacheUtils } from '../lib/cache-utils';
 
 import { WishlistButton } from '../components/WishlistButton';
+import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 
 import { wishlistManager } from '../lib/wishlist-manager';
 
@@ -257,11 +258,15 @@ export const Wishlist = ({ user, onAddToCart }: { user: User | null, onAddToCart
                 
                 <h4 className="font-bold text-sm text-[#1A1A1A] mb-1 line-clamp-1">{product.name}</h4>
                 <p className={cn(
-                  "text-[10px] mb-2 font-bold",
+                  "text-[10px] mb-1 font-bold",
                   product.stock > 0 ? "text-gray-400" : "text-red-500"
                 )}>
                   {product.stock > 0 ? `${product.stock} in stock` : "Out of Stock"}
                 </p>
+                
+                <div className="mb-2 min-h-[18px] flex items-center">
+                  <MultiSavingsBadge product={product} variant="pill" />
+                </div>
                 
                 <div className="flex justify-between items-center mt-auto">
                   <div className="flex flex-col">

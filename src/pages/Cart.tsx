@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Minus, Plus, Trash2, Loader2, MapPin, X, Star, CheckCircle2, ShoppingCart, User as UserIcon, Clock } from 'lucide-react';
+import { ChevronLeft, Minus, Plus, Trash2, Loader2, MapPin, X, Star, CheckCircle2, ShoppingCart, User as UserIcon, Clock, Sparkles, Zap } from 'lucide-react';
 import { Button, Input } from '../components/ui/Base';
 import { useNavigate } from 'react-router-dom';
 import { CartItem, User, AppSettings } from '../types';
@@ -9,6 +9,8 @@ import { cn } from '../lib/utils';
 import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc, increment, writeBatch, getDocs, query, where } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { cacheUtils } from '../lib/cache-utils';
+import { showInterstitialAd, showRewardedAd } from '../lib/admob';
+import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 
 export const Cart = ({ 
   user,
@@ -37,6 +39,8 @@ export const Cart = ({
   const [orderTimingEnabled, setOrderTimingEnabled] = useState(true);
   const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
   const [isFirstOrder, setIsFirstOrder] = useState(false);
+  const [adDiscount, setAdDiscount] = useState(0);
+  const [isAdLoading, setIsAdLoading] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -63,14 +67,33 @@ export const Cart = ({
   }, [user]);
   
   const subtotal = items.reduce((acc, item) => acc + (item.discountPrice || item.price) * item.quantity, 0);
+  const totalMrpSavings = items.reduce((acc, item) => {
+    if (item.discountPrice && item.discountPrice < item.price) {
+      return acc + (item.price - item.discountPrice) * item.quantity;
+    }
+    return acc;
+  }, 0);
   const baseDelivery = subtotal > 0 && subtotal <= 100 ? 20 : 0;
   const delivery = isFirstOrder ? 0 : baseDelivery;
   
   const pointsAvailable = user?.loyaltyPoints || 0;
   const pointsToRedeem = useLoyaltyPoints ? Math.min(pointsAvailable, subtotal) : 0;
   
-  const total = subtotal + delivery - pointsToRedeem;
+  const total = Math.max(0, subtotal + delivery - pointsToRedeem - adDiscount);
   const pointsEarned = Math.floor(subtotal / 100) * 5;
+
+  const handleWatchRewardAd = async () => {
+    setIsAdLoading(true);
+    try {
+      await showRewardedAd((reward) => {
+        setAdDiscount(10);
+      });
+    } catch (e) {
+      console.warn("Failed to complete reward ad:", e);
+    } finally {
+      setIsAdLoading(false);
+    }
+  };
 
   const hasOutOfStockItems = items.some(item => item.stock <= 0);
   const hasInsufficientStock = items.some(item => item.quantity > item.stock);
@@ -152,6 +175,7 @@ export const Cart = ({
         total,
         subtotal,
         delivery,
+        adDiscount,
         pointsRedeemed: pointsToRedeem,
         pointsEarned,
         status: 'pending',
@@ -204,7 +228,7 @@ export const Cart = ({
               await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+                body: cacheUtils.safeStringify({
                   chat_id: sData.telegramChatId.trim(),
                   text: tgMessage,
                   parse_mode: 'HTML'
@@ -249,6 +273,11 @@ export const Cart = ({
       setTimeout(() => {
         onClear();
       }, 100);
+
+      // 4. Show AdMob Interstitial Ad after order placement
+      setTimeout(() => {
+        showInterstitialAd().catch((e) => console.log('AdMob interstitial skipped:', e));
+      }, 800);
 
     } catch (error: any) {
       handleFirestoreError(error, OperationType.CREATE, 'orders');
@@ -346,6 +375,24 @@ export const Cart = ({
                       <p className="text-[10px] text-gray-400 line-through">₹{item.price}</p>
                     )}
                   </div>
+                  <div className="mt-1">
+                    <MultiSavingsBadge product={item} variant="compact" />
+                  </div>
+                  {item.discountPrice && item.price > item.discountPrice && item.stock > 0 && (
+                    item.quantity === 1 ? (
+                      item.stock >= 2 ? (
+                        <p className="text-[9px] text-emerald-600 font-bold mt-0.5 flex items-center gap-1">
+                          <Sparkles size={10} className="text-emerald-500 shrink-0" />
+                          <span>Add 1 more to save ₹{(item.price - item.discountPrice) * 2} total!</span>
+                        </p>
+                      ) : null
+                    ) : (
+                      <p className="text-[9px] text-emerald-700 font-bold mt-0.5 flex items-center gap-1">
+                        <Sparkles size={10} className="text-emerald-500 shrink-0" />
+                        <span>Saving ₹{(item.price - item.discountPrice) * item.quantity} on {item.quantity} items!</span>
+                      </p>
+                    )
+                  )}
                   {item.stock <= 0 ? (
                     <p className="text-[10px] text-red-500 font-bold">Out of Stock</p>
                   ) : item.quantity > item.stock ? (
@@ -436,6 +483,15 @@ export const Cart = ({
                   <span>Subtotal</span>
                   <span className="font-bold text-[#1A1A1A]">₹{subtotal}</span>
                 </div>
+                {totalMrpSavings > 0 && (
+                  <div className="flex justify-between text-emerald-600 font-medium">
+                    <span className="flex items-center gap-1">
+                      <Sparkles size={13} className="text-emerald-500" />
+                      <span>Multi-Item / MRP Savings</span>
+                    </span>
+                    <span className="font-bold">-₹{totalMrpSavings}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-gray-500">
                   <span>Delivery</span>
                   <span className={cn("font-bold", delivery === 0 ? "text-[#66D2A4]" : "text-[#1A1A1A]")}>
@@ -446,6 +502,15 @@ export const Cart = ({
                   <div className="flex justify-between text-[#66D2A4]">
                     <span>Points Discount</span>
                     <span className="font-bold">-₹{pointsToRedeem}</span>
+                  </div>
+                )}
+                {adDiscount > 0 && (
+                  <div className="flex justify-between text-amber-600 font-medium">
+                    <span className="flex items-center gap-1">
+                      <Sparkles size={13} className="text-amber-500" />
+                      <span>AdMob Sponsor Discount</span>
+                    </span>
+                    <span className="font-bold">-₹{adDiscount}</span>
                   </div>
                 )}
                 {subtotal <= 100 && subtotal > 0 && !isFirstOrder && user && (
@@ -463,6 +528,35 @@ export const Cart = ({
                     🎁 Register/Login to get FREE Delivery on your first order!
                   </p>
                 )}
+
+                {/* AdMob Rewarded Video Savings */}
+                {adDiscount === 0 ? (
+                  <button
+                    type="button"
+                    onClick={handleWatchRewardAd}
+                    disabled={isAdLoading}
+                    className="w-full flex items-center justify-between p-3 bg-amber-50/90 hover:bg-amber-100 border border-amber-200/80 rounded-2xl text-amber-900 transition-colors text-xs cursor-pointer disabled:opacity-50"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="bg-amber-600 text-white font-bold text-[9px] px-1.5 py-0.5 rounded tracking-wide">
+                        SPONSOR
+                      </span>
+                      <span className="font-semibold text-gray-800">
+                        {isAdLoading ? 'Loading AdMob Video...' : 'Watch short video & get ₹10 OFF!'}
+                      </span>
+                    </div>
+                    <span className="text-amber-700 font-bold underline text-[11px]">
+                      {isAdLoading ? 'Loading...' : 'Watch & Save'}
+                    </span>
+                  </button>
+                ) : (
+                  <div className="flex justify-between items-center p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-semibold">
+                    <span className="flex items-center gap-1">
+                      <CheckCircle2 size={14} className="text-emerald-600" />
+                      <span>₹{adDiscount} Sponsor Video Discount Applied!</span>
+                    </span>
+                  </div>
+                )}
                 <div className="h-px bg-dashed border-t border-dashed border-gray-200" />
                 <div className="flex justify-between items-center">
                   <span className="text-lg font-bold text-[#1A1A1A]">Total</span>
@@ -472,6 +566,12 @@ export const Cart = ({
                   <div className="flex items-center gap-2 text-[10px] font-bold text-[#66D2A4] bg-[#F0F7F4] p-2 rounded-xl justify-center">
                     <Star size={12} fill="currentColor" />
                     YOU WILL EARN {pointsEarned} LOYALTY POINTS!
+                  </div>
+                )}
+                {totalMrpSavings > 0 && (
+                  <div className="p-3 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border border-emerald-200/80 text-emerald-800 text-xs font-bold text-center flex items-center justify-center gap-1.5 shadow-2xs">
+                    <span>🎉</span>
+                    <span>You are saving a total of ₹{totalMrpSavings} on this order!</span>
                   </div>
                 )}
               </div>

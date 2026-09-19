@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner } from '../types';
@@ -13,6 +13,8 @@ import * as XLSX from 'xlsx';
 import { useReactToPrint } from 'react-to-print';
 import { downloadReceiptPdf, sendWhatsAppBill } from '../lib/receipt-utils';
 import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
+import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
+import { showBannerAd, showInterstitialAd, showRewardedAd, ADMOB_TEST_IDS } from '../lib/admob';
 
 export const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -669,7 +671,7 @@ export const AdminDashboard = () => {
 
   const handleUpdateSettings = async (newSettings: AppSettings) => {
     try {
-      await setDoc(doc(db, 'settings', 'global'), newSettings);
+      await setDoc(doc(db, 'settings', 'global'), newSettings, { merge: true });
       return true;
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'settings/global');
@@ -1443,12 +1445,13 @@ const ProductList = ({
                         </span>
                       )}
                     </h4>
-                    <div className="flex items-center gap-1 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <p className="text-[10px] text-gray-400">₹{product.discountPrice || product.price}</p>
                       {product.discountPrice && (
                         <p className="text-[8px] text-red-400 line-through">₹{product.price}</p>
                       )}
                       <span className="text-[10px] text-gray-400">• {product.stock} in stock • {product.category}</span>
+                      <MultiSavingsBadge product={product} variant="pill" />
                     </div>
                   </div>
                 </div>
@@ -2745,6 +2748,14 @@ const SettingsTab = ({
   const [telegramChatId, setTelegramChatId] = useState(settings.telegramChatId || '');
   const [telegramEnabled, setTelegramEnabled] = useState(settings.telegramEnabled ?? false);
   const [orderTimingEnabled, setOrderTimingEnabled] = useState(settings.orderTimingEnabled ?? true);
+  const [admobEnabled, setAdmobEnabled] = useState(settings.admobEnabled ?? true);
+  const [admobTesting, setAdmobTesting] = useState(settings.admobTesting ?? true);
+  const [admobAppId, setAdmobAppId] = useState(settings.admobAppId || '');
+  const [admobBannerId, setAdmobBannerId] = useState(settings.admobBannerId || '');
+  const [admobInterstitialId, setAdmobInterstitialId] = useState(settings.admobInterstitialId || '');
+  const [admobRewardedId, setAdmobRewardedId] = useState(settings.admobRewardedId || '');
+  const [adTestStatus, setAdTestStatus] = useState<string | null>(null);
+  const [showPlayStoreGuide, setShowPlayStoreGuide] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
@@ -2764,6 +2775,12 @@ const SettingsTab = ({
     setTelegramChatId(settings.telegramChatId || '');
     setTelegramEnabled(settings.telegramEnabled ?? false);
     setOrderTimingEnabled(settings.orderTimingEnabled ?? true);
+    setAdmobEnabled(settings.admobEnabled ?? true);
+    setAdmobTesting(settings.admobTesting ?? true);
+    setAdmobAppId(settings.admobAppId || '');
+    setAdmobBannerId(settings.admobBannerId || '');
+    setAdmobInterstitialId(settings.admobInterstitialId || '');
+    setAdmobRewardedId(settings.admobRewardedId || '');
   }, [settings]);
 
   const handleRequestPermission = () => {
@@ -2791,7 +2808,13 @@ const SettingsTab = ({
       telegramEnabled,
       telegramBotToken,
       telegramChatId,
-      orderTimingEnabled
+      orderTimingEnabled,
+      admobEnabled,
+      admobTesting,
+      admobAppId,
+      admobBannerId,
+      admobInterstitialId,
+      admobRewardedId
     });
     setIsSaving(false);
     
@@ -3024,6 +3047,211 @@ const SettingsTab = ({
               <p className="text-[9px] text-gray-400 mt-1 italic">Use @userinfobot on Telegram to get your Chat ID</p>
             </div>
           </div>
+
+          <div className="h-px bg-blue-100 my-4" />
+
+          {/* Google AdMob & Android Play Store Monetization */}
+          <div className="p-5 bg-white rounded-3xl border border-blue-100 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "w-11 h-11 rounded-2xl flex items-center justify-center transition-colors shadow-xs",
+                  admobEnabled ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-400"
+                )}>
+                  <Smartphone size={22} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold text-[#1A1A1A]">Google AdMob Monetization</p>
+                    <span className="bg-amber-100 text-amber-800 text-[10px] font-extrabold px-1.5 py-0.5 rounded">
+                      Android
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-gray-400">Official Google Mobile Ads for Google Play Store</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setAdmobEnabled(!admobEnabled)}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative cursor-pointer",
+                  admobEnabled ? "bg-amber-500" : "bg-gray-200"
+                )}
+              >
+                <div className={cn(
+                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-xs",
+                  admobEnabled ? "right-1" : "left-1"
+                )} />
+              </button>
+            </div>
+
+            {admobEnabled && (
+              <div className="pt-2 border-t border-gray-100 space-y-4">
+                {/* Test Mode Switch */}
+                <div className="flex items-center justify-between p-3 bg-amber-50/70 rounded-2xl border border-amber-200/70">
+                  <div>
+                    <p className="text-xs font-bold text-amber-950">AdMob Test Mode</p>
+                    <p className="text-[10px] text-amber-800">Use official Google Test IDs during development to avoid account strikes</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAdmobTesting(!admobTesting)}
+                    className={cn(
+                      "text-xs font-bold px-3 py-1.5 rounded-xl transition-colors cursor-pointer",
+                      admobTesting ? "bg-amber-600 text-white" : "bg-white text-gray-700 border border-gray-200"
+                    )}
+                  >
+                    {admobTesting ? 'Test Mode: ON' : 'Production: LIVE'}
+                  </button>
+                </div>
+
+                {/* Ad Unit IDs */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
+                      Google AdMob App ID
+                    </label>
+                    <Input
+                      value={admobAppId}
+                      onChange={(e) => setAdmobAppId(e.target.value)}
+                      placeholder={ADMOB_TEST_IDS.appId}
+                      className="bg-gray-50 text-xs font-mono"
+                    />
+                    <p className="text-[9px] text-gray-400 mt-1">Format: ca-app-pub-xxxxxxxxxxxxxxxx~yyyyyyyyyy</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
+                        Banner Ad Unit ID
+                      </label>
+                      <Input
+                        value={admobBannerId}
+                        onChange={(e) => setAdmobBannerId(e.target.value)}
+                        placeholder={ADMOB_TEST_IDS.banner}
+                        className="bg-gray-50 text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
+                        Interstitial Ad Unit ID
+                      </label>
+                      <Input
+                        value={admobInterstitialId}
+                        onChange={(e) => setAdmobInterstitialId(e.target.value)}
+                        placeholder={ADMOB_TEST_IDS.interstitial}
+                        className="bg-gray-50 text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
+                        Rewarded Ad Unit ID
+                      </label>
+                      <Input
+                        value={admobRewardedId}
+                        onChange={(e) => setAdmobRewardedId(e.target.value)}
+                        placeholder={ADMOB_TEST_IDS.rewarded}
+                        className="bg-gray-50 text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Live Testing Controls */}
+                <div className="p-3 bg-gray-50 rounded-2xl border border-gray-200/80">
+                  <p className="text-[11px] font-bold text-gray-700 mb-2">Test AdMob Ad Formats:</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setAdTestStatus('Showing bottom banner...');
+                        await showBannerAd(admobBannerId, admobTesting);
+                        setTimeout(() => setAdTestStatus(null), 3000);
+                      }}
+                      className="px-3 py-1.5 bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 rounded-xl text-xs font-semibold cursor-pointer"
+                    >
+                      Show Banner
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setAdTestStatus('Showing interstitial ad...');
+                        await showInterstitialAd(admobInterstitialId, admobTesting);
+                        setTimeout(() => setAdTestStatus(null), 3000);
+                      }}
+                      className="px-3 py-1.5 bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 rounded-xl text-xs font-semibold cursor-pointer"
+                    >
+                      Show Interstitial
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setAdTestStatus('Showing rewarded ad...');
+                        await showRewardedAd((reward) => {
+                          setAdTestStatus(`Reward granted: ${reward.amount} ${reward.type}`);
+                        }, admobRewardedId, admobTesting);
+                      }}
+                      className="px-3 py-1.5 bg-amber-500 text-white hover:bg-amber-600 rounded-xl text-xs font-bold cursor-pointer"
+                    >
+                      Show Rewarded Video
+                    </button>
+                  </div>
+                  {adTestStatus && (
+                    <p className="text-[11px] text-emerald-600 font-semibold mt-2">{adTestStatus}</p>
+                  )}
+                </div>
+
+                {/* Collapsible Play Store Upload & Package Guide */}
+                <div className="border border-emerald-200 bg-emerald-50/50 rounded-2xl p-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowPlayStoreGuide(!showPlayStoreGuide)}
+                    className="w-full flex items-center justify-between text-left cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="text-emerald-600" size={18} />
+                      <span className="text-xs font-bold text-emerald-950">
+                        Google Play Store Upload Instructions (.aab)
+                      </span>
+                    </div>
+                    <span className="text-xs font-semibold text-emerald-700">
+                      {showPlayStoreGuide ? 'Hide Guide ▲' : 'View Guide ▼'}
+                    </span>
+                  </button>
+
+                  {showPlayStoreGuide && (
+                    <div className="mt-3 text-xs text-gray-700 space-y-2.5 pt-3 border-t border-emerald-200/60 font-sans">
+                      <div className="p-2.5 bg-white rounded-xl border border-emerald-100">
+                        <p className="font-bold text-gray-800">1. Package Name / Application ID:</p>
+                        <code className="text-[11px] font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-900 block mt-1">
+                          com.lumaromart.app
+                        </code>
+                      </div>
+                      <div className="p-2.5 bg-white rounded-xl border border-emerald-100">
+                        <p className="font-bold text-gray-800">2. Generate Signed Android App Bundle (.aab):</p>
+                        <p className="text-[11px] text-gray-600 mt-0.5">Run in project root terminal:</p>
+                        <code className="text-[11px] font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-900 block mt-1">
+                          npm run android:bundle
+                        </code>
+                        <p className="text-[10px] text-gray-500 mt-1">
+                          The production bundle is generated at: <span className="font-mono">android/app/build/outputs/bundle/release/app-release.aab</span>
+                        </p>
+                      </div>
+                      <div className="p-2.5 bg-white rounded-xl border border-emerald-100">
+                        <p className="font-bold text-gray-800">3. Google Play Console Upload:</p>
+                        <ul className="list-disc pl-4 text-[11px] text-gray-600 space-y-1 mt-1">
+                          <li>Open Google Play Console and create a new application named <b>Lumaro Mart</b>.</li>
+                          <li>Go to <b>Release &gt; Production</b> (or Internal Testing) and upload the <span className="font-mono font-bold">app-release.aab</span>.</li>
+                          <li>In <b>App Content &gt; Ads</b>, declare "Yes, my app contains ads".</li>
+                          <li>Link your Google AdMob account in Play Console for automated revenue reporting.</li>
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           
           <Button 
             onClick={handleSave}
@@ -3119,6 +3347,33 @@ const ProductFormModal = ({
           finalData.offerLabel = deleteField();
         } else {
           delete finalData.offerLabel;
+        }
+      }
+
+      if (finalData.bulkDiscountQty === undefined || finalData.bulkDiscountQty === null || finalData.bulkDiscountQty === 0) {
+        if (mode === 'edit') {
+          // @ts-ignore
+          finalData.bulkDiscountQty = deleteField();
+        } else {
+          delete finalData.bulkDiscountQty;
+        }
+      }
+
+      if (finalData.bulkDiscountPrice === undefined || finalData.bulkDiscountPrice === null || finalData.bulkDiscountPrice === 0) {
+        if (mode === 'edit') {
+          // @ts-ignore
+          finalData.bulkDiscountPrice = deleteField();
+        } else {
+          delete finalData.bulkDiscountPrice;
+        }
+      }
+
+      if (!finalData.bulkDiscountLabel || finalData.bulkDiscountLabel.trim() === '') {
+        if (mode === 'edit') {
+          // @ts-ignore
+          finalData.bulkDiscountLabel = deleteField();
+        } else {
+          delete finalData.bulkDiscountLabel;
         }
       }
 
@@ -3256,6 +3511,52 @@ const ProductFormModal = ({
                 value={formData.offerLabel || ''}
                 onChange={e => setFormData({ ...formData, offerLabel: e.target.value })}
                 placeholder="e.g. 10% OFF"
+              />
+            </div>
+          </div>
+
+          {/* Multi-Quantity / Bulk Discount Settings */}
+          <div className="p-3.5 rounded-2xl bg-emerald-50/50 border border-emerald-100 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-emerald-800">
+                ⚡ Multi-Quantity Savings Settings (Optional)
+              </span>
+              <span className="text-[10px] text-emerald-600 font-medium">Automatic badge if regular discount exists</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-gray-500 ml-1">Min Quantity for Special Bulk Price</label>
+                <Input 
+                  type="number"
+                  min="2"
+                  value={formData.bulkDiscountQty !== undefined ? formData.bulkDiscountQty : ''}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setFormData({ ...formData, bulkDiscountQty: val === '' ? undefined : Math.max(2, Number(val)) });
+                  }}
+                  placeholder="e.g. 2 or 3"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-gray-500 ml-1">Special Bulk Unit Price (₹)</label>
+                <Input 
+                  type="number"
+                  min="0"
+                  value={formData.bulkDiscountPrice !== undefined ? formData.bulkDiscountPrice : ''}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setFormData({ ...formData, bulkDiscountPrice: val === '' ? undefined : Math.max(0, Number(val)) });
+                  }}
+                  placeholder="e.g. 85 (instead of 100)"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-gray-500 ml-1">Custom Bulk Badge Label (Optional)</label>
+              <Input 
+                value={formData.bulkDiscountLabel || ''}
+                onChange={e => setFormData({ ...formData, bulkDiscountLabel: e.target.value })}
+                placeholder="e.g. Buy 2 & Save ₹30"
               />
             </div>
           </div>

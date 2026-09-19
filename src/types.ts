@@ -4,6 +4,9 @@ export interface Product {
   price: number;
   discountPrice?: number;
   offerLabel?: string;
+  bulkDiscountQty?: number;
+  bulkDiscountPrice?: number;
+  bulkDiscountLabel?: string;
   image: string;
   category: string;
   stock: number;
@@ -93,6 +96,12 @@ export interface AppSettings {
   supportNumber?: string;
   supportEnabled?: boolean;
   orderTimingEnabled?: boolean;
+  admobEnabled?: boolean;
+  admobTesting?: boolean;
+  admobAppId?: string;
+  admobBannerId?: string;
+  admobInterstitialId?: string;
+  admobRewardedId?: string;
 }
 
 export interface Banner {

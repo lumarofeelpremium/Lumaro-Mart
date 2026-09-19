@@ -7,6 +7,7 @@ import { Product, Category, User } from '../types';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { WishlistButton } from '../components/WishlistButton';
+import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 import { cacheUtils } from '../lib/cache-utils';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 
@@ -272,11 +273,14 @@ export const Categories = ({
                     </div>
                     <h4 className="font-bold text-sm text-[#1A1A1A] mb-1 line-clamp-1">{product.name}</h4>
                     <p className={cn(
-                      "text-[10px] mb-2 font-bold",
+                      "text-[10px] mb-1 font-bold",
                       product.stock > 0 ? "text-gray-400" : "text-red-500"
                     )}>
                       {product.stock > 0 ? `${product.stock} in stock` : "Out of Stock"}
                     </p>
+                    <div className="mb-2 min-h-[18px] flex items-center">
+                      <MultiSavingsBadge product={product} variant="pill" />
+                    </div>
                     <div className="flex justify-between items-center">
                       <div className="flex flex-col">
                         <span className="font-bold text-[#66D2A4]">₹{product.discountPrice || product.price}</span>
