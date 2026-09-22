@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Minus, Plus, Trash2, Loader2, MapPin, X, Star, CheckCircle2, ShoppingCart, User as UserIcon, Clock, Sparkles, Zap } from 'lucide-react';
+import { ChevronLeft, Minus, Plus, Trash2, Loader2, MapPin, X, Star, CheckCircle2, ShoppingCart, User as UserIcon, Clock, Sparkles, Zap, Smartphone, Truck, QrCode } from 'lucide-react';
 import { Button, Input } from '../components/ui/Base';
 import { useNavigate } from 'react-router-dom';
 import { CartItem, User, AppSettings } from '../types';
@@ -11,6 +11,7 @@ import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { cacheUtils } from '../lib/cache-utils';
 import { showInterstitialAd, showRewardedAd } from '../lib/admob';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
+import { UpiPaymentModal } from '../components/UpiPaymentModal';
 
 export const Cart = ({ 
   user,
@@ -41,6 +42,11 @@ export const Cart = ({
   const [isFirstOrder, setIsFirstOrder] = useState(false);
   const [adDiscount, setAdDiscount] = useState(0);
   const [isAdLoading, setIsAdLoading] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'cod' | 'upi'>('upi');
+  const [upiEnabled, setUpiEnabled] = useState(true);
+  const [upiId, setUpiId] = useState('shiva1520980@okhdfcbank');
+  const [upiPayeeName, setUpiPayeeName] = useState('Lumaro Mart');
+  const [showUpiModal, setShowUpiModal] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -107,6 +113,9 @@ export const Cart = ({
           setWhatsappNumber(data.whatsappNumber);
           setWhatsappEnabled(data.whatsappEnabled ?? true);
           setOrderTimingEnabled(data.orderTimingEnabled ?? true);
+          if (data.upiEnabled !== undefined) setUpiEnabled(data.upiEnabled);
+          if (data.upiId) setUpiId(data.upiId);
+          if (data.upiPayeeName) setUpiPayeeName(data.upiPayeeName);
         }
       } catch (error) {
         console.error("Error fetching settings:", error);
@@ -130,41 +139,24 @@ export const Cart = ({
 
   const isOrderingOpen = checkIsOrderingOpen();
 
-  const handleConfirmOrder = async () => {
-    if (!checkIsOrderingOpen()) {
-      setError("सॉरी! आप केवल सुबह 6:00 AM से रात 10:00 PM के बीच ही ऑर्डर कर सकते हैं।");
-      return;
-    }
-
-    if (!user) {
-      setShowLoginPrompt(true);
-      return;
-    }
-
-    if (!user.address && !address) {
-      setShowAddressModal(true);
-      return;
-    }
-
-    if (items.length === 0) return;
-
+  const executeOrderPlacement = async (chosenPaymentMethod: 'cod' | 'upi', utr?: string) => {
     setIsProcessing(true);
     
     try {
       setError(null);
       // Update user address if provided in modal
-      if (address && !user.address) {
-        await updateDoc(doc(db, 'users', user.uid), {
+      if (address && !user?.address) {
+        await updateDoc(doc(db, 'users', user!.uid), {
           address,
           pincode
         });
-        setUser({ ...user, address, pincode });
+        setUser({ ...user!, address, pincode });
       }
 
       const orderRef = await addDoc(collection(db, 'orders'), {
-        userId: user.uid,
-        userName: user.displayName,
-        userPhone: user.phoneNumber || '',
+        userId: user!.uid,
+        userName: user!.displayName,
+        userPhone: user!.phoneNumber || '',
         items: items.map(item => ({
           id: item.id,
           name: item.name,
@@ -178,6 +170,9 @@ export const Cart = ({
         adDiscount,
         pointsRedeemed: pointsToRedeem,
         pointsEarned,
+        paymentMethod: chosenPaymentMethod,
+        paymentStatus: chosenPaymentMethod === 'upi' ? 'completed' : 'pending',
+        upiTransactionId: utr || '',
         status: 'pending',
         createdAt: serverTimestamp()
       });
@@ -185,11 +180,11 @@ export const Cart = ({
       // Update user loyalty points - Only subtract redeemed points
       // pointsEarned will be added when order is DELIVERED
       if (pointsToRedeem > 0) {
-        const newPoints = (user.loyaltyPoints || 0) - pointsToRedeem;
-        await updateDoc(doc(db, 'users', user.uid), {
+        const newPoints = (user!.loyaltyPoints || 0) - pointsToRedeem;
+        await updateDoc(doc(db, 'users', user!.uid), {
           loyaltyPoints: newPoints
         });
-        setUser({ ...user, loyaltyPoints: newPoints });
+        setUser({ ...user!, loyaltyPoints: newPoints });
       }
 
       // Update Product Stock and Sales Count
@@ -218,10 +213,12 @@ export const Cart = ({
 
               const tgMessage = `🚀 <b>NEW ORDER RECEIVED</b>\n\n` +
                 `📦 <b>Order ID:</b> #${orderRef.id.slice(-6)}\n` +
-                `👤 <b>Customer:</b> ${user.displayName || 'Guest'}\n` +
+                `👤 <b>Customer:</b> ${user!.displayName || 'Guest'}\n` +
                 `💰 <b>Total:</b> ₹${total}\n` +
-                `📍 <b>Pincode:</b> ${pincode || user.pincode || 'N/A'}\n` +
-                `📞 <b>Phone:</b> ${user.phoneNumber || 'N/A'}\n\n` +
+                `💳 <b>Payment:</b> ${chosenPaymentMethod === 'upi' ? 'Online UPI (Direct 0% Fee)' : 'Cash on Delivery (COD)'}\n` +
+                `${utr ? `🧾 <b>UPI Ref/UTR:</b> <code>${utr}</code>\n` : ''}` +
+                `📍 <b>Pincode:</b> ${pincode || user!.pincode || 'N/A'}\n` +
+                `📞 <b>Phone:</b> ${user!.phoneNumber || 'N/A'}\n\n` +
                 `🛒 <b>Items Ordered:</b>\n${itemsDetails}\n\n` +
                 `Check Admin Dashboard for details.`;
               
@@ -247,20 +244,22 @@ export const Cart = ({
       // 1. Prepare data for confirmation page
       const confirmationState = { 
         orderId: orderRef.id,
-        userName: user.displayName,
-        userPhone: user.phoneNumber || '',
-        userEmail: user.email,
+        userName: user!.displayName,
+        userPhone: user!.phoneNumber || '',
+        userEmail: user!.email,
         items: [...items], // Clone items to ensure they persist in state
         total,
         subtotal,
         delivery,
         pointsRedeemed: pointsToRedeem,
+        paymentMethod: chosenPaymentMethod,
+        upiTransactionId: utr || '',
         whatsappData: {
           enabled: whatsappEnabled,
           number: whatsappNumber
         },
-        address: address || user.address,
-        pincode: pincode || user.pincode
+        address: address || user!.address,
+        pincode: pincode || user!.pincode
       };
 
       // 2. Navigate FIRST to ensure user sees the success page
@@ -285,6 +284,32 @@ export const Cart = ({
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handleConfirmOrder = async () => {
+    if (!checkIsOrderingOpen()) {
+      setError("सॉरी! आप केवल सुबह 6:00 AM से रात 10:00 PM के बीच ही ऑर्डर कर सकते हैं।");
+      return;
+    }
+
+    if (!user) {
+      setShowLoginPrompt(true);
+      return;
+    }
+
+    if (!user.address && !address) {
+      setShowAddressModal(true);
+      return;
+    }
+
+    if (items.length === 0) return;
+
+    if (paymentMethod === 'upi' && upiEnabled && upiId) {
+      setShowUpiModal(true);
+      return;
+    }
+
+    await executeOrderPlacement('cod');
   };
 
   return (
@@ -575,6 +600,82 @@ export const Cart = ({
                   </div>
                 )}
               </div>
+
+              {/* Payment Method Selector */}
+              <div className="bg-white rounded-3xl p-4 shadow-xs border border-gray-100 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-gray-800 uppercase tracking-wider">Payment Method</span>
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                    100% Free • 0% Extra Charge
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {upiEnabled && (
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('upi')}
+                      className={cn(
+                        "p-3 rounded-2xl border text-left transition-all flex items-start gap-2.5 cursor-pointer relative",
+                        paymentMethod === 'upi'
+                          ? "border-emerald-500 bg-emerald-50/50 ring-2 ring-emerald-500/20"
+                          : "border-gray-200 hover:border-gray-300 bg-white"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-8 h-8 rounded-xl flex items-center justify-center shrink-0",
+                        paymentMethod === 'upi' ? "bg-emerald-600 text-white" : "bg-gray-100 text-gray-600"
+                      )}>
+                        <Smartphone size={16} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-bold text-gray-900">Direct UPI & QR</span>
+                          <span className="text-[9px] font-extrabold bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded">
+                            FAST
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-0.5">GPay, PhonePe, Paytm</p>
+                      </div>
+                      <div className={cn(
+                        "w-4 h-4 rounded-full border flex items-center justify-center mt-1 shrink-0",
+                        paymentMethod === 'upi' ? "border-emerald-500 bg-emerald-500" : "border-gray-300"
+                      )}>
+                        {paymentMethod === 'upi' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                      </div>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('cod')}
+                    className={cn(
+                      "p-3 rounded-2xl border text-left transition-all flex items-start gap-2.5 cursor-pointer relative",
+                      paymentMethod === 'cod'
+                        ? "border-emerald-500 bg-emerald-50/50 ring-2 ring-emerald-500/20"
+                        : "border-gray-200 hover:border-gray-300 bg-white"
+                    )}
+                  >
+                    <div className={cn(
+                      "w-8 h-8 rounded-xl flex items-center justify-center shrink-0",
+                      paymentMethod === 'cod' ? "bg-emerald-600 text-white" : "bg-gray-100 text-gray-600"
+                    )}>
+                      <Truck size={16} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-xs font-bold text-gray-900">Cash on Delivery</span>
+                      <p className="text-[10px] text-gray-500 mt-0.5">Pay in cash when delivered</p>
+                    </div>
+                    <div className={cn(
+                      "w-4 h-4 rounded-full border flex items-center justify-center mt-1 shrink-0",
+                      paymentMethod === 'cod' ? "border-emerald-500 bg-emerald-500" : "border-gray-300"
+                    )}>
+                      {paymentMethod === 'cod' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    </div>
+                  </button>
+                </div>
+              </div>
+
               <Button 
                 className={cn(
                   "w-full py-5 text-lg rounded-3xl shadow-lg flex items-center justify-center gap-2 transition-all",
@@ -595,8 +696,10 @@ export const Cart = ({
                   'Items Out of Stock'
                 ) : hasInsufficientStock ? (
                   'Insufficient Stock'
+                ) : paymentMethod === 'upi' ? (
+                  `Pay via UPI (₹${total})`
                 ) : (
-                  'Confirm Order'
+                  'Confirm Order (Cash on Delivery)'
                 )}
               </Button>
             </motion.div>
@@ -694,6 +797,19 @@ export const Cart = ({
           </div>
         )}
       </AnimatePresence>
+
+      <UpiPaymentModal
+        isOpen={showUpiModal}
+        onClose={() => setShowUpiModal(false)}
+        amount={total}
+        upiId={upiId}
+        payeeName={upiPayeeName}
+        isProcessing={isProcessing}
+        onConfirmPayment={async (utrNumber) => {
+          await executeOrderPlacement('upi', utrNumber);
+          setShowUpiModal(false);
+        }}
+      />
     </div>
   );
 };

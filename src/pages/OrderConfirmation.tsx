@@ -33,7 +33,7 @@ export const OrderConfirmation = () => {
   const handleWhatsAppRedirect = () => {
     if (!orderData || !orderData.whatsappData) return;
 
-    const { items, orderId, total, subtotal, delivery, pointsRedeemed, userName, userPhone, userEmail, address, pincode, whatsappData } = orderData;
+    const { items, orderId, total, subtotal, delivery, pointsRedeemed, userName, userPhone, userEmail, address, pincode, whatsappData, paymentMethod, upiTransactionId } = orderData;
     
     const orderList = items.map((item: any) => `✅ *${item.name}*\n   Qty: ${item.quantity} | Price: ₹${item.price * item.quantity}`).join('\n\n');
     
@@ -54,6 +54,8 @@ export const OrderConfirmation = () => {
       `• *Subtotal:* ₹${subtotal}\n` +
       `• *Delivery:* ${delivery === 0 ? 'FREE' : `₹${delivery}`}\n` +
       `• *Discount:* -₹${pointsRedeemed || 0}\n` +
+      `• *Payment:* ${paymentMethod === 'upi' ? 'Online UPI (Direct Paid)' : 'Cash on Delivery (COD)'}\n` +
+      `${upiTransactionId ? `• *UPI Ref/UTR:* ${upiTransactionId}\n` : ''}` +
       `------------------------------------------\n` +
       `✅ *TOTAL AMOUNT:* ₹${total}\n` +
       `------------------------------------------\n\n` +
@@ -85,11 +87,31 @@ export const OrderConfirmation = () => {
           Your order has been placed successfully. We'll notify you once it's out for delivery.
         </p>
 
-        <div className="bg-green-50 p-4 rounded-2xl border border-green-100 mb-8 flex items-start gap-3 text-left">
+        <div className="bg-green-50 p-4 rounded-2xl border border-green-100 mb-6 flex items-start gap-3 text-left">
           <MessageCircle size={20} className="text-[#66D2A4] shrink-0 mt-0.5" />
           <p className="text-[11px] font-medium text-gray-600 leading-relaxed">
             Agar aapko koi product app me na mile, to WhatsApp par hume bataiye 😊 Hum aapke liye usse arrange karne ki puri koshish karenge
           </p>
+        </div>
+
+        {/* Payment Summary Info */}
+        <div className="p-4 rounded-2xl bg-gray-50 border border-gray-100 text-left mb-6 space-y-1.5">
+          <div className="flex justify-between items-center text-xs">
+            <span className="text-gray-500 font-medium">Payment Mode</span>
+            <span className="font-bold text-gray-800">
+              {orderData.paymentMethod === 'upi' ? 'Direct UPI (Online)' : 'Cash on Delivery (COD)'}
+            </span>
+          </div>
+          {orderData.upiTransactionId && (
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-gray-500 font-medium">UPI UTR Ref</span>
+              <span className="font-mono text-emerald-600 font-bold">{orderData.upiTransactionId}</span>
+            </div>
+          )}
+          <div className="flex justify-between items-center text-xs pt-1 border-t border-gray-200/60">
+            <span className="text-gray-500 font-medium">Total Amount</span>
+            <span className="font-extrabold text-[#66D2A4] text-sm">₹{orderData.total}</span>
+          </div>
         </div>
 
         <div className="space-y-4">

@@ -64,6 +64,9 @@ export interface Order {
   delivery?: number;
   pointsRedeemed?: number;
   pointsEarned?: number;
+  paymentMethod?: 'cod' | 'upi';
+  paymentStatus?: 'pending' | 'completed';
+  upiTransactionId?: string;
 }
 
 export interface Review {
@@ -102,6 +105,9 @@ export interface AppSettings {
   admobBannerId?: string;
   admobInterstitialId?: string;
   admobRewardedId?: string;
+  upiEnabled?: boolean;
+  upiId?: string;
+  upiPayeeName?: string;
 }
 
 export interface Banner {

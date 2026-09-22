@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle, QrCode, ArrowUpDown, Award, Sparkles, Gift, Wallet } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner } from '../types';
@@ -11,10 +11,11 @@ import { compressImage } from '../lib/utils';
 import { cacheUtils } from '../lib/cache-utils';
 import * as XLSX from 'xlsx';
 import { useReactToPrint } from 'react-to-print';
-import { downloadReceiptPdf, sendWhatsAppBill } from '../lib/receipt-utils';
+import { downloadReceiptPdf, sendWhatsAppBill, calculateEarnedPoints } from '../lib/receipt-utils';
 import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 import { showBannerAd, showInterstitialAd, showRewardedAd, ADMOB_TEST_IDS } from '../lib/admob';
+import { QRCodeSVG } from 'qrcode.react';
 
 export const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -932,6 +933,8 @@ const TabButton = ({ active, onClick, label }: any) => (
   </button>
 );
 
+type UserSortOption = 'all' | 'orders_desc' | 'points_earned_desc' | 'points_redeemed_desc' | 'points_balance_desc' | 'spending_desc';
+
 const UserList = ({ 
   users, 
   orders,
@@ -955,102 +958,518 @@ const UserList = ({
   usersLimit: number,
   setUsersLimit: (l: number) => void
 }) => {
-  const filteredUsers = users.filter((u) => {
-    const q = searchQuery.toLowerCase();
-    return (
-      (u.displayName || '').toLowerCase().includes(q) ||
-      (u.email || '').toLowerCase().includes(q) ||
-      (u.phoneNumber || '').toLowerCase().includes(q)
-    );
-  });
+  const [userSortBy, setUserSortBy] = useState<UserSortOption>('all');
+  const [onlyActiveBuyers, setOnlyActiveBuyers] = useState(false);
+  const quickSortRef = useRef<HTMLDivElement>(null);
+
+  // Precompute user order & points statistics
+  const userStatsMap = useMemo(() => {
+    const map = new Map<string, {
+      orderCount: number;
+      deliveredCount: number;
+      totalSpent: number;
+      pointsEarned: number;
+      pointsRedeemed: number;
+    }>();
+
+    for (const order of orders) {
+      if (!order.userId) continue;
+      const existing = map.get(order.userId) || {
+        orderCount: 0,
+        deliveredCount: 0,
+        totalSpent: 0,
+        pointsEarned: 0,
+        pointsRedeemed: 0,
+      };
+      existing.orderCount += 1;
+      if (order.status === 'delivered') existing.deliveredCount += 1;
+      existing.totalSpent += (order.total || 0);
+      existing.pointsEarned += calculateEarnedPoints(order);
+      existing.pointsRedeemed += (order.pointsRedeemed || 0);
+      map.set(order.userId, existing);
+    }
+    return map;
+  }, [orders]);
+
+  // Overall summary statistics
+  const summaryStats = useMemo(() => {
+    let totalOrders = 0;
+    let totalRedeemed = 0;
+    let totalEarned = 0;
+    let usersWithOrders = 0;
+
+    userStatsMap.forEach((stats) => {
+      totalOrders += stats.orderCount;
+      totalRedeemed += stats.pointsRedeemed;
+      totalEarned += stats.pointsEarned;
+      if (stats.orderCount > 0) usersWithOrders += 1;
+    });
+
+    return {
+      totalUsers: users.length,
+      usersWithOrders,
+      totalOrders,
+      totalEarned,
+      totalRedeemed,
+    };
+  }, [users, userStatsMap]);
+
+  // Filter and sort users
+  const processedUsers = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    let list = users.filter((u) => {
+      const matchesQuery = (
+        (u.displayName || '').toLowerCase().includes(q) ||
+        (u.email || '').toLowerCase().includes(q) ||
+        (u.phoneNumber || '').toLowerCase().includes(q)
+      );
+      if (!matchesQuery) return false;
+
+      if (onlyActiveBuyers) {
+        const stats = userStatsMap.get(u.uid);
+        return (stats?.orderCount || 0) > 0;
+      }
+      return true;
+    });
+
+    if (userSortBy !== 'all') {
+      list = [...list].sort((a, b) => {
+        const aStats = userStatsMap.get(a.uid) || { orderCount: 0, totalSpent: 0, pointsEarned: 0, pointsRedeemed: 0, deliveredCount: 0 };
+        const bStats = userStatsMap.get(b.uid) || { orderCount: 0, totalSpent: 0, pointsEarned: 0, pointsRedeemed: 0, deliveredCount: 0 };
+
+        if (userSortBy === 'orders_desc') {
+          // 1. Most orders to least orders
+          if (bStats.orderCount !== aStats.orderCount) {
+            return bStats.orderCount - aStats.orderCount;
+          }
+          return bStats.totalSpent - aStats.totalSpent;
+        }
+
+        if (userSortBy === 'points_earned_desc') {
+          // 2. Most points earned to least
+          if (bStats.pointsEarned !== aStats.pointsEarned) {
+            return bStats.pointsEarned - aStats.pointsEarned;
+          }
+          return (b.loyaltyPoints || 0) - (a.loyaltyPoints || 0);
+        }
+
+        if (userSortBy === 'points_redeemed_desc') {
+          // 3. Most points redeemed to least
+          if (bStats.pointsRedeemed !== aStats.pointsRedeemed) {
+            return bStats.pointsRedeemed - aStats.pointsRedeemed;
+          }
+          return bStats.orderCount - aStats.orderCount;
+        }
+
+        if (userSortBy === 'points_balance_desc') {
+          // 4. Current available points balance
+          return (b.loyaltyPoints || 0) - (a.loyaltyPoints || 0);
+        }
+
+        if (userSortBy === 'spending_desc') {
+          // 5. Total money spent
+          return bStats.totalSpent - aStats.totalSpent;
+        }
+
+        return 0;
+      });
+    }
+
+    return list;
+  }, [users, searchQuery, userSortBy, onlyActiveBuyers, userStatsMap]);
+
+  const handleSortChange = (sort: UserSortOption) => {
+    const targetSort = sort === 'all' ? 'all' : (userSortBy === sort ? 'all' : sort);
+    setUserSortBy(targetSort);
+    onPageChange(1);
+
+    if (targetSort === 'all') {
+      const scrollToStart = () => {
+        if (quickSortRef.current) {
+          try {
+            quickSortRef.current.scrollTo({ left: 0, behavior: 'smooth' });
+          } catch {
+            quickSortRef.current.scrollLeft = 0;
+          }
+        }
+      };
+      scrollToStart();
+      setTimeout(scrollToStart, 50);
+      setTimeout(scrollToStart, 150);
+    }
+  };
+
+  const handleActiveToggle = () => {
+    setOnlyActiveBuyers(!onlyActiveBuyers);
+    onPageChange(1);
+  };
 
   const itemsPerPage = 15;
-  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
-  const paginatedUsers = filteredUsers.slice(
+  const totalPages = Math.ceil(processedUsers.length / itemsPerPage);
+  const paginatedUsers = processedUsers.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
 
   return (
-    <div className="space-y-4">
-      {/* Search Input */}
-      <div className="relative mb-4">
-        <Input 
-          placeholder="Search users by name, phone or email..." 
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
-          className="bg-gray-50 border-none"
-          icon={<Search size={16} />}
-        />
-        {searchQuery && (
-          <button 
-            onClick={() => onSearchChange('')}
-            className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+    <div className="space-y-3.5 sm:space-y-4">
+      {/* Top Metrics Summary Cards - Responsive 2-col on mobile, 4-col on tablet/desktop */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-2.5">
+        <div className="bg-slate-50/90 border border-slate-200/70 rounded-xl sm:rounded-2xl p-2.5 sm:p-3">
+          <div className="flex items-center gap-1 sm:gap-1.5 text-slate-500 mb-0.5">
+            <Users size={13} className="shrink-0" />
+            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate">Total Users</span>
+          </div>
+          <div className="flex items-baseline gap-1 sm:gap-1.5 flex-wrap">
+            <span className="text-base sm:text-lg font-extrabold text-slate-900">{summaryStats.totalUsers}</span>
+            <span className="text-[9px] sm:text-[10px] text-slate-400">({summaryStats.usersWithOrders} active)</span>
+          </div>
+        </div>
+
+        <div className="bg-blue-50/90 border border-blue-200/70 rounded-xl sm:rounded-2xl p-2.5 sm:p-3">
+          <div className="flex items-center gap-1 sm:gap-1.5 text-blue-600 mb-0.5">
+            <Package size={13} className="shrink-0" />
+            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate">Total Orders</span>
+          </div>
+          <span className="text-base sm:text-lg font-extrabold text-blue-950">{summaryStats.totalOrders}</span>
+        </div>
+
+        <div className="bg-emerald-50/90 border border-emerald-200/70 rounded-xl sm:rounded-2xl p-2.5 sm:p-3">
+          <div className="flex items-center gap-1 sm:gap-1.5 text-emerald-600 mb-0.5">
+            <Star size={13} className="shrink-0" />
+            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate">Points Earned</span>
+          </div>
+          <span className="text-base sm:text-lg font-extrabold text-emerald-950 truncate">+{summaryStats.totalEarned.toLocaleString()}</span>
+        </div>
+
+        <div className="bg-rose-50/90 border border-rose-200/70 rounded-xl sm:rounded-2xl p-2.5 sm:p-3">
+          <div className="flex items-center gap-1 sm:gap-1.5 text-rose-600 mb-0.5">
+            <ShoppingBag size={13} className="shrink-0" />
+            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate">Points Redeemed</span>
+          </div>
+          <span className="text-base sm:text-lg font-extrabold text-rose-950 truncate">-{summaryStats.totalRedeemed.toLocaleString()}</span>
+        </div>
+      </div>
+
+      {/* Search & Sort / Filter Controls */}
+      <div className="bg-gray-50/90 p-2.5 sm:p-3.5 rounded-2xl border border-gray-200/60 space-y-2.5">
+        <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center justify-between">
+          {/* Expanded Search Bar */}
+          <div className="relative flex-1 min-w-0">
+            <Input 
+              placeholder="Search user by name, phone or email..." 
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              className="bg-white border border-gray-200 text-xs sm:text-sm py-2.5 sm:py-3 w-full pl-10 pr-9 rounded-xl sm:rounded-2xl shadow-2xs focus:border-green-500"
+              icon={<Search size={16} />}
+            />
+            {searchQuery && (
+              <button 
+                onClick={() => {
+                  onSearchChange('');
+                  onPageChange(1);
+                }}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer p-0.5 rounded-full hover:bg-gray-100 transition-colors"
+                title="Clear search"
+              >
+                <X size={15} />
+              </button>
+            )}
+          </div>
+
+          {/* Buyers Only Button */}
+          <button
+            type="button"
+            onClick={handleActiveToggle}
+            className={cn(
+              "text-xs sm:text-sm px-3.5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-bold transition-all border shrink-0 cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap",
+              onlyActiveBuyers
+                ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                : "bg-white text-gray-600 border-gray-200 hover:bg-gray-100 shadow-2xs"
+            )}
+            title="Filter only users who have placed at least 1 order"
           >
-            <X size={14} />
+            <Package size={15} />
+            <span>Buyers Only</span>
+            {onlyActiveBuyers && <CheckCircle size={13} />}
           </button>
-        )}
+        </div>
+
+        {/* Quick Sort Options Row (Enhanced and prominent) */}
+        <div 
+          ref={quickSortRef}
+          className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs touch-pan-x pt-0.5 scroll-smooth"
+        >
+          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider shrink-0 mr-0.5 flex items-center gap-1">
+            <Filter size={12} />
+            <span>Quick Sort:</span>
+          </span>
+
+          <button
+            type="button"
+            onClick={() => handleSortChange('orders_desc')}
+            className={cn(
+              "px-2.5 sm:px-3 py-1.5 rounded-xl font-bold text-[11px] sm:text-xs shrink-0 transition-all border cursor-pointer flex items-center gap-1 whitespace-nowrap",
+              userSortBy === 'orders_desc'
+                ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                : "bg-white text-gray-700 border-gray-200 hover:border-blue-300 hover:bg-blue-50/40"
+            )}
+          >
+            <span>📦 Most Orders</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSortChange('points_earned_desc')}
+            className={cn(
+              "px-2.5 sm:px-3 py-1.5 rounded-xl font-bold text-[11px] sm:text-xs shrink-0 transition-all border cursor-pointer flex items-center gap-1 whitespace-nowrap",
+              userSortBy === 'points_earned_desc'
+                ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                : "bg-white text-gray-700 border-gray-200 hover:border-emerald-300 hover:bg-emerald-50/40"
+            )}
+          >
+            <span>⭐ Most Earned</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSortChange('points_redeemed_desc')}
+            className={cn(
+              "px-2.5 sm:px-3 py-1.5 rounded-xl font-bold text-[11px] sm:text-xs shrink-0 transition-all border cursor-pointer flex items-center gap-1 whitespace-nowrap",
+              userSortBy === 'points_redeemed_desc'
+                ? "bg-rose-600 text-white border-rose-600 shadow-xs"
+                : "bg-white text-gray-700 border-gray-200 hover:border-rose-300 hover:bg-rose-50/40"
+            )}
+          >
+            <span>🛍️ Most Redeemed</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSortChange('points_balance_desc')}
+            className={cn(
+              "px-2.5 sm:px-3 py-1.5 rounded-xl font-bold text-[11px] sm:text-xs shrink-0 transition-all border cursor-pointer flex items-center gap-1 whitespace-nowrap",
+              userSortBy === 'points_balance_desc'
+                ? "bg-amber-600 text-white border-amber-600 shadow-xs"
+                : "bg-white text-gray-700 border-gray-200 hover:border-amber-300 hover:bg-amber-50/40"
+            )}
+          >
+            <span>💎 Available Balance</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSortChange('spending_desc')}
+            className={cn(
+              "px-2.5 sm:px-3 py-1.5 rounded-xl font-bold text-[11px] sm:text-xs shrink-0 transition-all border cursor-pointer flex items-center gap-1 whitespace-nowrap",
+              userSortBy === 'spending_desc'
+                ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                : "bg-white text-gray-700 border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/40"
+            )}
+          >
+            <span>💰 Top Spenders</span>
+          </button>
+
+          {userSortBy !== 'all' && (
+            <button
+              type="button"
+              onClick={() => handleSortChange('all')}
+              className="px-2 sm:px-2.5 py-1 text-[11px] font-bold text-gray-500 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 rounded-lg shrink-0 ml-1 transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap"
+              title="Reset sort"
+            >
+              <X size={11} />
+              <span>Reset</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Active Results Count */}
+      <div className="flex items-center justify-between px-1 text-[11px] sm:text-xs text-gray-500 flex-wrap gap-1">
+        <span>
+          Showing <strong className="text-gray-900">{processedUsers.length}</strong> of {users.length} users
+          {userSortBy === 'orders_desc' && ' • Sorted by Orders (High to Low)'}
+          {userSortBy === 'points_earned_desc' && ' • Sorted by Points Earned (High to Low)'}
+          {userSortBy === 'points_redeemed_desc' && ' • Sorted by Points Redeemed (High to Low)'}
+          {userSortBy === 'points_balance_desc' && ' • Sorted by Available Points (High to Low)'}
+          {userSortBy === 'spending_desc' && ' • Sorted by Total Spend (High to Low)'}
+        </span>
       </div>
 
       {paginatedUsers.length === 0 ? (
-        <p className="text-center py-8 text-gray-400">No users found</p>
+        <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+          <Users size={32} className="mx-auto text-gray-300 mb-2" />
+          <p className="font-bold text-gray-600 text-sm">No users found</p>
+          <p className="text-xs text-gray-400 mt-1">Try changing your search keywords or reset the filter.</p>
+        </div>
       ) : (
-        paginatedUsers.map((u) => (
-          <div key={u.uid} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-2xl transition-colors">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-400 overflow-hidden">
-                {u.photoURL ? (
-                  <img src={u.photoURL} alt={u.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  <Users size={20} />
+        <div className="space-y-2.5">
+          {paginatedUsers.map((u, index) => {
+            const uStats = userStatsMap.get(u.uid) || {
+              orderCount: 0,
+              deliveredCount: 0,
+              totalSpent: 0,
+              pointsEarned: 0,
+              pointsRedeemed: 0
+            };
+            const rank = (currentPage - 1) * itemsPerPage + index + 1;
+
+            return (
+              <div 
+                key={u.uid} 
+                className={cn(
+                  "p-2.5 sm:p-3.5 bg-white border rounded-2xl transition-all shadow-2xs hover:shadow-xs space-y-2.5",
+                  userSortBy !== 'all' && rank === 1 ? "border-amber-300 bg-amber-50/10" :
+                  userSortBy !== 'all' && rank === 2 ? "border-slate-300 bg-slate-50/10" :
+                  userSortBy !== 'all' && rank === 3 ? "border-orange-300 bg-orange-50/10" :
+                  "border-gray-100 hover:border-gray-200"
                 )}
-              </div>
-              <div>
-                <h4 className="font-bold text-sm text-[#1A1A1A]">{u.displayName || 'No Name'}</h4>
-                <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                  <p className="text-[10px] text-gray-400 flex items-center gap-1 flex-wrap">
-                    <span>{u.email || 'No email'}</span>
-                    <span>•</span>
-                    <span>{u.phoneNumber || 'No phone'}</span>
-                    <span>•</span>
-                    <span className="inline-flex items-center gap-0.5 text-amber-600 font-bold bg-amber-50 px-1 py-0.5 rounded border border-amber-100" title="Available Loyalty Points">
-                      ⭐ {u.loyaltyPoints || 0} pts
-                    </span>
-                    <span>•</span>
-                    <span className="inline-flex items-center gap-0.5 text-red-600 font-bold bg-red-50 px-1.5 py-0.5 rounded border border-red-100" title="Total Redeemed Points">
-                      🛍️ {orders.filter(o => o.userId === u.uid).reduce((acc, o) => acc + (o.pointsRedeemed || 0), 0)} redeemed
-                    </span>
-                  </p>
-                  {u.password && (
-                    <>
-                      <span className="text-[10px] text-gray-300">•</span>
-                      <span className="inline-flex items-center gap-1 bg-[#F0F7F4] text-[#66D2A4] font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-green-100">
-                        PIN: {u.password}
-                      </span>
-                    </>
-                  )}
-                  <span className="text-[10px] text-gray-300">•</span>
-                  <span className="text-[10px] bg-gray-100 text-gray-500 rounded-md px-1.5 py-0.5 uppercase tracking-wider text-[8px] font-extrabold">{u.role}</span>
+              >
+                {/* Header Row: User Info on Left, Actions on Right */}
+                <div className="flex items-center justify-between gap-2 min-w-0">
+                  <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                    {/* Rank Badge if sorted */}
+                    {userSortBy !== 'all' && (
+                      <div className="shrink-0">
+                        {rank === 1 ? (
+                          <span className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-amber-100 text-amber-900 font-extrabold text-[10px] sm:text-[11px] flex items-center justify-center border border-amber-300 shadow-xs" title="Rank 1">
+                            🏆1
+                          </span>
+                        ) : rank === 2 ? (
+                          <span className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-200 text-slate-800 font-extrabold text-[10px] sm:text-[11px] flex items-center justify-center border border-slate-300 shadow-xs" title="Rank 2">
+                            🥈2
+                          </span>
+                        ) : rank === 3 ? (
+                          <span className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-orange-100 text-orange-900 font-extrabold text-[10px] sm:text-[11px] flex items-center justify-center border border-orange-300 shadow-xs" title="Rank 3">
+                            🥉3
+                          </span>
+                        ) : (
+                          <span className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-gray-100 text-gray-500 font-bold text-[9px] sm:text-[10px] flex items-center justify-center border border-gray-200">
+                            #{rank}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Avatar */}
+                    <div className="w-8 h-8 sm:w-9 sm:h-9 bg-gray-100 rounded-full flex items-center justify-center text-gray-400 overflow-hidden shrink-0">
+                      {u.photoURL ? (
+                        <img src={u.photoURL} alt={u.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <Users size={16} />
+                      )}
+                    </div>
+
+                    {/* Name, Role, PIN & Contact Details */}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h4 className="font-bold text-xs sm:text-sm text-[#1A1A1A] truncate max-w-[140px] sm:max-w-xs">{u.displayName || 'No Name'}</h4>
+                        <span className={cn(
+                          "text-[8px] sm:text-[9px] rounded-md px-1.5 py-0.2 uppercase tracking-wider font-extrabold shrink-0",
+                          u.role === 'admin' ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-500"
+                        )}>
+                          {u.role}
+                        </span>
+                        {u.password && (
+                          <span className="inline-flex items-center gap-0.5 bg-[#F0F7F4] text-[#4ea883] font-mono text-[8px] sm:text-[9px] font-bold px-1.5 py-0.2 rounded-md border border-green-100 shrink-0">
+                            PIN: {u.password}
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-[10px] text-gray-400 truncate mt-0.5">
+                        <span>{u.email || 'No email'}</span>
+                        {u.phoneNumber && <span> • {u.phoneNumber}</span>}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Actions (Always neatly aligned at top-right) */}
+                  <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+                    <button 
+                      onClick={() => onViewOrders(u)}
+                      className="px-2 sm:px-2.5 py-1 text-[11px] font-bold text-[#147a52] bg-green-50 hover:bg-green-100 border border-green-200 rounded-xl transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                      title="View Complete Orders & Points History"
+                    >
+                      <Package size={13} />
+                      <span className="hidden sm:inline">Stats & Orders</span>
+                      <span className="sm:hidden">Orders</span>
+                    </button>
+                    <button 
+                      onClick={() => onDelete(u)}
+                      className="p-1 sm:p-1.5 text-red-500 hover:bg-red-50 rounded-xl transition-colors cursor-pointer shrink-0"
+                      title="Delete User"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Metrics Display - Responsive: 2-column grid on mobile (<640px), 4-column grid on tablet & desktop (>=640px) */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 pt-0.5 border-t border-gray-50">
+                  {/* Metric 1: Orders */}
+                  <div className={cn(
+                    "flex items-center justify-between px-2 py-1.5 rounded-lg border text-[10px] sm:text-[11px]",
+                    userSortBy === 'orders_desc' || userSortBy === 'spending_desc'
+                      ? "bg-blue-100/90 text-blue-950 border-blue-300 ring-1 ring-blue-300 font-bold"
+                      : "bg-blue-50/70 text-blue-800 border-blue-100/80 font-medium"
+                  )}>
+                    <div className="flex items-center gap-1 truncate">
+                      <Package size={11} className="shrink-0 text-blue-600" />
+                      <span className="truncate">Orders:</span>
+                    </div>
+                    <div className="flex items-baseline gap-1 shrink-0 ml-1">
+                      <span className="font-extrabold">{uStats.orderCount}</span>
+                      <span className="opacity-70 text-[9px] font-mono">(₹{uStats.totalSpent.toLocaleString()})</span>
+                    </div>
+                  </div>
+
+                  {/* Metric 2: Points Earned */}
+                  <div className={cn(
+                    "flex items-center justify-between px-2 py-1.5 rounded-lg border text-[10px] sm:text-[11px]",
+                    userSortBy === 'points_earned_desc'
+                      ? "bg-emerald-100/90 text-emerald-950 border-emerald-300 ring-1 ring-emerald-300 font-bold"
+                      : "bg-emerald-50/70 text-emerald-800 border-emerald-100/80 font-medium"
+                  )}>
+                    <div className="flex items-center gap-1 truncate">
+                      <Star size={11} className="shrink-0 text-emerald-600" />
+                      <span className="truncate">Earned:</span>
+                    </div>
+                    <span className="font-extrabold shrink-0 ml-1">+{uStats.pointsEarned}</span>
+                  </div>
+
+                  {/* Metric 3: Points Redeemed */}
+                  <div className={cn(
+                    "flex items-center justify-between px-2 py-1.5 rounded-lg border text-[10px] sm:text-[11px]",
+                    userSortBy === 'points_redeemed_desc'
+                      ? "bg-rose-100/90 text-rose-950 border-rose-300 ring-1 ring-rose-300 font-bold"
+                      : "bg-rose-50/70 text-rose-800 border-rose-100/80 font-medium"
+                  )}>
+                    <div className="flex items-center gap-1 truncate">
+                      <ShoppingBag size={11} className="shrink-0 text-rose-600" />
+                      <span className="truncate">Redeemed:</span>
+                    </div>
+                    <span className="font-extrabold shrink-0 ml-1">-{uStats.pointsRedeemed}</span>
+                  </div>
+
+                  {/* Metric 4: Points Balance */}
+                  <div className={cn(
+                    "flex items-center justify-between px-2 py-1.5 rounded-lg border text-[10px] sm:text-[11px]",
+                    userSortBy === 'points_balance_desc'
+                      ? "bg-amber-100/90 text-amber-950 border-amber-300 ring-1 ring-amber-300 font-bold"
+                      : "bg-amber-50/70 text-amber-800 border-amber-100/80 font-medium"
+                  )}>
+                    <div className="flex items-center gap-1 truncate">
+                      <span className="text-[11px] shrink-0">💎</span>
+                      <span className="truncate">Balance:</span>
+                    </div>
+                    <span className="font-extrabold shrink-0 ml-1">{u.loyaltyPoints || 0} pts</span>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="flex gap-2">
-              <button 
-                onClick={() => onViewOrders(u)}
-                className="p-2 text-[#66D2A4] hover:bg-green-50 rounded-lg transition-colors"
-                title="View Orders"
-              >
-                <Package size={18} />
-              </button>
-              <button 
-                onClick={() => onDelete(u)}
-                className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-              >
-                <Trash2 size={18} />
-              </button>
-            </div>
-          </div>
-        ))
+            );
+          })}
+        </div>
       )}
 
       {/* Pagination Controls */}
@@ -2043,9 +2462,19 @@ const OrderList = ({
                 </div>
                 <h4 className="font-bold text-sm text-[#1A1A1A] mt-1">{order.userName || 'Unknown User'}</h4>
                 <p className="text-[10px] text-blue-500 font-bold mb-1">Mobile: {order.userPhone || 'N/A'}</p>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <p className="text-sm font-bold text-[#66D2A4]">₹{order.total}</p>
                   <span className="text-blue-500 text-[10px] font-bold">Del: ₹{order.delivery || 0}</span>
+                  {order.paymentMethod === 'upi' ? (
+                    <span className="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                      <span>UPI Paid</span>
+                      {order.upiTransactionId && <span className="font-mono">({order.upiTransactionId})</span>}
+                    </span>
+                  ) : (
+                    <span className="bg-gray-100 text-gray-600 text-[9px] font-bold px-1.5 py-0.5 rounded-md">
+                      COD
+                    </span>
+                  )}
                 </div>
                 <p className="text-[10px] text-gray-400 mt-1">
                   Ordered: {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleString() : 'Just now'}
@@ -2689,6 +3118,21 @@ const OrderDetailsModal = ({
               <span className="font-bold text-sm">Total Amount</span>
               <span className="text-xl font-extrabold text-[#66D2A4]">₹{order.total}</span>
             </div>
+            <div className="flex justify-between items-center text-xs pt-2 border-t border-white/10">
+              <span className="opacity-60">Payment Method</span>
+              <span className={cn(
+                "font-bold px-2 py-0.5 rounded text-[11px]",
+                order.paymentMethod === 'upi' ? "bg-emerald-500/20 text-emerald-300" : "bg-white/10 text-gray-300"
+              )}>
+                {order.paymentMethod === 'upi' ? 'Online UPI (Direct Paid)' : 'Cash on Delivery'}
+              </span>
+            </div>
+            {order.upiTransactionId && (
+              <div className="flex justify-between items-center text-xs">
+                <span className="opacity-60">UPI Ref / UTR</span>
+                <span className="font-mono text-emerald-300 font-bold bg-white/10 px-2 py-0.5 rounded">{order.upiTransactionId}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -2754,6 +3198,10 @@ const SettingsTab = ({
   const [admobBannerId, setAdmobBannerId] = useState(settings.admobBannerId || '');
   const [admobInterstitialId, setAdmobInterstitialId] = useState(settings.admobInterstitialId || '');
   const [admobRewardedId, setAdmobRewardedId] = useState(settings.admobRewardedId || '');
+  const [upiEnabled, setUpiEnabled] = useState(settings.upiEnabled ?? true);
+  const [upiId, setUpiId] = useState(settings.upiId || 'shiva1520980@okhdfcbank');
+  const [upiPayeeName, setUpiPayeeName] = useState(settings.upiPayeeName || 'Lumaro Mart');
+  const [testAmount, setTestAmount] = useState('10');
   const [adTestStatus, setAdTestStatus] = useState<string | null>(null);
   const [showPlayStoreGuide, setShowPlayStoreGuide] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -2781,6 +3229,9 @@ const SettingsTab = ({
     setAdmobBannerId(settings.admobBannerId || '');
     setAdmobInterstitialId(settings.admobInterstitialId || '');
     setAdmobRewardedId(settings.admobRewardedId || '');
+    setUpiEnabled(settings.upiEnabled ?? true);
+    setUpiId(settings.upiId || 'shiva1520980@okhdfcbank');
+    setUpiPayeeName(settings.upiPayeeName || 'Lumaro Mart');
   }, [settings]);
 
   const handleRequestPermission = () => {
@@ -2814,7 +3265,10 @@ const SettingsTab = ({
       admobAppId,
       admobBannerId,
       admobInterstitialId,
-      admobRewardedId
+      admobRewardedId,
+      upiEnabled,
+      upiId,
+      upiPayeeName
     });
     setIsSaving(false);
     
@@ -3046,6 +3500,113 @@ const SettingsTab = ({
               </div>
               <p className="text-[9px] text-gray-400 mt-1 italic">Use @userinfobot on Telegram to get your Chat ID</p>
             </div>
+          </div>
+
+          <div className="h-px bg-blue-100 my-4" />
+
+          {/* Direct UPI & Dynamic QR Code Payment (100% Free - 0% Fee) */}
+          <div className="p-5 bg-white rounded-3xl border border-emerald-100 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "w-11 h-11 rounded-2xl flex items-center justify-center transition-colors shadow-xs",
+                  upiEnabled ? "bg-emerald-600 text-white" : "bg-gray-100 text-gray-400"
+                )}>
+                  <QrCode size={22} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold text-[#1A1A1A]">Direct UPI & Dynamic QR Code</p>
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-1.5 py-0.5 rounded">
+                      100% Free
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-gray-400">Direct payment to your Bank Account • 0% Gateway Fee</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setUpiEnabled(!upiEnabled)}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative cursor-pointer",
+                  upiEnabled ? "bg-emerald-600" : "bg-gray-200"
+                )}
+              >
+                <div className={cn(
+                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                  upiEnabled ? "right-1" : "left-1"
+                )} />
+              </button>
+            </div>
+
+            {upiEnabled && (
+              <div className="space-y-4 pt-2 border-t border-gray-100">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
+                      Merchant UPI ID (VPA) <span className="text-red-500">*</span>
+                    </label>
+                    <Input 
+                      value={upiId}
+                      onChange={(e) => setUpiId(e.target.value.trim())}
+                      placeholder="e.g. shiva1520980@okhdfcbank"
+                      className="bg-gray-50 text-xs font-mono"
+                    />
+                    <p className="text-[9px] text-gray-400 mt-1">GPay, PhonePe, Paytm, BHIM or Bank UPI ID</p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
+                      Payee / Store Display Name <span className="text-red-500">*</span>
+                    </label>
+                    <Input 
+                      value={upiPayeeName}
+                      onChange={(e) => setUpiPayeeName(e.target.value)}
+                      placeholder="e.g. Lumaro Mart"
+                      className="bg-gray-50 text-xs font-medium"
+                    />
+                    <p className="text-[9px] text-gray-400 mt-1">Appears in customer's UPI app payment confirmation</p>
+                  </div>
+                </div>
+
+                {/* Live Interactive Test QR Code Box */}
+                <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-2xl p-4 flex flex-col sm:flex-row items-center gap-4">
+                  <div className="bg-white p-2.5 rounded-2xl shadow-xs border border-emerald-100 flex items-center justify-center shrink-0">
+                    {upiId ? (
+                      <QRCodeSVG
+                        value={`upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiPayeeName || 'Lumaro Mart')}&am=${testAmount}&cu=INR&tn=${encodeURIComponent('Test Payment')}`}
+                        size={110}
+                        level="M"
+                      />
+                    ) : (
+                      <div className="w-[110px] h-[110px] flex items-center justify-center text-xs text-gray-400">
+                        Enter UPI ID
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-2 text-center sm:text-left">
+                    <div className="flex items-center justify-center sm:justify-start gap-2">
+                      <span className="text-xs font-bold text-emerald-950">Live Test QR Code Preview</span>
+                      <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded">
+                        Active
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-600 leading-relaxed">
+                      Aap apne phone ke kisi bhi UPI app (Google Pay, PhonePe, Paytm) se is QR ko scan karke test kar sakte hain ki direct payment aapke bank account me aa rahi hai ya nahi.
+                    </p>
+                    <div className="flex items-center justify-center sm:justify-start gap-2 pt-1">
+                      <span className="text-[10px] font-bold text-gray-500">Test Amount: ₹</span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={testAmount}
+                        onChange={(e) => setTestAmount(e.target.value)}
+                        className="w-16 px-2 py-0.5 text-xs font-bold border border-gray-200 rounded-lg bg-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="h-px bg-blue-100 my-4" />
@@ -4014,7 +4575,9 @@ const UserStatsModal = ({ user, orders, onClose, onViewAllOrders }: { user: User
     delivered: orders.filter(o => o.status === 'delivered').length,
     canceled: orders.filter(o => o.status === 'canceled').length,
     pending: orders.filter(o => o.status === 'pending' || o.status === 'confirmed').length,
-    totalSpent: orders.reduce((acc, o) => acc + o.total, 0)
+    totalSpent: orders.reduce((acc, o) => acc + o.total, 0),
+    pointsEarned: orders.reduce((acc, o) => acc + calculateEarnedPoints(o), 0),
+    pointsRedeemed: orders.reduce((acc, o) => acc + (o.pointsRedeemed || 0), 0)
   };
 
   return (
@@ -4022,104 +4585,104 @@ const UserStatsModal = ({ user, orders, onClose, onViewAllOrders }: { user: User
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4"
+      className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-3 sm:p-4"
     >
       <motion.div 
         initial={{ y: 50, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 50, opacity: 0 }}
-        className="bg-white w-full max-w-md rounded-[32px] overflow-hidden"
+        className="bg-white w-full max-w-md rounded-2xl sm:rounded-[32px] overflow-hidden max-h-[92vh] flex flex-col shadow-2xl"
       >
-        <div className="p-6 border-b border-gray-50 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center overflow-hidden">
+        <div className="p-4 sm:p-5 border-b border-gray-50 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gray-100 rounded-full flex items-center justify-center overflow-hidden shrink-0">
               {user.photoURL ? (
                 <img src={user.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
-                <Users size={24} className="text-gray-400" />
+                <Users size={22} className="text-gray-400" />
               )}
             </div>
-            <div>
-              <h3 className="text-lg font-bold text-[#1A1A1A]">{user.displayName}</h3>
-              <p className="text-xs text-gray-400">{user.email}</p>
+            <div className="min-w-0">
+              <h3 className="text-base sm:text-lg font-bold text-[#1A1A1A] truncate">{user.displayName || 'Customer'}</h3>
+              <p className="text-xs text-gray-400 truncate">{user.email || user.phoneNumber || 'No contact info'}</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
-            <X size={20} className="text-gray-400" />
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors cursor-pointer shrink-0">
+            <X size={18} className="text-gray-400" />
           </button>
         </div>
 
-        <div className="p-6 space-y-6">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-blue-50 p-4 rounded-2xl">
-              <div className="flex items-center gap-2 text-blue-600 mb-1">
-                <ShoppingBag size={16} />
-                <span className="text-[10px] font-bold uppercase tracking-wider">Total Orders</span>
+        <div className="p-4 sm:p-5 space-y-3 sm:space-y-4 overflow-y-auto">
+          <div className="grid grid-cols-2 gap-2 sm:gap-2.5">
+            <div className="bg-blue-50/80 p-3 rounded-xl sm:rounded-2xl border border-blue-100/60">
+              <div className="flex items-center gap-1.5 text-blue-600 mb-0.5">
+                <ShoppingBag size={14} className="shrink-0" />
+                <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider">Total Orders</span>
               </div>
-              <span className="text-2xl font-bold text-blue-900">{stats.total}</span>
+              <span className="text-lg sm:text-xl font-bold text-blue-900">{stats.total}</span>
             </div>
-            <div className="bg-green-50 p-4 rounded-2xl">
-              <div className="flex items-center gap-2 text-green-600 mb-1">
-                <CheckCircle size={16} />
-                <span className="text-[10px] font-bold uppercase tracking-wider">Delivered</span>
+            <div className="bg-green-50/80 p-3 rounded-xl sm:rounded-2xl border border-green-100/60">
+              <div className="flex items-center gap-1.5 text-green-600 mb-0.5">
+                <CheckCircle size={14} className="shrink-0" />
+                <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider">Delivered</span>
               </div>
-              <span className="text-2xl font-bold text-green-900">{stats.delivered}</span>
+              <span className="text-lg sm:text-xl font-bold text-green-900">{stats.delivered}</span>
             </div>
-            <div className="bg-red-50 p-4 rounded-2xl">
-              <div className="flex items-center gap-2 text-red-600 mb-1">
-                <XCircle size={16} />
-                <span className="text-[10px] font-bold uppercase tracking-wider">Canceled</span>
+            <div className="bg-red-50/80 p-3 rounded-xl sm:rounded-2xl border border-red-100/60">
+              <div className="flex items-center gap-1.5 text-red-600 mb-0.5">
+                <XCircle size={14} className="shrink-0" />
+                <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider">Canceled</span>
               </div>
-              <span className="text-2xl font-bold text-red-900">{stats.canceled}</span>
+              <span className="text-lg sm:text-xl font-bold text-red-900">{stats.canceled}</span>
             </div>
-            <div className="bg-orange-50 p-4 rounded-2xl">
-              <div className="flex items-center gap-2 text-orange-600 mb-1">
-                <Clock size={16} />
-                <span className="text-[10px] font-bold uppercase tracking-wider">In Progress</span>
+            <div className="bg-orange-50/80 p-3 rounded-xl sm:rounded-2xl border border-orange-100/60">
+              <div className="flex items-center gap-1.5 text-orange-600 mb-0.5">
+                <Clock size={14} className="shrink-0" />
+                <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider">In Progress</span>
               </div>
-              <span className="text-2xl font-bold text-orange-900">{stats.pending}</span>
-            </div>
-          </div>
-
-          <div className="bg-gray-50 p-4 rounded-2xl flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-[#66D2A4] shadow-sm">
-                <TrendingUp size={20} />
-              </div>
-              <div>
-                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Total Value</p>
-                <p className="text-lg font-bold text-[#1A1A1A]">₹{stats.totalSpent.toLocaleString()}</p>
-              </div>
+              <span className="text-lg sm:text-xl font-bold text-orange-900">{stats.pending}</span>
             </div>
           </div>
 
-          <div className="bg-amber-50 p-4 rounded-2xl flex items-center justify-between border border-amber-100">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-amber-500 shadow-sm">
-                <Star size={20} fill="currentColor" />
+          <div className="bg-gray-50/90 p-3 rounded-xl sm:rounded-2xl flex items-center justify-between border border-gray-100">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 sm:w-9 sm:h-9 bg-white rounded-xl flex items-center justify-center text-[#66D2A4] shadow-xs">
+                <TrendingUp size={16} />
               </div>
               <div>
-                <p className="text-[10px] text-amber-600 font-bold uppercase tracking-wider">Loyalty Points</p>
-                <p className="text-lg font-bold text-amber-900">{user.loyaltyPoints || 0} pts</p>
+                <p className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider">Total Value / Spent</p>
+                <p className="text-sm sm:text-base font-bold text-[#1A1A1A]">₹{stats.totalSpent.toLocaleString()}</p>
               </div>
             </div>
-            
-            <div className="flex items-center gap-3 border-l border-amber-200/50 pl-6 pr-2">
-              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-red-500 shadow-sm">
-                <ShoppingBag size={20} />
+          </div>
+
+          {/* Points Breakdown Box */}
+          <div className="bg-amber-50/70 p-3 rounded-xl sm:rounded-2xl border border-amber-100/80 space-y-2">
+            <p className="text-[10px] font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1">
+              <Star size={12} className="text-amber-600 shrink-0" />
+              <span>Loyalty Points Overview</span>
+            </p>
+            <div className="grid grid-cols-3 gap-1.5 sm:gap-2 text-center">
+              <div className="bg-white p-2 sm:p-2.5 rounded-xl shadow-2xs border border-amber-100">
+                <p className="text-[8px] sm:text-[9px] text-amber-700 font-bold uppercase">Balance</p>
+                <p className="text-xs sm:text-sm font-extrabold text-amber-950 mt-0.5">{user.loyaltyPoints || 0}</p>
               </div>
-              <div>
-                <p className="text-[10px] text-red-600 font-bold uppercase tracking-wider">Points Redeemed</p>
-                <p className="text-lg font-bold text-red-900">{orders.reduce((acc, o) => acc + (o.pointsRedeemed || 0), 0)} pts</p>
+              <div className="bg-white p-2 sm:p-2.5 rounded-xl shadow-2xs border border-emerald-100">
+                <p className="text-[8px] sm:text-[9px] text-emerald-700 font-bold uppercase">Earned</p>
+                <p className="text-xs sm:text-sm font-extrabold text-emerald-950 mt-0.5">+{stats.pointsEarned}</p>
+              </div>
+              <div className="bg-white p-2 sm:p-2.5 rounded-xl shadow-2xs border border-rose-100">
+                <p className="text-[8px] sm:text-[9px] text-rose-700 font-bold uppercase">Redeemed</p>
+                <p className="text-xs sm:text-sm font-extrabold text-rose-950 mt-0.5">-{stats.pointsRedeemed}</p>
               </div>
             </div>
           </div>
 
           <Button 
             onClick={onViewAllOrders}
-            className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-[#66D2A4]/20"
+            className="w-full py-3 sm:py-3.5 rounded-xl sm:rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-[#66D2A4]/20 cursor-pointer text-xs"
           >
-            <Package size={20} /> View Order History
+            <Package size={16} /> View User Order History
           </Button>
         </div>
       </motion.div>

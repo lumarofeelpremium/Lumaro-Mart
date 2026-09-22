@@ -75,6 +75,14 @@ export const PrintableOrderReceipt = React.forwardRef<HTMLDivElement, PrintableO
             <p style={{ color: '#4b5563', marginTop: '4px', marginBottom: 0 }}>
               <span style={{ fontWeight: 600, color: '#1f2937' }}>Date:</span> {formattedDate} {formattedTime}
             </p>
+            <p style={{ color: '#4b5563', marginTop: '2px', marginBottom: 0 }}>
+              <span style={{ fontWeight: 600, color: '#1f2937' }}>Payment:</span> {order.paymentMethod === 'upi' ? 'Online UPI (Paid)' : 'Cash on Delivery'}
+            </p>
+            {order.upiTransactionId && (
+              <p style={{ color: '#047857', marginTop: '2px', marginBottom: 0, fontFamily: 'monospace', fontSize: '11px' }}>
+                <span style={{ fontWeight: 600 }}>UTR:</span> {order.upiTransactionId}
+              </p>
+            )}
           </div>
           <div style={{ textAlign: 'right' }}>
             <p style={{ color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.5px', margin: 0 }}>
