@@ -13,6 +13,7 @@ import * as XLSX from 'xlsx';
 import { useReactToPrint } from 'react-to-print';
 import { downloadReceiptPdf, sendWhatsAppBill, calculateEarnedPoints } from '../lib/receipt-utils';
 import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
+import { OrderStatusTracker } from '../components/OrderStatusTracker';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 import { showBannerAd, showInterstitialAd, showRewardedAd, ADMOB_TEST_IDS } from '../lib/admob';
 import { QRCodeSVG } from 'qrcode.react';
@@ -2247,7 +2248,7 @@ const OrderList = ({
   updatingOrderIds?: Record<string, boolean>,
   storeSettings?: AppSettings
 }) => {
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'confirmed' | 'delivered' | 'canceled'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'confirmed' | 'packed' | 'out_for_delivery' | 'delivered' | 'canceled'>('all');
   const [printingOrder, setPrintingOrder] = useState<Order | null>(null);
   const [printingCustomer, setPrintingCustomer] = useState<User | null>(null);
   const [downloadingOrderId, setDownloadingOrderId] = useState<string | null>(null);
@@ -2301,6 +2302,8 @@ const OrderList = ({
   // Status counts
   const pendingCount = orders.filter(o => o.status === 'pending').length;
   const confirmedCount = orders.filter(o => o.status === 'confirmed').length;
+  const packedCount = orders.filter(o => o.status === 'packed').length;
+  const outForDeliveryCount = orders.filter(o => o.status === 'out_for_delivery').length;
   const deliveredCount = orders.filter(o => o.status === 'delivered').length;
   const canceledCount = orders.filter(o => o.status === 'canceled').length;
 
@@ -2403,6 +2406,30 @@ const OrderList = ({
         </button>
         <button
           type="button"
+          onClick={() => { setStatusFilter('packed'); onPageChange(1); }}
+          className={cn(
+            "px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer",
+            statusFilter === 'packed' 
+              ? "bg-purple-600 text-white shadow-xs" 
+              : "bg-purple-50 text-purple-700 hover:bg-purple-100"
+          )}
+        >
+          Packed ({packedCount})
+        </button>
+        <button
+          type="button"
+          onClick={() => { setStatusFilter('out_for_delivery'); onPageChange(1); }}
+          className={cn(
+            "px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer",
+            statusFilter === 'out_for_delivery' 
+              ? "bg-amber-600 text-white shadow-xs" 
+              : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+          )}
+        >
+          Out for Delivery ({outForDeliveryCount})
+        </button>
+        <button
+          type="button"
           onClick={() => { setStatusFilter('delivered'); onPageChange(1); }}
           className={cn(
             "px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer",
@@ -2491,6 +2518,8 @@ const OrderList = ({
                     "px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase outline-none border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
                     order.status === 'pending' ? "bg-orange-50 text-orange-500" :
                     order.status === 'confirmed' ? "bg-blue-50 text-blue-500" :
+                    order.status === 'packed' ? "bg-purple-50 text-purple-600" :
+                    order.status === 'out_for_delivery' ? "bg-amber-50 text-amber-600" :
                     order.status === 'delivered' ? "bg-green-50 text-green-500" :
                     "bg-red-50 text-red-500"
                   )}
@@ -2500,6 +2529,8 @@ const OrderList = ({
                 >
                   <option value="pending">Pending</option>
                   <option value="confirmed">Confirmed</option>
+                  <option value="packed">Packed</option>
+                  <option value="out_for_delivery">Out for Delivery</option>
                   <option value="delivered">Delivered</option>
                   <option value="canceled">Canceled</option>
                 </select>
@@ -2510,6 +2541,11 @@ const OrderList = ({
                   View Details
                 </button>
               </div>
+            </div>
+
+            {/* Visual Status Progress */}
+            <div className="pt-1">
+              <OrderStatusTracker status={order.status} compact />
             </div>
 
             {/* Quick Action Buttons for WhatsApp, PDF, and Print */}
@@ -2984,13 +3020,15 @@ const OrderDetailsModal = ({
           <div className="bg-gray-50 p-6 rounded-[32px] border border-gray-100 flex items-center justify-between">
             <div>
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Status</p>
-              <p className="text-sm font-bold text-[#1A1A1A] capitalize">{order.status}</p>
+              <p className="text-sm font-bold text-[#1A1A1A] capitalize">{order.status === 'out_for_delivery' ? 'Out for Delivery' : order.status === 'packed' ? 'Order Packed' : order.status}</p>
             </div>
             <select 
               className={cn(
                 "px-4 py-2 rounded-2xl text-xs font-bold uppercase outline-none border-none cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed",
                 order.status === 'pending' ? "bg-orange-500 text-white" :
                 order.status === 'confirmed' ? "bg-blue-500 text-white" :
+                order.status === 'packed' ? "bg-purple-600 text-white" :
+                order.status === 'out_for_delivery' ? "bg-amber-600 text-white" :
                 order.status === 'delivered' ? "bg-green-500 text-white" :
                 "bg-red-500 text-white"
               )}
@@ -3000,10 +3038,15 @@ const OrderDetailsModal = ({
             >
               <option value="pending">Pending</option>
               <option value="confirmed">Confirmed</option>
+              <option value="packed">Packed</option>
+              <option value="out_for_delivery">Out for Delivery</option>
               <option value="delivered">Delivered</option>
               <option value="canceled">Canceled</option>
             </select>
           </div>
+
+          {/* Live Order Tracker Preview */}
+          <OrderStatusTracker status={order.status} />
 
           {/* Customer Section */}
           <div className="space-y-3">

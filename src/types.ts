@@ -56,7 +56,7 @@ export interface Order {
   pincode?: string;
   items: CartItem[];
   total: number;
-  status: 'pending' | 'confirmed' | 'delivered' | 'canceled';
+  status: 'pending' | 'confirmed' | 'packed' | 'out_for_delivery' | 'delivered' | 'canceled';
   createdAt: any;
   canceledAt?: any;
   viewed?: boolean;

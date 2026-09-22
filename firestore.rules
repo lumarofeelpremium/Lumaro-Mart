@@ -97,7 +97,7 @@ service cloud.firestore {
       return data.userId is string && data.userId == request.auth.uid &&
              data.items is list && data.items.size() > 0 &&
              data.total is number && data.total >= 0 &&
-             data.status in ['pending', 'confirmed', 'delivered', 'canceled'];
+             data.status in ['pending', 'confirmed', 'packed', 'out_for_delivery', 'delivered', 'canceled'];
     }
 
     function isValidBanner(data) {

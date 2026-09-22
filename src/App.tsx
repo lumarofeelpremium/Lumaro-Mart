@@ -234,18 +234,18 @@ export default function App() {
     };
   }, []);
 
-  const handleAddToCart = (product: Product) => {
-    if (product.stock <= 0) return;
+  const handleAddToCart = (product: Product, quantityToAdd: number = 1) => {
+    if (product.stock <= 0 || quantityToAdd <= 0) return;
     
     let newCart: CartItem[] = [];
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
       if (existing) {
         newCart = prev.map(item => 
-          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+          item.id === product.id ? { ...item, quantity: item.quantity + quantityToAdd } : item
         );
       } else {
-        newCart = [...prev, { ...product, quantity: 1 }];
+        newCart = [...prev, { ...product, quantity: quantityToAdd }];
       }
       
       // Update Firestore if user is logged in

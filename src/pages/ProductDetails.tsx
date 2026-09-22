@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Star, Plus, Minus, ShoppingCart, MessageSquare, Send, Loader2, Heart, Zap, Sparkles } from 'lucide-react';
+import { ChevronLeft, Star, Plus, Minus, ShoppingCart, MessageSquare, Send, Loader2, Heart, Zap, Sparkles, Check } from 'lucide-react';
 import { Button, Input, Skeleton } from '../components/ui/Base';
 import { Product, Review, User } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -57,7 +57,7 @@ export const ProductDetails = ({
   onAddToCart 
 }: { 
   user: User | null, 
-  onAddToCart: (p: Product) => void 
+  onAddToCart: (p: Product, quantity?: number) => void 
 }) => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -67,6 +67,8 @@ export const ProductDetails = ({
   const [loading, setLoading] = useState(true);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [newReview, setNewReview] = useState({ rating: 0, comment: '' });
+  const [justAdded, setJustAdded] = useState(false);
+  const [addedCount, setAddedCount] = useState(0);
   const reviewsRef = useRef<HTMLDivElement>(null);
 
   const scrollToReviews = () => {
@@ -423,18 +425,30 @@ export const ProductDetails = ({
             className={cn(
               "flex-grow py-5 rounded-3xl shadow-lg flex items-center justify-center gap-3 text-lg transition-all",
               product.stock > 0 
-                ? "shadow-[#66D2A4]/20" 
+                ? (justAdded ? "bg-[#55b88e] text-white shadow-[#66D2A4]/30 scale-[1.01]" : "shadow-[#66D2A4]/20") 
                 : "bg-gray-300 shadow-none cursor-not-allowed"
             )}
             disabled={product.stock <= 0}
             onClick={() => {
               if (product.stock > 0) {
-                for(let i=0; i<quantity; i++) onAddToCart(product);
-                navigate('/cart');
+                onAddToCart(product, quantity);
+                setAddedCount(quantity);
+                setJustAdded(true);
+                setTimeout(() => {
+                  setJustAdded(false);
+                }, 1800);
               }
             }}
           >
-            <ShoppingCart size={22} /> {product.stock > 0 ? "Add to Cart" : "Out of Stock"}
+            {justAdded ? (
+              <span className="flex items-center gap-2">
+                <Check size={22} className="text-white animate-pulse" /> Added ({addedCount}) to Cart
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <ShoppingCart size={22} /> {product.stock > 0 ? "Add to Cart" : "Out of Stock"}
+              </span>
+            )}
           </Button>
           <WishlistButton user={user} productId={product.id} className="w-16 h-16 rounded-3xl" />
         </div>

@@ -11,6 +11,7 @@ import { cacheUtils } from '../lib/cache-utils';
 import { cn } from '../lib/utils';
 import { downloadReceiptPdf, sendWhatsAppBill, calculateEarnedPoints } from '../lib/receipt-utils';
 import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
+import { OrderStatusTracker } from '../components/OrderStatusTracker';
 
 export const MyOrders = ({ user }: { user: User | null }) => {
   const navigate = useNavigate();
@@ -28,7 +29,7 @@ export const MyOrders = ({ user }: { user: User | null }) => {
     // Fetch store settings for helpline / receipt info
     const fetchSettings = async () => {
       try {
-        const sDoc = await getDoc(doc(db, 'settings', 'general'));
+        const sDoc = await getDoc(doc(db, 'settings', 'global'));
         if (sDoc.exists()) {
           setStoreSettings(sDoc.data() as AppSettings);
         }
@@ -209,14 +210,21 @@ export const MyOrders = ({ user }: { user: User | null }) => {
                 <span className={`px-3 py-1 rounded-xl text-[10px] font-bold uppercase tracking-wider ${
                   order.status === 'pending' ? "bg-orange-50 text-orange-500" :
                   order.status === 'confirmed' ? "bg-blue-50 text-blue-500" :
+                  order.status === 'packed' ? "bg-purple-50 text-purple-600" :
+                  order.status === 'out_for_delivery' ? "bg-amber-50 text-amber-600" :
                   order.status === 'canceled' ? "bg-red-50 text-red-500" :
                   "bg-green-50 text-green-500"
                 }`}>
-                  {order.status}
+                  {order.status === 'out_for_delivery' ? 'Out for Delivery' : order.status === 'packed' ? 'Order Packed' : order.status}
                 </span>
               </div>
 
-              <div className="flex items-center justify-between">
+              {/* Real-time Status Progress Bar */}
+              <div className="mb-4">
+                <OrderStatusTracker status={order.status} compact />
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-gray-50">
                 <div className="flex items-center gap-2 text-[10px] text-gray-400 font-bold uppercase tracking-widest">
                   <Clock size={12} />
                   {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Just now'}
@@ -278,8 +286,12 @@ export const MyOrders = ({ user }: { user: User | null }) => {
                         selectedOrder.status === 'canceled' ? "text-red-500" :
                         selectedOrder.status === 'pending' ? "text-orange-500" :
                         selectedOrder.status === 'confirmed' ? "text-blue-500" :
+                        selectedOrder.status === 'packed' ? "text-purple-600" :
+                        selectedOrder.status === 'out_for_delivery' ? "text-amber-600" :
                         "text-[#66D2A4]"
-                      )}>{selectedOrder.status}</p>
+                      )}>
+                        {selectedOrder.status === 'out_for_delivery' ? 'Out for Delivery' : selectedOrder.status === 'packed' ? 'Order Packed' : selectedOrder.status}
+                      </p>
                     </div>
                   </div>
                   <div className="text-right">
@@ -287,6 +299,9 @@ export const MyOrders = ({ user }: { user: User | null }) => {
                     <p className="font-black text-[#66D2A4] text-2xl">₹{selectedOrder.total}</p>
                   </div>
                 </div>
+
+                {/* Real-time Order Tracking Timeline */}
+                <OrderStatusTracker status={selectedOrder.status} />
 
                 <div className="space-y-4">
                   <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Items Summary</h3>
