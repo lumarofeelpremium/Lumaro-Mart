@@ -13,6 +13,7 @@ import * as XLSX from 'xlsx';
 import { useReactToPrint } from 'react-to-print';
 import { downloadReceiptPdf, sendWhatsAppBill, calculateEarnedPoints } from '../lib/receipt-utils';
 import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
+import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
 import { OrderStatusTracker } from '../components/OrderStatusTracker';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 import { showBannerAd, showInterstitialAd, showRewardedAd, ADMOB_TEST_IDS } from '../lib/admob';
@@ -2252,6 +2253,8 @@ const OrderList = ({
   const [printingOrder, setPrintingOrder] = useState<Order | null>(null);
   const [printingCustomer, setPrintingCustomer] = useState<User | null>(null);
   const [downloadingOrderId, setDownloadingOrderId] = useState<string | null>(null);
+  const [previewOrder, setPreviewOrder] = useState<Order | null>(null);
+  const [previewCustomer, setPreviewCustomer] = useState<User | null>(null);
   const printReceiptRef = useRef<HTMLDivElement>(null);
 
   const handleTriggerPrint = useReactToPrint({
@@ -2272,12 +2275,12 @@ const OrderList = ({
   };
 
   const handleQuickPrint = async (order: Order) => {
+    // Open the full-featured mobile-ready Receipt Modal (works smoothly on both Android and Web)
+    setPreviewOrder(order);
     setPrintingOrder(order);
     const cust = await fetchCustomerForOrder(order);
+    setPreviewCustomer(cust);
     setPrintingCustomer(cust);
-    setTimeout(() => {
-      handleTriggerPrint();
-    }, 150);
   };
 
   const handleQuickWhatsApp = async (order: Order) => {
@@ -2650,6 +2653,16 @@ const OrderList = ({
           </Button>
         </div>
       )}
+
+      {/* Mobile-friendly Receipt Preview & Action Modal */}
+      {previewOrder && (
+        <ReceiptPreviewModal
+          order={previewOrder}
+          customer={previewCustomer}
+          storeSettings={storeSettings}
+          onClose={() => setPreviewOrder(null)}
+        />
+      )}
     </div>
   );
 };
@@ -2918,6 +2931,7 @@ const OrderDetailsModal = ({
   const [customer, setCustomer] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [showReceiptPreview, setShowReceiptPreview] = useState(false);
   const printReceiptRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = useReactToPrint({
@@ -3002,7 +3016,7 @@ const OrderDetailsModal = ({
               {isDownloadingPdf ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
             </button>
             <button 
-              onClick={() => handlePrint()} 
+              onClick={() => setShowReceiptPreview(true)} 
               className="p-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-full transition-colors cursor-pointer"
               title="Print Bill"
             >
@@ -3199,7 +3213,7 @@ const OrderDetailsModal = ({
 
           <div className="flex gap-2.5">
             <Button 
-              onClick={() => handlePrint()} 
+              onClick={() => setShowReceiptPreview(true)} 
               className="flex-1 py-3.5 rounded-2xl bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold border border-gray-200 flex items-center justify-center gap-2 cursor-pointer text-xs"
             >
               <Printer size={15} /> Print Receipt
@@ -3214,6 +3228,16 @@ const OrderDetailsModal = ({
         </div>
 
       </motion.div>
+
+      {/* Mobile-friendly Receipt Preview Modal */}
+      {showReceiptPreview && (
+        <ReceiptPreviewModal
+          order={order}
+          customer={customer}
+          storeSettings={storeSettings}
+          onClose={() => setShowReceiptPreview(false)}
+        />
+      )}
     </motion.div>
   );
 };

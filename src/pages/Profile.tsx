@@ -8,6 +8,7 @@ import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, getDoc }
 import { motion, AnimatePresence } from 'motion/react';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { compressImage } from '../lib/utils';
+import { cacheUtils } from '../lib/cache-utils';
 
 export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUser: (u: User | null) => void, onLogout: () => void }) => {
   const navigate = useNavigate();
@@ -124,28 +125,29 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
   }, []);
 
   useEffect(() => {
-    const fetchSettings = async () => {
+    const cachedSettings = cacheUtils.getItem('app_settings_global');
+    if (cachedSettings) {
       try {
-        const settingsDoc = await getDoc(doc(db, 'settings', 'global'));
-        if (settingsDoc.exists()) {
-          setAppSettings(settingsDoc.data() as AppSettings);
-        }
-      } catch (error) {
-        console.error("Error fetching settings:", error);
+        setAppSettings(JSON.parse(cachedSettings) as AppSettings);
+      } catch (e) {
+        // silent parse error
       }
-    };
-    fetchSettings();
-  }, []);
+    }
 
-  useEffect(() => {
     const fetchSettings = async () => {
       try {
         const settingsDoc = await getDoc(doc(db, 'settings', 'global'));
         if (settingsDoc.exists()) {
-          setAppSettings(settingsDoc.data() as AppSettings);
+          const data = settingsDoc.data() as AppSettings;
+          setAppSettings(data);
+          cacheUtils.setItem('app_settings_global', data);
         }
-      } catch (error) {
-        console.error("Error fetching settings:", error);
+      } catch (error: any) {
+        const isOffline = error?.code === 'unavailable' || 
+          (error?.message && error.message.toLowerCase().includes('offline'));
+        if (!isOffline) {
+          console.warn("Could not refresh settings in Profile:", error?.message || error);
+        }
       }
     };
     fetchSettings();

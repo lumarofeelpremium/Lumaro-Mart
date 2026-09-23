@@ -186,10 +186,28 @@ export const downloadReceiptPdf = async (
       heightLeft -= pageHeight;
     }
 
-    pdf.save(fileName);
+    // Handle Android & Capacitor saving
+    try {
+      const pdfBlob = pdf.output('blob');
+      const blobUrl = URL.createObjectURL(pdfBlob);
+      const downloadLink = document.createElement('a');
+      downloadLink.href = blobUrl;
+      downloadLink.download = fileName;
+      downloadLink.style.display = 'none';
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      setTimeout(() => {
+        document.body.removeChild(downloadLink);
+        URL.revokeObjectURL(blobUrl);
+      }, 2000);
+    } catch {
+      pdf.save(fileName);
+    }
+
     return true;
   } catch (error) {
     console.error('Failed to generate PDF:', error);
     return false;
   }
 };
+

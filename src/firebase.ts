@@ -1,6 +1,10 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromCache, getDocFromServer } from 'firebase/firestore';
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager 
+} from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { getMessaging } from 'firebase/messaging';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -9,25 +13,13 @@ import firebaseConfig from '../firebase-applet-config.json';
 console.log("Initializing Firebase with Project ID:", firebaseConfig.projectId);
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
 
-// Test Connection
-async function testConnection() {
-  try {
-    console.log("Testing Firestore connection...");
-    const testDoc = await getDocFromServer(doc(db, 'test', 'connection'));
-    console.log("Firestore connection test successful.");
-  } catch (error: any) {
-    console.error("Firestore connection test failed.");
-    console.error("Error Code:", error?.code);
-    console.error("Error Message:", error?.message);
-    
-    if (error?.code === 'permission-denied') {
-      console.warn("CRITICAL: Permission Denied. This usually means the security rules are not deployed to the correct project or database.");
-    }
-  }
-}
-testConnection();
+// Initialize Firestore with robust local persistent cache & multi-tab coordination
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
+});
 
 export const storage = getStorage(app, firebaseConfig.storageBucket);
 export const messaging = typeof window !== 'undefined' ? getMessaging(app) : null;

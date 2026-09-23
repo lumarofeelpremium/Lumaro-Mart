@@ -21,6 +21,27 @@ export default defineConfig(({mode}) => {
     optimizeDeps: {
       exclude: ['firebase', 'firebase/app', 'firebase/auth', 'firebase/firestore', 'firebase/storage'],
     },
+    build: {
+      chunkSizeWarningLimit: 1200,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('xlsx') || id.includes('jspdf') || id.includes('html2canvas')) {
+                return 'vendor-reports';
+              }
+              if (id.includes('firebase')) {
+                return 'vendor-firebase';
+              }
+              if (id.includes('lucide-react') || id.includes('motion')) {
+                return 'vendor-ui';
+              }
+              return 'vendor';
+            }
+          },
+        },
+      },
+    },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.

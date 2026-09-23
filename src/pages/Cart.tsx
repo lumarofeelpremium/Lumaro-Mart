@@ -105,11 +105,27 @@ export const Cart = ({
   const hasInsufficientStock = items.some(item => item.quantity > item.stock);
 
   useEffect(() => {
+    const cachedSettings = cacheUtils.getItem('app_settings_global');
+    if (cachedSettings) {
+      try {
+        const data = JSON.parse(cachedSettings);
+        if (data.whatsappNumber) setWhatsappNumber(data.whatsappNumber);
+        if (data.whatsappEnabled !== undefined) setWhatsappEnabled(data.whatsappEnabled);
+        if (data.orderTimingEnabled !== undefined) setOrderTimingEnabled(data.orderTimingEnabled);
+        if (data.upiEnabled !== undefined) setUpiEnabled(data.upiEnabled);
+        if (data.upiId) setUpiId(data.upiId);
+        if (data.upiPayeeName) setUpiPayeeName(data.upiPayeeName);
+      } catch (e) {
+        // silent parse error
+      }
+    }
+
     const fetchSettings = async () => {
       try {
         const settingsDoc = await getDoc(doc(db, 'settings', 'global'));
         if (settingsDoc.exists()) {
           const data = settingsDoc.data();
+          cacheUtils.setItem('app_settings_global', data);
           setWhatsappNumber(data.whatsappNumber);
           setWhatsappEnabled(data.whatsappEnabled ?? true);
           setOrderTimingEnabled(data.orderTimingEnabled ?? true);
@@ -117,8 +133,12 @@ export const Cart = ({
           if (data.upiId) setUpiId(data.upiId);
           if (data.upiPayeeName) setUpiPayeeName(data.upiPayeeName);
         }
-      } catch (error) {
-        console.error("Error fetching settings:", error);
+      } catch (error: any) {
+        const isOffline = error?.code === 'unavailable' || 
+          (error?.message && error.message.toLowerCase().includes('offline'));
+        if (!isOffline) {
+          console.warn("Could not refresh settings from server:", error?.message || error);
+        }
       }
     };
     fetchSettings();

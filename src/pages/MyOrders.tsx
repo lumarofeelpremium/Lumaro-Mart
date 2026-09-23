@@ -26,15 +26,31 @@ export const MyOrders = ({ user }: { user: User | null }) => {
   const unreadCount = orders.filter(o => !o.viewed).length;
 
   useEffect(() => {
+    // Check cached settings for instant render
+    const cachedSettings = cacheUtils.getItem('app_settings_global');
+    if (cachedSettings) {
+      try {
+        setStoreSettings(JSON.parse(cachedSettings) as AppSettings);
+      } catch (e) {
+        // silent parse error
+      }
+    }
+
     // Fetch store settings for helpline / receipt info
     const fetchSettings = async () => {
       try {
         const sDoc = await getDoc(doc(db, 'settings', 'global'));
         if (sDoc.exists()) {
-          setStoreSettings(sDoc.data() as AppSettings);
+          const data = sDoc.data() as AppSettings;
+          setStoreSettings(data);
+          cacheUtils.setItem('app_settings_global', data);
         }
-      } catch (err) {
-        console.error('Settings fetch error in MyOrders:', err);
+      } catch (err: any) {
+        const isOffline = err?.code === 'unavailable' || 
+          (err?.message && err.message.toLowerCase().includes('offline'));
+        if (!isOffline) {
+          console.warn('Could not refresh settings in MyOrders:', err?.message || err);
+        }
       }
     };
     fetchSettings();
