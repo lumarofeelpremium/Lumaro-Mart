@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, Package, Clock, X, Star, MapPin, Loader2, Download, Send, Printer } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, writeBatch, getDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, writeBatch, getDoc, limit } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Order, AppSettings } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
@@ -60,7 +60,8 @@ export const MyOrders = ({ user }: { user: User | null }) => {
     if (!printReceiptRef.current) return;
     setIsDownloadingPdf(true);
     try {
-      await downloadReceiptPdf(printReceiptRef.current, `Bill-${order.id.slice(-8).toUpperCase()}.pdf`);
+      const orderCode = order?.id ? order.id.slice(-8).toUpperCase() : 'ORDER';
+      await downloadReceiptPdf(printReceiptRef.current, `Bill-${orderCode}.pdf`);
     } catch (err) {
       console.error('PDF error in MyOrders:', err);
     } finally {
@@ -94,7 +95,8 @@ export const MyOrders = ({ user }: { user: User | null }) => {
 
     const q = query(
       collection(db, 'orders'),
-      where('userId', '==', user.uid)
+      where('userId', '==', user.uid),
+      limit(100)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -121,7 +123,7 @@ export const MyOrders = ({ user }: { user: User | null }) => {
     });
 
     return () => unsubscribe();
-  }, [user, navigate]);
+  }, [user?.uid, navigate]);
 
   const handleMarkAllAsRead = async () => {
     if (!user || unreadCount === 0) return;
@@ -220,7 +222,7 @@ export const MyOrders = ({ user }: { user: User | null }) => {
               
               <div className="flex justify-between items-start mb-4">
                 <div>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Order #{order.id.slice(-6)}</p>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Order #{order?.id ? order.id.slice(-6) : 'ORDER'}</p>
                   <p className="text-lg font-black text-[#1A1A1A]">₹{order.total}</p>
                 </div>
                 <span className={`px-3 py-1 rounded-xl text-[10px] font-bold uppercase tracking-wider ${

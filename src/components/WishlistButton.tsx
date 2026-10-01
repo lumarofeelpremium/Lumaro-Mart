@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Heart } from 'lucide-react';
 import { db } from '../firebase';
-import { collection, addDoc, deleteDoc, doc, getDocs, serverTimestamp, query, where } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, getDocs, serverTimestamp, query, where, limit } from 'firebase/firestore';
 import { User } from '../types';
 import { cn } from '../lib/utils';
 import { wishlistManager } from '../lib/wishlist-manager';
@@ -46,7 +46,8 @@ export const WishlistButton = ({ user, productId, className }: WishlistButtonPro
         const q = query(
           collection(db, 'wishlist'),
           where('userId', '==', user.uid),
-          where('productId', '==', productId)
+          where('productId', '==', productId),
+          limit(1)
         );
         const snap = await getDocs(q);
         if (!snap.empty) {

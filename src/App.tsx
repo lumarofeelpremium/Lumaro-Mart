@@ -3,7 +3,7 @@ import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'reac
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp, onSnapshot, collection, query, limit, orderBy, where } from 'firebase/firestore';
 import { auth, db } from './firebase';
-import { handleFirestoreError, OperationType } from './lib/firestore-utils';
+import { handleFirestoreError, OperationType, onQuotaExhaustedChange } from './lib/firestore-utils';
 import { Home } from './pages/Home';
 import { Signup, Login } from './pages/Auth';
 import { Categories } from './pages/Categories';
@@ -28,10 +28,15 @@ const updateLocalCache = (newData: any) => {
     try {
       const currentCacheStr = cacheUtils.getItem('home_cache');
       const currentCache = currentCacheStr ? JSON.parse(currentCacheStr) : {};
-      if (newData.allProducts) {
-        newData.allProducts = newData.allProducts.slice(0, 60);
+      const toCache = { ...newData };
+      if (toCache.allProducts && Array.isArray(toCache.allProducts)) {
+        // Strip heavy base64 strings so localStorage doesn't hit quota, but PRESERVE all products!
+        toCache.allProducts = toCache.allProducts.map((p: any) => ({
+          ...p,
+          image: p.image && typeof p.image === 'string' && p.image.startsWith('data:') ? '' : p.image
+        }));
       }
-      const combined = { ...currentCache, ...newData };
+      const combined = { ...currentCache, ...toCache };
       cacheUtils.setItem('home_cache', combined);
     } catch (e) {
       console.warn('Silent cache update failure in App:', e);
@@ -50,29 +55,31 @@ export default function App() {
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [banners, setBanners] = useState<Banner[]>([]);
   const [initialDataLoading, setInitialDataLoading] = useState(true);
-  const [productsLimit, setProductsLimit] = useState(100); // Start with batch to load instantly
+  const [isQuotaExhausted, setIsQuotaExhausted] = useState(false);
 
-  // Progressive background expansion of product limit after first paint
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setProductsLimit(1000); // Fully load remaining products in the background
-    }, 2200);
-    return () => clearTimeout(timer);
+    const unsub = onQuotaExhaustedChange((exhausted) => {
+      setIsQuotaExhausted(exhausted);
+    });
+    return () => unsub();
   }, []);
 
-  // Centralized real-time listener for products with progressive limit
+  // Centralized real-time listener for ALL products without artificial limits
   useEffect(() => {
-    const unsubAllProds = onSnapshot(query(collection(db, 'products'), limit(productsLimit)), (snapshot) => {
+    const unsubAllProds = onSnapshot(collection(db, 'products'), (snapshot) => {
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setAllProducts(prods);
       setInitialDataLoading(false);
       updateLocalCache({ allProducts: prods });
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
+    }, (error) => {
+      setInitialDataLoading(false);
+      handleFirestoreError(error, OperationType.LIST, 'products');
+    });
 
     return () => {
       unsubAllProds();
     };
-  }, [productsLimit]);
+  }, []);
 
   // Centralized real-time listener for Categories and Banners
   useEffect(() => {
@@ -90,7 +97,7 @@ export default function App() {
       }
     }
 
-    // 2. Setup uninterrupted stream from Firestore
+    // 2. Setup stream from Firestore for all categories
     const unsubCats = onSnapshot(collection(db, 'categories'), (snapshot) => {
       let cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
       cats.sort((a, b) => {
@@ -100,10 +107,14 @@ export default function App() {
         return a.name.localeCompare(b.name);
       });
       setCategories(cats);
+      setInitialDataLoading(false);
       updateLocalCache({ categories: cats });
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
+    }, (error) => {
+      setInitialDataLoading(false);
+      handleFirestoreError(error, OperationType.LIST, 'categories');
+    });
 
-    const unsubBanners = onSnapshot(query(collection(db, 'banners'), where('active', '==', true)), (snapshot) => {
+    const unsubBanners = onSnapshot(query(collection(db, 'banners'), where('active', '==', true), limit(20)), (snapshot) => {
       const bannersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Banner));
       const sortedBanners = bannersData.sort((a, b) => {
         const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
@@ -111,8 +122,12 @@ export default function App() {
         return timeB - timeA;
       });
       setBanners(sortedBanners);
+      setInitialDataLoading(false);
       updateLocalCache({ banners: sortedBanners });
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'banners'));
+    }, (error) => {
+      setInitialDataLoading(false);
+      handleFirestoreError(error, OperationType.LIST, 'banners');
+    });
 
     return () => {
       unsubCats();
@@ -298,18 +313,21 @@ export default function App() {
     return categories.filter(c => c.isActive !== false);
   }, [categories]);
 
-  const activeCategoryNameSet = useMemo(() => {
-    if (categories.length === 0) return null;
-    return new Set(categories.filter(c => c.isActive !== false).map(c => c.name.trim().toLowerCase()));
+  const hiddenCategoryNameSet = useMemo(() => {
+    return new Set(
+      categories
+        .filter(c => c.isActive === false)
+        .map(c => (c.name || '').trim().toLowerCase())
+    );
   }, [categories]);
 
   const visibleProducts = useMemo(() => {
-    if (!activeCategoryNameSet) return allProducts;
+    if (hiddenCategoryNameSet.size === 0) return allProducts;
     return allProducts.filter(p => {
       if (!p.category) return true;
-      return activeCategoryNameSet.has(p.category.trim().toLowerCase());
+      return !hiddenCategoryNameSet.has(p.category.trim().toLowerCase());
     });
-  }, [allProducts, activeCategoryNameSet]);
+  }, [allProducts, hiddenCategoryNameSet]);
 
   if (loading) {
     return (
@@ -324,6 +342,18 @@ export default function App() {
       <Router>
         <ScrollToTop />
         <div className="max-w-md mx-auto bg-white min-h-screen relative shadow-2xl shadow-black/10 overflow-x-hidden pb-24">
+          {isQuotaExhausted && (
+            <div className="bg-amber-600/95 backdrop-blur-xs text-white text-[11px] font-semibold py-1.5 px-3 flex items-center justify-between sticky top-0 z-50 shadow-xs">
+              <span className="truncate">Offline Mode: Serving local cache until daily quota resets.</span>
+              <button 
+                onClick={() => setIsQuotaExhausted(false)}
+                className="text-white hover:text-amber-200 font-bold ml-2 text-xs"
+                title="Dismiss"
+              >
+                ✕
+              </button>
+            </div>
+          )}
           <Routes>
             <Route path="/" element={<Home user={user} onAddToCart={handleAddToCart} categories={visibleCategories} allProducts={visibleProducts} banners={banners} initialDataLoading={initialDataLoading} />} />
             <Route path="/signup" element={<Signup setUser={setUser} />} />

@@ -70,7 +70,7 @@ export const PrintableOrderReceipt = React.forwardRef<HTMLDivElement, PrintableO
               Order Details
             </p>
             <p style={{ fontWeight: 700, fontSize: '14px', color: '#111827', marginTop: '2px', marginBottom: 0 }}>
-              #{order.id.slice(-8).toUpperCase()}
+              #{order?.id ? order.id.slice(-8).toUpperCase() : 'ORDER'}
             </p>
             <p style={{ color: '#4b5563', marginTop: '4px', marginBottom: 0 }}>
               <span style={{ fontWeight: 600, color: '#1f2937' }}>Date:</span> {formattedDate} {formattedTime}

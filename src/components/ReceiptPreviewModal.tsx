@@ -41,7 +41,8 @@ export const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({
     if (!receiptRef.current) return;
     setIsDownloading(true);
     try {
-      await downloadReceiptPdf(receiptRef.current, `Bill-${order.id.slice(-8).toUpperCase()}.pdf`);
+      const orderCode = order?.id ? order.id.slice(-8).toUpperCase() : 'ORDER';
+      await downloadReceiptPdf(receiptRef.current, `Bill-${orderCode}.pdf`);
     } catch (err) {
       console.error('Receipt PDF download error:', err);
     } finally {
@@ -67,7 +68,7 @@ export const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({
           <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/80">
             <div>
               <h3 className="font-black text-gray-900 text-base">Receipt / Bill Preview</h3>
-              <p className="text-[11px] font-bold text-gray-400">Order #{order.id.slice(-6).toUpperCase()}</p>
+              <p className="text-[11px] font-bold text-gray-400">Order #{order?.id ? order.id.slice(-6).toUpperCase() : 'ORDER'}</p>
             </div>
             <button
               type="button"

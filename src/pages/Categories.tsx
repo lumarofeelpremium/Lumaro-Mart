@@ -66,7 +66,8 @@ export const Categories = ({
   // Deriving products for the selected category from the centralized global list
   const products = useMemo(() => {
     if (!selectedCategory) return [];
-    return allProducts.filter(p => p.category === selectedCategory);
+    const normalizedTarget = selectedCategory.trim().toLowerCase();
+    return allProducts.filter(p => (p.category || '').trim().toLowerCase() === normalizedTarget);
   }, [allProducts, selectedCategory]);
 
   const loading = allProducts.length === 0 && categories.length === 0;

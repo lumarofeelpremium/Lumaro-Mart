@@ -94,7 +94,12 @@
         "stockThreshold": { "type": "number" },
         "supportNumber": { "type": "string" },
         "supportEnabled": { "type": "boolean" },
-        "orderTimingEnabled": { "type": "boolean" }
+        "orderTimingEnabled": { "type": "boolean" },
+        "loyaltyProgramEnabled": { "type": "boolean" },
+        "loyaltySpendBase": { "type": "number" },
+        "loyaltyPointsEarned": { "type": "number" },
+        "loyaltyPointsPerHundred": { "type": "number" },
+        "loyaltyPointValue": { "type": "number" }
       },
       "required": ["whatsappNumber"]
     },

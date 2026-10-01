@@ -1,13 +1,14 @@
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { Order, User, AppSettings } from '../types';
+import { calculatePointsEarned } from './loyalty-utils';
 
-export const calculateEarnedPoints = (order: Order): number => {
+export const calculateEarnedPoints = (order: Order, storeSettings?: AppSettings): number => {
   if (order.pointsEarned !== undefined && order.pointsEarned > 0) {
     return order.pointsEarned;
   }
   const calculatedSubtotal = order.subtotal || (order.items || []).reduce((sum, it) => sum + (it.price * it.quantity), 0);
-  return Math.floor((calculatedSubtotal || order.total || 0) / 100) * 5;
+  return calculatePointsEarned(calculatedSubtotal || order.total || 0, storeSettings);
 };
 
 export const formatWhatsAppBillText = (
@@ -41,9 +42,11 @@ export const formatWhatsAppBillText = (
     itemsList += `${index + 1}. *${item.name}* (Qty: ${item.quantity}) = ₹${item.price * item.quantity}\n`;
   });
 
+  const rawId = order?.id ? String(order.id) : '';
+  const orderShortId = rawId ? rawId.slice(-8).toUpperCase() : 'ORDER';
   let message = `🧾 *LUMARO MART - ORDER BILL / RECEIPT*\n`;
   message += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  message += `📋 *Order ID:* #${order.id.slice(-8).toUpperCase()}\n`;
+  message += `📋 *Order ID:* #${orderShortId}\n`;
   message += `📅 *Date & Time:* ${formattedDate}, ${formattedTime}\n`;
   message += `👤 *Customer:* ${order.userName || customer?.displayName || 'Customer'}\n`;
   message += `📱 *Phone:* ${order.userPhone || customer?.phoneNumber || 'N/A'}\n`;
@@ -75,13 +78,68 @@ export const formatWhatsAppBillText = (
   return message;
 };
 
+export const formatOrderStatusWhatsAppText = (
+  order: Order,
+  status: Order['status'],
+  customer?: User | null,
+  _storeSettings?: AppSettings
+): string => {
+  const customerName = order?.userName || customer?.displayName || 'Customer';
+  const rawId = order?.id ? String(order.id) : '';
+  const orderShortId = rawId ? rawId.slice(-6).toUpperCase() : 'ORDER';
+
+  switch (status) {
+    case 'confirmed':
+      return `✅ *ORDER CONFIRMED!*\n\nNamaste *${customerName}* ji! Aapka order *#${orderShortId}* confirm ho chuka hai aur tayyar kiya ja raha hai. 🙏`;
+
+    case 'packed':
+      return `📦 *ORDER PACKED & READY!*\n\nNamaste *${customerName}* ji! Aapka order *#${orderShortId}* packed ho chuka hai aur dispatch ke liye tayyar hai. 📦`;
+
+    case 'out_for_delivery':
+      return `🚚 *OUT FOR DELIVERY!*\n\nNamaste *${customerName}* ji! Aapka order *#${orderShortId}* delivery ke liye nikal chuka hai! Hamara delivery partner jald hi aapke pate par deliver karega. Kripya phone reach me rakhein. 🚚`;
+
+    case 'delivered': {
+      const earned = calculateEarnedPoints(order, _storeSettings);
+      const pointsMsg = earned > 0 ? ` Is order par aapko *${earned} Loyalty Points* mile hain!` : '';
+      return `🎉 *ORDER DELIVERED!*\n\nNamaste *${customerName}* ji! Aapka order *#${orderShortId}* safalta-purvak deliver ho gaya hai.${pointsMsg}\n\n_Lumaro Mart se shopping karne ke liye dhanyawad!_ 🙏✨`;
+    }
+
+    case 'canceled':
+      return `⚠️ *ORDER CANCELED!*\n\nNamaste *${customerName}* ji! Aapka order *#${orderShortId}* cancel kar diya gaya hai.`;
+
+    default:
+      return `📋 *ORDER UPDATE*\n\nNamaste *${customerName}* ji! Aapke order *#${orderShortId}* ka status ab *${String(status || '').toUpperCase()}* hai.`;
+  }
+};
+
+export const sendOrderStatusWhatsAppAlert = (
+  order: Order,
+  status: Order['status'],
+  customer?: User | null,
+  storeSettings?: AppSettings
+): void => {
+  const text = formatOrderStatusWhatsAppText(order, status, customer, storeSettings);
+  let rawPhone = String(order.userPhone || customer?.phoneNumber || '').replace(/\D/g, '');
+  
+  if (rawPhone.length === 10) {
+    rawPhone = `91${rawPhone}`;
+  }
+
+  const encoded = encodeURIComponent(text);
+  const url = rawPhone 
+    ? `https://wa.me/${rawPhone}?text=${encoded}`
+    : `https://wa.me/?text=${encoded}`;
+
+  window.open(url, '_blank', 'noopener,noreferrer');
+};
+
 export const sendWhatsAppBill = (
   order: Order,
   customer?: User | null,
   storeSettings?: AppSettings
 ): void => {
   const text = formatWhatsAppBillText(order, customer, storeSettings);
-  let rawPhone = (order.userPhone || customer?.phoneNumber || '').replace(/\D/g, '');
+  let rawPhone = String(order.userPhone || customer?.phoneNumber || '').replace(/\D/g, '');
   
   if (rawPhone.length === 10) {
     rawPhone = `91${rawPhone}`;

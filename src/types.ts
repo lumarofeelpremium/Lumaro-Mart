@@ -92,6 +92,7 @@ export interface Notification {
 export interface AppSettings {
   whatsappNumber: string;
   whatsappEnabled: boolean;
+  autoCustomerWhatsAppAlerts?: boolean;
   telegramEnabled?: boolean;
   telegramBotToken?: string;
   telegramChatId?: string;
@@ -108,6 +109,11 @@ export interface AppSettings {
   upiEnabled?: boolean;
   upiId?: string;
   upiPayeeName?: string;
+  loyaltyProgramEnabled?: boolean;
+  loyaltySpendBase?: number; // e.g. every ₹100, ₹50, ₹200 spent
+  loyaltyPointsEarned?: number; // e.g. gives 5 points, 1 point, 10 points
+  loyaltyPointsPerHundred?: number; // backwards compatibility
+  loyaltyPointValue?: number; // e.g. 1 point = ₹1 discount
 }
 
 export interface Banner {

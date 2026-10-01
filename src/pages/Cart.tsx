@@ -6,7 +6,7 @@ import { CartItem, User, AppSettings } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../firebase';
 import { cn } from '../lib/utils';
-import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc, increment, writeBatch, getDocs, query, where } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc, increment, writeBatch, getDocs, query, where, onSnapshot, limit } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { cacheUtils } from '../lib/cache-utils';
 import { showInterstitialAd, showRewardedAd } from '../lib/admob';
@@ -46,6 +46,11 @@ export const Cart = ({
   const [upiEnabled, setUpiEnabled] = useState(true);
   const [upiId, setUpiId] = useState('shiva1520980@okhdfcbank');
   const [upiPayeeName, setUpiPayeeName] = useState('Lumaro Mart');
+  const [loyaltyProgramEnabled, setLoyaltyProgramEnabled] = useState(true);
+  const [loyaltySpendBase, setLoyaltySpendBase] = useState(100);
+  const [loyaltyPointsEarned, setLoyaltyPointsEarned] = useState(5);
+  const [loyaltyPointsPerHundred, setLoyaltyPointsPerHundred] = useState(5);
+  const [loyaltyPointValue, setLoyaltyPointValue] = useState(1);
   const [showUpiModal, setShowUpiModal] = useState(false);
 
   useEffect(() => {
@@ -58,19 +63,19 @@ export const Cart = ({
       try {
         const ordersQuery = query(
           collection(db, 'orders'),
-          where('userId', '==', user.uid)
+          where('userId', '==', user.uid),
+          limit(1)
         );
         const querySnapshot = await getDocs(ordersQuery);
         // If there are no previous orders, this is their first order!
         setIsFirstOrder(querySnapshot.empty);
       } catch (err) {
-        console.error("Error checking user order history for free delivery:", err);
         setIsFirstOrder(false);
       }
     };
 
     checkFirstOrder();
-  }, [user]);
+  }, [user?.uid]);
   
   const subtotal = items.reduce((acc, item) => acc + (item.discountPrice || item.price) * item.quantity, 0);
   const totalMrpSavings = items.reduce((acc, item) => {
@@ -83,10 +88,15 @@ export const Cart = ({
   const delivery = isFirstOrder ? 0 : baseDelivery;
   
   const pointsAvailable = user?.loyaltyPoints || 0;
-  const pointsToRedeem = useLoyaltyPoints ? Math.min(pointsAvailable, subtotal) : 0;
+  const maxDiscountAllowed = Math.floor(subtotal);
+  const maxPointsNeeded = Math.ceil(maxDiscountAllowed / (loyaltyPointValue || 1));
+  const pointsToRedeem = useLoyaltyPoints && loyaltyProgramEnabled ? Math.min(pointsAvailable, maxPointsNeeded) : 0;
+  const pointsDiscountAmount = Math.min(maxDiscountAllowed, Math.round(pointsToRedeem * (loyaltyPointValue || 1)));
   
-  const total = Math.max(0, subtotal + delivery - pointsToRedeem - adDiscount);
-  const pointsEarned = Math.floor(subtotal / 100) * 5;
+  const total = Math.max(0, subtotal + delivery - pointsDiscountAmount - adDiscount);
+  const spendBase = Math.max(1, loyaltySpendBase || 100);
+  const earnedPerBase = loyaltyPointsEarned ?? loyaltyPointsPerHundred ?? 5;
+  const pointsEarned = loyaltyProgramEnabled ? Math.floor(subtotal / spendBase) * earnedPerBase : 0;
 
   const handleWatchRewardAd = async () => {
     setIsAdLoading(true);
@@ -115,33 +125,41 @@ export const Cart = ({
         if (data.upiEnabled !== undefined) setUpiEnabled(data.upiEnabled);
         if (data.upiId) setUpiId(data.upiId);
         if (data.upiPayeeName) setUpiPayeeName(data.upiPayeeName);
+        if (data.loyaltyProgramEnabled !== undefined) setLoyaltyProgramEnabled(data.loyaltyProgramEnabled);
+        if (data.loyaltySpendBase !== undefined) setLoyaltySpendBase(data.loyaltySpendBase);
+        if (data.loyaltyPointsEarned !== undefined) setLoyaltyPointsEarned(data.loyaltyPointsEarned);
+        if (data.loyaltyPointsPerHundred !== undefined) setLoyaltyPointsPerHundred(data.loyaltyPointsPerHundred);
+        if (data.loyaltyPointValue !== undefined) setLoyaltyPointValue(data.loyaltyPointValue);
       } catch (e) {
         // silent parse error
       }
     }
 
-    const fetchSettings = async () => {
-      try {
-        const settingsDoc = await getDoc(doc(db, 'settings', 'global'));
-        if (settingsDoc.exists()) {
-          const data = settingsDoc.data();
-          cacheUtils.setItem('app_settings_global', data);
-          setWhatsappNumber(data.whatsappNumber);
-          setWhatsappEnabled(data.whatsappEnabled ?? true);
-          setOrderTimingEnabled(data.orderTimingEnabled ?? true);
-          if (data.upiEnabled !== undefined) setUpiEnabled(data.upiEnabled);
-          if (data.upiId) setUpiId(data.upiId);
-          if (data.upiPayeeName) setUpiPayeeName(data.upiPayeeName);
-        }
-      } catch (error: any) {
-        const isOffline = error?.code === 'unavailable' || 
-          (error?.message && error.message.toLowerCase().includes('offline'));
-        if (!isOffline) {
-          console.warn("Could not refresh settings from server:", error?.message || error);
-        }
+    const unsubscribe = onSnapshot(doc(db, 'settings', 'global'), (settingsDoc) => {
+      if (settingsDoc.exists()) {
+        const data = settingsDoc.data();
+        cacheUtils.setItem('app_settings_global', data);
+        setWhatsappNumber(data.whatsappNumber);
+        setWhatsappEnabled(data.whatsappEnabled ?? true);
+        setOrderTimingEnabled(data.orderTimingEnabled ?? true);
+        if (data.upiEnabled !== undefined) setUpiEnabled(data.upiEnabled);
+        if (data.upiId) setUpiId(data.upiId);
+        if (data.upiPayeeName) setUpiPayeeName(data.upiPayeeName);
+        if (data.loyaltyProgramEnabled !== undefined) setLoyaltyProgramEnabled(data.loyaltyProgramEnabled);
+        if (data.loyaltySpendBase !== undefined) setLoyaltySpendBase(data.loyaltySpendBase);
+        if (data.loyaltyPointsEarned !== undefined) setLoyaltyPointsEarned(data.loyaltyPointsEarned);
+        if (data.loyaltyPointsPerHundred !== undefined) setLoyaltyPointsPerHundred(data.loyaltyPointsPerHundred);
+        if (data.loyaltyPointValue !== undefined) setLoyaltyPointValue(data.loyaltyPointValue);
       }
-    };
-    fetchSettings();
+    }, (error: any) => {
+      const isOffline = error?.code === 'unavailable' || 
+        (error?.message && error.message.toLowerCase().includes('offline'));
+      if (!isOffline) {
+        console.warn("Could not listen to settings from server:", error?.message || error);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const checkIsOrderingOpen = () => {
@@ -475,12 +493,12 @@ export const Cart = ({
         {items.length > 0 && (
           <div className="space-y-4 mt-8">
             {/* Loyalty Points Redemption */}
-            {pointsAvailable > 0 && (
+            {loyaltyProgramEnabled && pointsAvailable > 0 && (
               <motion.div 
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 className={cn(
-                  "p-4 rounded-3xl border transition-all duration-300",
+                  "p-4 rounded-3xl border transition-all duration-300 cursor-pointer",
                   useLoyaltyPoints 
                     ? "bg-[#66D2A4] border-[#66D2A4] text-white shadow-lg shadow-[#66D2A4]/20" 
                     : "bg-white border-gray-100 text-gray-600"
@@ -497,7 +515,9 @@ export const Cart = ({
                     </div>
                     <div>
                       <p className="text-xs font-bold uppercase tracking-wider opacity-80">Redeem Points</p>
-                      <p className="text-sm font-bold">You have {pointsAvailable} points</p>
+                      <p className="text-sm font-bold">
+                        You have {pointsAvailable} points (Worth ₹{Math.round(pointsAvailable * loyaltyPointValue)}) • 1 Pt = ₹{loyaltyPointValue}
+                      </p>
                     </div>
                   </div>
                   {useLoyaltyPoints ? (
@@ -512,7 +532,7 @@ export const Cart = ({
                     animate={{ opacity: 1, height: 'auto' }}
                     className="text-[10px] mt-2 font-medium opacity-90"
                   >
-                    ₹{pointsToRedeem} discount applied to your order!
+                    ₹{pointsDiscountAmount} discount applied ({pointsToRedeem} points used)!
                   </motion.p>
                 )}
               </motion.div>
@@ -543,10 +563,10 @@ export const Cart = ({
                     {delivery === 0 ? 'FREE' : `₹${delivery}`}
                   </span>
                 </div>
-                {useLoyaltyPoints && (
+                {useLoyaltyPoints && pointsDiscountAmount > 0 && (
                   <div className="flex justify-between text-[#66D2A4]">
-                    <span>Points Discount</span>
-                    <span className="font-bold">-₹{pointsToRedeem}</span>
+                    <span>Points Discount ({pointsToRedeem} pts)</span>
+                    <span className="font-bold">-₹{pointsDiscountAmount}</span>
                   </div>
                 )}
                 {adDiscount > 0 && (

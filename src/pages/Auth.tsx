@@ -11,7 +11,7 @@ import {
   updateEmail,
   updatePassword
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs, increment, addDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs, increment, addDoc, limit } from 'firebase/firestore';
 import { User } from '../types';
 
 export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User | null) => void, initialMode?: 'login' | 'signup' }) => {
@@ -132,7 +132,7 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
       const enteredReferral = referralCode.trim().toUpperCase();
       if (enteredReferral) {
         const usersRef = collection(db, 'users');
-        const q = query(usersRef, where('referralCode', '==', enteredReferral));
+        const q = query(usersRef, where('referralCode', '==', enteredReferral), limit(1));
         const querySnapshot = await getDocs(q);
         if (querySnapshot.empty) {
           setError('Invalid Referral Code. Please check the code or keep it empty.');

@@ -11,9 +11,10 @@ import { compressImage } from '../lib/utils';
 import { cacheUtils } from '../lib/cache-utils';
 import * as XLSX from 'xlsx';
 import { useReactToPrint } from 'react-to-print';
-import { downloadReceiptPdf, sendWhatsAppBill, calculateEarnedPoints } from '../lib/receipt-utils';
+import { downloadReceiptPdf, sendWhatsAppBill, sendOrderStatusWhatsAppAlert, calculateEarnedPoints } from '../lib/receipt-utils';
 import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
+import { WhatsAppStatusAlertModal } from '../components/WhatsAppStatusAlertModal';
 import { OrderStatusTracker } from '../components/OrderStatusTracker';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 import { showBannerAd, showInterstitialAd, showRewardedAd, ADMOB_TEST_IDS } from '../lib/admob';
@@ -86,6 +87,7 @@ export const AdminDashboard = () => {
   const [usersLimit, setUsersLimit] = useState(150);
   const [updatingOrderIds, setUpdatingOrderIds] = useState<Record<string, boolean>>({});
   const [isCleaningCanceledOrders, setIsCleaningCanceledOrders] = useState(false);
+  const [statusAlertOrder, setStatusAlertOrder] = useState<{ order: Order; newStatus: Order['status']; customer?: User | null } | null>(null);
   const isInitialLoad = React.useRef(true);
   const notificationAudio = React.useRef<HTMLAudioElement | null>(null);
 
@@ -150,8 +152,8 @@ export const AdminDashboard = () => {
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(prods);
       try {
-        // Strip heavy base64 strings and limit cache items to keep localStorage slim
-        const slimProds = prods.slice(0, 100).map(p => {
+        // Strip heavy base64 strings so localStorage stays slim, but preserve all products
+        const slimProds = prods.map(p => {
           const isBase64 = p.image && typeof p.image === 'string' && p.image.startsWith('data:');
           if (isBase64) {
             return {
@@ -186,8 +188,9 @@ export const AdminDashboard = () => {
       }
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
 
-    const unsubRecentOrders = onSnapshot(query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(15)), (snapshot) => {
-      const recent = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
+    // Single unified orders listener to avoid double-charging Firestore read quota
+    const unsubOrders = onSnapshot(query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(ordersLimit)), (snapshot) => {
+      const allFetchedOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
       
       // Play sound for NEW orders arriving while dashboard is open
       if (!isInitialLoad.current) {
@@ -196,7 +199,7 @@ export const AdminDashboard = () => {
             const orderData = change.doc.data();
             // Verify it's actually a new order (timestamp check)
             const orderTime = orderData.createdAt?.toMillis() || Date.now();
-            if (Date.now() - orderTime < 10000) { // dentro de los últimos 10 segundos
+            if (Date.now() - orderTime < 10000) { // within last 10 seconds
               notificationAudio.current?.play().catch(e => console.log('Audio playback failed:', e));
               
               // Browser Notification
@@ -211,18 +214,10 @@ export const AdminDashboard = () => {
         });
       }
       
-      setRecentOrders(recent);
+      setRecentOrders(allFetchedOrders.slice(0, 15));
+      setOlderOrders(allFetchedOrders);
       isInitialLoad.current = false;
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'recent-orders'));
-
-    // Delayed background listener for older orders to prevent initial load bottlenecks
-    let unsubOlderOrders: (() => void) | null = null;
-    const delayTimer = setTimeout(() => {
-      unsubOlderOrders = onSnapshot(query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(ordersLimit)), (snapshot) => {
-        const older = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
-        setOlderOrders(older);
-      }, (error) => handleFirestoreError(error, OperationType.LIST, 'older-orders'));
-    }, 1500);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'orders'));
 
     const unsubSettings = onSnapshot(doc(db, 'settings', 'global'), (snapshot) => {
       if (snapshot.exists()) {
@@ -234,7 +229,7 @@ export const AdminDashboard = () => {
       }
     }, (error) => handleFirestoreError(error, OperationType.GET, 'settings/global'));
 
-    const unsubBanners = onSnapshot(query(collection(db, 'banners')), (snapshot) => {
+    const unsubBanners = onSnapshot(query(collection(db, 'banners'), limit(20)), (snapshot) => {
       const bannersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Banner));
       // Sort in-memory to avoid index requirements
       const sortedBanners = bannersData.sort((a, b) => {
@@ -249,15 +244,11 @@ export const AdminDashboard = () => {
       unsubUsers();
       unsubProducts();
       unsubCategories();
-      unsubRecentOrders();
-      clearTimeout(delayTimer);
-      if (unsubOlderOrders) {
-        unsubOlderOrders();
-      }
+      unsubOrders();
       unsubSettings();
       unsubBanners();
     };
-  }, [auth.currentUser, ordersLimit, usersLimit]);
+  }, [auth.currentUser?.uid, ordersLimit, usersLimit]);
 
   // Helper to ensure max 10 popular products by unchecking older items beyond rank 10
   const trimExcessPopularProducts = async (currentPromotedProductId?: string) => {
@@ -608,7 +599,7 @@ export const AdminDashboard = () => {
       
       if (!orderSnap.exists()) return;
       
-      const orderData = orderSnap.data() as Order;
+      const orderData = { id: orderSnap.id, ...orderSnap.data() } as Order;
       const oldStatus = orderData.status;
       
       // If status hasn't changed, do nothing
@@ -665,6 +656,25 @@ export const AdminDashboard = () => {
       
       await batch.commit();
       setSuccessMessage(`Order status updated to ${newStatus}`);
+
+      // Check if WhatsApp alerts to customer are enabled (default to true)
+      if (appSettings.autoCustomerWhatsAppAlerts !== false && (orderData.userPhone || orderData.userId)) {
+        let cust: User | null = null;
+        try {
+          const userDoc = await getDoc(doc(db, 'users', orderData.userId));
+          if (userDoc.exists()) {
+            cust = { uid: userDoc.id, ...userDoc.data() } as User;
+          }
+        } catch {
+          // ignore
+        }
+        const updatedOrder: Order = { ...orderData, id: orderId || orderData.id, status: newStatus };
+        setStatusAlertOrder({
+          order: updatedOrder,
+          newStatus,
+          customer: cust
+        });
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
     } finally {
@@ -900,6 +910,15 @@ export const AdminDashboard = () => {
       </AnimatePresence>
 
       <AnimatePresence>
+        {statusAlertOrder && (
+          <WhatsAppStatusAlertModal
+            order={statusAlertOrder.order}
+            newStatus={statusAlertOrder.newStatus}
+            customer={statusAlertOrder.customer}
+            storeSettings={appSettings}
+            onClose={() => setStatusAlertOrder(null)}
+          />
+        )}
         {deleteConfirmation && (
           <DeleteConfirmationModal 
             title={`Delete ${deleteConfirmation.type.charAt(0).toUpperCase() + deleteConfirmation.type.slice(1)}`}
@@ -2151,7 +2170,7 @@ const CategoryList = ({
                       )}
                     </div>
                     <p className="text-[10px] text-gray-400 mt-0.5">
-                      {matchingProductsCount} product{matchingProductsCount === 1 ? '' : 's'} • Order: {category.order ?? index} • ID: {category.id.slice(-6)}
+                      {matchingProductsCount} product{matchingProductsCount === 1 ? '' : 's'} • Order: {category.order ?? index} • ID: {category.id ? category.id.slice(-6) : ''}
                     </p>
                   </div>
                 </div>
@@ -2259,7 +2278,7 @@ const OrderList = ({
 
   const handleTriggerPrint = useReactToPrint({
     contentRef: printReceiptRef,
-    documentTitle: printingOrder ? `Bill-${printingOrder.id.slice(-6)}` : 'Order-Bill',
+    documentTitle: printingOrder?.id ? `Bill-${printingOrder.id.slice(-6)}` : 'Order-Bill',
   });
 
   const fetchCustomerForOrder = async (order: Order): Promise<User | null> => {
@@ -2288,6 +2307,11 @@ const OrderList = ({
     sendWhatsAppBill(order, cust, storeSettings);
   };
 
+  const handleQuickStatusWhatsApp = async (order: Order) => {
+    const cust = await fetchCustomerForOrder(order);
+    sendOrderStatusWhatsAppAlert(order, order.status, cust, storeSettings);
+  };
+
   const handleQuickPdfDownload = async (order: Order) => {
     setDownloadingOrderId(order.id);
     setPrintingOrder(order);
@@ -2296,7 +2320,8 @@ const OrderList = ({
 
     setTimeout(async () => {
       if (printReceiptRef.current) {
-        await downloadReceiptPdf(printReceiptRef.current, `Bill-${order.id.slice(-8).toUpperCase()}.pdf`);
+        const orderCode = order?.id ? order.id.slice(-8).toUpperCase() : 'ORDER';
+        await downloadReceiptPdf(printReceiptRef.current, `Bill-${orderCode}.pdf`);
       }
       setDownloadingOrderId(null);
     }, 200);
@@ -2483,7 +2508,7 @@ const OrderList = ({
             <div className="flex justify-between items-start">
               <div className="cursor-pointer flex-1" onClick={() => onViewDetails(order)}>
                 <div className="flex items-center gap-2">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Order #{order.id.slice(-6)}</p>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Order #{order?.id ? order.id.slice(-6) : 'ORDER'}</p>
                   {order.status === 'canceled' && (
                     <span className="bg-red-100 text-red-700 text-[9px] font-bold px-1.5 py-0.5 rounded-md">
                       Canceled (Auto-purges after 30d)
@@ -2553,6 +2578,15 @@ const OrderList = ({
 
             {/* Quick Action Buttons for WhatsApp, PDF, and Print */}
             <div className="pt-2.5 border-t border-gray-200/70 flex flex-wrap items-center gap-1.5 justify-end">
+              <button 
+                onClick={() => handleQuickStatusWhatsApp(order)}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-xl text-[10px] font-bold border border-purple-200 shadow-2xs transition-all active:scale-95 cursor-pointer"
+                title="Send Current Order Status Alert to Customer on WhatsApp"
+              >
+                <Send size={11} className="text-purple-600" />
+                <span>Status Alert</span>
+              </button>
+
               <button 
                 onClick={() => handleQuickWhatsApp(order)}
                 className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-[10px] font-bold border border-emerald-200 shadow-2xs transition-all active:scale-95 cursor-pointer"
@@ -2857,7 +2891,7 @@ const SalesReport = ({ orders }: { orders: Order[] }) => {
                       {order.items.map((item, idx) => (
                         <tr key={`${order.id}-${idx}`} className="hover:bg-gray-50 transition-colors">
                           <td className="py-3 px-2 font-mono text-gray-400 bg-gray-50/50 print:bg-transparent whitespace-nowrap">
-                            {idx === 0 ? `#${order.id.slice(-6)}` : ''}
+                            {idx === 0 ? `#${order?.id ? order.id.slice(-6) : 'ORDER'}` : ''}
                           </td>
                           <td className="py-3 px-2 bg-gray-50/50 print:bg-transparent">
                             {idx === 0 ? (
@@ -2936,18 +2970,23 @@ const OrderDetailsModal = ({
 
   const handlePrint = useReactToPrint({
     contentRef: printReceiptRef,
-    documentTitle: `Bill-${order.id.slice(-6)}`,
+    documentTitle: order?.id ? `Bill-${order.id.slice(-6)}` : 'Order-Bill',
   });
 
   const handleWhatsApp = () => {
     sendWhatsAppBill(order, customer, storeSettings);
   };
 
+  const handleStatusWhatsApp = () => {
+    sendOrderStatusWhatsAppAlert(order, order.status, customer, storeSettings);
+  };
+
   const handleDownloadPdf = async () => {
     if (!printReceiptRef.current) return;
     setIsDownloadingPdf(true);
     try {
-      await downloadReceiptPdf(printReceiptRef.current, `Bill-${order.id.slice(-8).toUpperCase()}.pdf`);
+      const orderCode = order?.id ? order.id.slice(-8).toUpperCase() : 'ORDER';
+      await downloadReceiptPdf(printReceiptRef.current, `Bill-${orderCode}.pdf`);
     } catch (err) {
       console.error('PDF error:', err);
     } finally {
@@ -2997,9 +3036,16 @@ const OrderDetailsModal = ({
         <div className="flex justify-between items-center mb-8">
           <div>
             <h2 className="text-2xl font-bold text-[#1A1A1A]">Order Details</h2>
-            <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mt-1">#{order.id.slice(-8)}</p>
+            <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mt-1">#{order?.id ? order.id.slice(-8) : 'ORDER'}</p>
           </div>
           <div className="flex items-center gap-1.5">
+            <button 
+              onClick={handleStatusWhatsApp} 
+              className="p-2 bg-purple-50 text-purple-700 hover:bg-purple-100 rounded-full transition-colors cursor-pointer"
+              title="Send Order Status Alert via WhatsApp"
+            >
+              <Send size={16} className="text-purple-600" />
+            </button>
             <button 
               onClick={handleWhatsApp} 
               className="p-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-full transition-colors cursor-pointer"
@@ -3194,6 +3240,13 @@ const OrderDetailsModal = ({
         </div>
 
         <div className="space-y-2.5 mt-8">
+          <Button 
+            onClick={handleStatusWhatsApp} 
+            className="w-full py-3.5 px-3 rounded-2xl bg-purple-600 hover:bg-purple-700 text-white font-bold border-none shadow-md shadow-purple-600/20 flex items-center justify-center gap-2 cursor-pointer text-xs"
+          >
+            <Send size={15} /> Send Status Alert to Customer ({order.status.toUpperCase()})
+          </Button>
+
           <div className="grid grid-cols-2 gap-2.5">
             <Button 
               onClick={handleWhatsApp} 
@@ -3253,6 +3306,7 @@ const SettingsTab = ({
 }) => {
   const [whatsappNumber, setWhatsappNumber] = useState(settings.whatsappNumber);
   const [whatsappEnabled, setWhatsappEnabled] = useState(settings.whatsappEnabled ?? true);
+  const [autoCustomerWhatsAppAlerts, setAutoCustomerWhatsAppAlerts] = useState(settings.autoCustomerWhatsAppAlerts ?? true);
   const [supportNumber, setSupportNumber] = useState(settings.supportNumber || '');
   const [supportEnabled, setSupportEnabled] = useState(settings.supportEnabled ?? true);
   const [telegramBotToken, setTelegramBotToken] = useState(settings.telegramBotToken || '');
@@ -3268,6 +3322,13 @@ const SettingsTab = ({
   const [upiEnabled, setUpiEnabled] = useState(settings.upiEnabled ?? true);
   const [upiId, setUpiId] = useState(settings.upiId || 'shiva1520980@okhdfcbank');
   const [upiPayeeName, setUpiPayeeName] = useState(settings.upiPayeeName || 'Lumaro Mart');
+  const [loyaltyProgramEnabled, setLoyaltyProgramEnabled] = useState(settings.loyaltyProgramEnabled ?? true);
+  const [loyaltySpendBase, setLoyaltySpendBase] = useState(settings.loyaltySpendBase || 100);
+  const [loyaltyPointsEarned, setLoyaltyPointsEarned] = useState(
+    settings.loyaltyPointsEarned ?? (settings.loyaltyPointsPerHundred ?? 5)
+  );
+  const [loyaltyPointsPerHundred, setLoyaltyPointsPerHundred] = useState(settings.loyaltyPointsPerHundred ?? 5);
+  const [loyaltyPointValue, setLoyaltyPointValue] = useState(settings.loyaltyPointValue ?? 1);
   const [testAmount, setTestAmount] = useState('10');
   const [adTestStatus, setAdTestStatus] = useState<string | null>(null);
   const [showPlayStoreGuide, setShowPlayStoreGuide] = useState(false);
@@ -3284,6 +3345,7 @@ const SettingsTab = ({
   useEffect(() => {
     setWhatsappNumber(settings.whatsappNumber);
     setWhatsappEnabled(settings.whatsappEnabled ?? true);
+    setAutoCustomerWhatsAppAlerts(settings.autoCustomerWhatsAppAlerts ?? true);
     setSupportNumber(settings.supportNumber || '');
     setSupportEnabled(settings.supportEnabled ?? true);
     setTelegramBotToken(settings.telegramBotToken || '');
@@ -3299,6 +3361,11 @@ const SettingsTab = ({
     setUpiEnabled(settings.upiEnabled ?? true);
     setUpiId(settings.upiId || 'shiva1520980@okhdfcbank');
     setUpiPayeeName(settings.upiPayeeName || 'Lumaro Mart');
+    setLoyaltyProgramEnabled(settings.loyaltyProgramEnabled ?? true);
+    setLoyaltySpendBase(settings.loyaltySpendBase || 100);
+    setLoyaltyPointsEarned(settings.loyaltyPointsEarned ?? (settings.loyaltyPointsPerHundred ?? 5));
+    setLoyaltyPointsPerHundred(settings.loyaltyPointsEarned ?? (settings.loyaltyPointsPerHundred ?? 5));
+    setLoyaltyPointValue(settings.loyaltyPointValue ?? 1);
   }, [settings]);
 
   const handleRequestPermission = () => {
@@ -3318,9 +3385,12 @@ const SettingsTab = ({
 
   const handleSave = async () => {
     setIsSaving(true);
+    const validSpendBase = Math.max(1, Number(loyaltySpendBase) || 100);
+    const validPointsEarned = Math.max(0, Number(loyaltyPointsEarned) || 0);
     const success = await onSave({ 
       whatsappNumber, 
       whatsappEnabled,
+      autoCustomerWhatsAppAlerts,
       supportNumber,
       supportEnabled,
       telegramEnabled,
@@ -3335,7 +3405,12 @@ const SettingsTab = ({
       admobRewardedId,
       upiEnabled,
       upiId,
-      upiPayeeName
+      upiPayeeName,
+      loyaltyProgramEnabled,
+      loyaltySpendBase: validSpendBase,
+      loyaltyPointsEarned: validPointsEarned,
+      loyaltyPointsPerHundred: validPointsEarned,
+      loyaltyPointValue: Number(loyaltyPointValue) || 1
     });
     setIsSaving(false);
     
@@ -3391,6 +3466,34 @@ const SettingsTab = ({
               <div className={cn(
                 "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
                 whatsappEnabled ? "right-1" : "left-1"
+              )} />
+            </button>
+          </div>
+
+          {/* Customer Status Alert Toggle */}
+          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-purple-100">
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                autoCustomerWhatsAppAlerts ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-400"
+              )}>
+                <Send size={20} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-[#1A1A1A]">Customer Status WhatsApp Alerts</p>
+                <p className="text-[10px] text-gray-400">Order Packed / Out for Delivery / Delivered hote hi alert prompt</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setAutoCustomerWhatsAppAlerts(!autoCustomerWhatsAppAlerts)}
+              className={cn(
+                "w-12 h-6 rounded-full transition-all relative",
+                autoCustomerWhatsAppAlerts ? "bg-purple-600" : "bg-gray-200"
+              )}
+            >
+              <div className={cn(
+                "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                autoCustomerWhatsAppAlerts ? "right-1" : "left-1"
               )} />
             </button>
           </div>
@@ -3671,6 +3774,151 @@ const SettingsTab = ({
                       />
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="h-px bg-blue-100 my-4" />
+
+          {/* Loyalty Points Reward Program Configuration */}
+          <div className="p-5 bg-white rounded-3xl border border-blue-100 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "w-11 h-11 rounded-2xl flex items-center justify-center transition-colors shadow-xs",
+                  loyaltyProgramEnabled ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-400"
+                )}>
+                  <Award size={22} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold text-[#1A1A1A]">Loyalty Points Reward Program</p>
+                    <span className="bg-amber-100 text-amber-800 text-[10px] font-extrabold px-1.5 py-0.5 rounded">
+                      Rewards
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-gray-400">Order karne par customer ko reward points & discount</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setLoyaltyProgramEnabled(!loyaltyProgramEnabled)}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative cursor-pointer",
+                  loyaltyProgramEnabled ? "bg-amber-500" : "bg-gray-200"
+                )}
+              >
+                <div className={cn(
+                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-xs",
+                  loyaltyProgramEnabled ? "right-1" : "left-1"
+                )} />
+              </button>
+            </div>
+
+            {loyaltyProgramEnabled && (
+              <div className="pt-2 border-t border-gray-100 space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Manchahi Price Threshold */}
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wider mb-1 block">
+                      Har Kitne ₹ Kharch Par <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <Input 
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={loyaltySpendBase}
+                        onChange={(e) => setLoyaltySpendBase(Math.max(1, parseInt(e.target.value) || 1))}
+                        placeholder="100"
+                        className="bg-gray-50 text-xs font-bold"
+                      />
+                      <span className="absolute right-3 top-2.5 text-xs text-gray-400 font-bold">₹ spent</span>
+                    </div>
+                    <p className="text-[9px] text-gray-400 mt-1">
+                      Aapki manchahi price (jaise ₹50, ₹100, ₹200).
+                    </p>
+                  </div>
+
+                  {/* Points Earned */}
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wider mb-1 block">
+                      Kitne Points Milenge <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <Input 
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={loyaltyPointsEarned}
+                        onChange={(e) => {
+                          const val = Math.max(0, parseInt(e.target.value) || 0);
+                          setLoyaltyPointsEarned(val);
+                          setLoyaltyPointsPerHundred(val);
+                        }}
+                        placeholder="5"
+                        className="bg-gray-50 text-xs font-bold"
+                      />
+                      <span className="absolute right-3 top-2.5 text-xs text-gray-400 font-bold">pts</span>
+                    </div>
+                    <p className="text-[9px] text-gray-400 mt-1">
+                      Upar set kiye gaye ₹ par milne wale points.
+                    </p>
+                  </div>
+
+                  {/* 1 Point Ki Kimat */}
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wider mb-1 block">
+                      1 Point Ki Kimat (₹ Value) <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <Input 
+                        type="number"
+                        min="0.1"
+                        step="0.1"
+                        value={loyaltyPointValue}
+                        onChange={(e) => setLoyaltyPointValue(Math.max(0.1, parseFloat(e.target.value) || 1))}
+                        placeholder="1"
+                        className="bg-gray-50 text-xs font-bold"
+                      />
+                      <span className="absolute right-3 top-2.5 text-xs text-gray-400 font-bold">₹ / pt</span>
+                    </div>
+                    <p className="text-[9px] text-gray-400 mt-1">
+                      1 point redeem karne par itne ₹ ki chhoot milegi.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Rule Formula Summary Tag */}
+                <div className="p-2.5 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-900 font-semibold flex items-center gap-2">
+                  <span>💡</span>
+                  <span>
+                    Aapka Set Kiya Niyam: <b>Har ₹{loyaltySpendBase} ke order par {loyaltyPointsEarned} Points</b> milenge, aur <b>1 Point = ₹{loyaltyPointValue}</b> ki chhoot!
+                  </span>
+                </div>
+
+                {/* Live Preview Box */}
+                <div className="p-3.5 bg-amber-50/70 border border-amber-200/80 rounded-2xl space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-amber-950 font-bold text-xs">
+                    <Sparkles size={14} className="text-amber-600" />
+                    <span>Live Reward Example (Aapke Settings Ke Mutabik):</span>
+                  </div>
+                  {(() => {
+                    const sampleOrder = 500;
+                    const calculatedPts = Math.floor(sampleOrder / (Number(loyaltySpendBase) || 100)) * (Number(loyaltyPointsEarned) || 0);
+                    const calculatedDiscount = Math.round(calculatedPts * (Number(loyaltyPointValue) || 1));
+                    return (
+                      <div className="text-[11px] text-amber-900 space-y-1">
+                        <p>
+                          • Agar customer <b>₹{sampleOrder}</b> ka order karta hai, toh use <b>{calculatedPts} Loyalty Points</b> milenge.
+                        </p>
+                        <p>
+                          • Customer jab yeh <b>{calculatedPts} Points</b> redeem karega, toh use <b>₹{calculatedDiscount}</b> ka discount milega!
+                        </p>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             )}

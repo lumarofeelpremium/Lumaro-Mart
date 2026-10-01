@@ -3,7 +3,11 @@ import { getAuth } from 'firebase/auth';
 import { 
   initializeFirestore, 
   persistentLocalCache, 
-  persistentMultipleTabManager 
+  persistentMultipleTabManager,
+  enableNetwork,
+  disableNetwork,
+  doc,
+  getDoc
 } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { getMessaging } from 'firebase/messaging';
@@ -14,12 +18,55 @@ console.log("Initializing Firebase with Project ID:", firebaseConfig.projectId);
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// Initialize Firestore with robust local persistent cache & multi-tab coordination
-export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager()
-  })
-});
+// Initialize Firestore with robust local persistent cache, databaseId, and long-polling configuration.
+// experimentalForceLongPolling avoids WebChannel stream transport breaks caused by reverse proxies,
+// cloud container timeouts, and restrictive network firewalls that terminate long-lived HTTP streams.
+export const db = initializeFirestore(
+  app,
+  {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager()
+    }),
+    experimentalForceLongPolling: true,
+    experimentalLongPollingOptions: {
+      timeoutSeconds: 25
+    },
+    ignoreUndefinedProperties: true
+  },
+  firebaseConfig.firestoreDatabaseId || '(default)'
+);
+
+// Automatic network stability monitoring & reconnection management
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', async () => {
+    console.log('[Firestore] Network online detected, restoring network connection...');
+    try {
+      await enableNetwork(db);
+      console.log('[Firestore] Connection successfully synchronized');
+    } catch (err) {
+      console.warn('[Firestore] Error re-enabling network:', err);
+    }
+  });
+
+  window.addEventListener('offline', async () => {
+    console.log('[Firestore] Network offline detected, switching to offline cache mode...');
+    try {
+      await disableNetwork(db);
+    } catch (err) {
+      console.warn('[Firestore] Error pausing network:', err);
+    }
+  });
+}
+
+// Connection test on initial startup (safe against quota exhaustion)
+export const verifyFirestoreConnection = async (): Promise<boolean> => {
+  try {
+    const testDoc = await getDoc(doc(db, 'test', 'connection'));
+    return testDoc.exists();
+  } catch (error) {
+    return false;
+  }
+};
 
 export const storage = getStorage(app, firebaseConfig.storageBucket);
 export const messaging = typeof window !== 'undefined' ? getMessaging(app) : null;

@@ -29,9 +29,22 @@ export interface FirestoreErrorInfo {
   }
 }
 
+export let isFirestoreQuotaExhausted = false;
+type QuotaListener = (exhausted: boolean) => void;
+const quotaListeners: Set<QuotaListener> = new Set();
+
+export function onQuotaExhaustedChange(listener: QuotaListener) {
+  quotaListeners.add(listener);
+  listener(isFirestoreQuotaExhausted);
+  return () => {
+    quotaListeners.delete(listener);
+  };
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   let errorMessage = 'An unknown error occurred';
   let isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+  let isQuota = false;
   
   if (error instanceof Error) {
     errorMessage = error.message;
@@ -39,14 +52,35 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     if (lowerMessage.includes('offline') || lowerMessage.includes('unavailable') || lowerMessage.includes('network')) {
       isOffline = true;
     }
+    if (lowerMessage.includes('resource-exhausted') || lowerMessage.includes('quota exceeded')) {
+      isQuota = true;
+    }
   } else if (typeof error === 'string') {
     errorMessage = error;
     const lowerMessage = errorMessage.toLowerCase();
     if (lowerMessage.includes('offline') || lowerMessage.includes('unavailable') || lowerMessage.includes('network')) {
       isOffline = true;
     }
+    if (lowerMessage.includes('resource-exhausted') || lowerMessage.includes('quota exceeded')) {
+      isQuota = true;
+    }
   } else {
     errorMessage = cacheUtils.safeStringify(error);
+  }
+
+  if (isQuota) {
+    if (!isFirestoreQuotaExhausted) {
+      isFirestoreQuotaExhausted = true;
+      quotaListeners.forEach(listener => {
+        try {
+          listener(true);
+        } catch (e) {
+          // ignore listener errors
+        }
+      });
+      console.warn('[Firestore] Daily free quota exceeded. The application is running seamlessly on local persistent cache until quota resets.');
+    }
+    return; // Do not crash or spam unhandled exceptions
   }
 
   const errInfo: FirestoreErrorInfo = {

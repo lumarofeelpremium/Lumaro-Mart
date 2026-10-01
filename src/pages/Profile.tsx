@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Order, AppSettings } from '../types';
 import { db } from '../firebase';
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, getDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, getDoc, limit } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { compressImage } from '../lib/utils';
@@ -77,7 +77,8 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
 
     const q = query(
       collection(db, 'orders'),
-      where('userId', '==', user.uid)
+      where('userId', '==', user.uid),
+      limit(100)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -100,10 +101,10 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user?.uid]);
 
   useEffect(() => {
-    const q = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'));
+    const q = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'), limit(30));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const notifs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
       
@@ -134,23 +135,21 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
       }
     }
 
-    const fetchSettings = async () => {
-      try {
-        const settingsDoc = await getDoc(doc(db, 'settings', 'global'));
-        if (settingsDoc.exists()) {
-          const data = settingsDoc.data() as AppSettings;
-          setAppSettings(data);
-          cacheUtils.setItem('app_settings_global', data);
-        }
-      } catch (error: any) {
-        const isOffline = error?.code === 'unavailable' || 
-          (error?.message && error.message.toLowerCase().includes('offline'));
-        if (!isOffline) {
-          console.warn("Could not refresh settings in Profile:", error?.message || error);
-        }
+    const unsubscribe = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data() as AppSettings;
+        setAppSettings(data);
+        cacheUtils.setItem('app_settings_global', data);
       }
-    };
-    fetchSettings();
+    }, (error: any) => {
+      const isOffline = error?.code === 'unavailable' || 
+        (error?.message && error.message.toLowerCase().includes('offline'));
+      if (!isOffline) {
+        console.warn("Could not listen to settings in Profile:", error?.message || error);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -244,21 +243,88 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
         </div>
 
         {/* Loyalty Points Card */}
-        <div className="bg-gradient-to-br from-[#66D2A4] to-[#4FB98F] rounded-[32px] p-6 text-white shadow-lg shadow-[#66D2A4]/20">
-          <div className="flex justify-between items-center mb-4">
-            <div className="flex items-center gap-2">
-              <div className="p-2 bg-white/20 rounded-xl backdrop-blur-sm">
-                <Star size={20} fill="currentColor" />
+        {(() => {
+          const isLoyaltyEnabled = appSettings?.loyaltyProgramEnabled ?? true;
+          const spendBase = Math.max(1, appSettings?.loyaltySpendBase || 100);
+          const pointsEarned = typeof appSettings?.loyaltyPointsEarned === 'number'
+            ? appSettings.loyaltyPointsEarned
+            : (typeof appSettings?.loyaltyPointsPerHundred === 'number' ? appSettings.loyaltyPointsPerHundred : 5);
+          const pointValue = typeof appSettings?.loyaltyPointValue === 'number' && appSettings.loyaltyPointValue > 0
+            ? appSettings.loyaltyPointValue
+            : 1;
+          const userPoints = user.loyaltyPoints || 0;
+          const rawWorth = userPoints * pointValue;
+          const formattedWorth = rawWorth % 1 === 0 ? rawWorth.toString() : rawWorth.toFixed(1);
+
+          const earnText = spendBase === 100
+            ? `Earn ${pointsEarned}% points on every order above ₹${spendBase}`
+            : `Earn ${pointsEarned} point${pointsEarned === 1 ? '' : 's'} on every order above ₹${spendBase}`;
+
+          return (
+            <div className="bg-gradient-to-br from-[#10B981] via-[#059669] to-[#047857] rounded-[28px] p-5 sm:p-6 text-white shadow-xl shadow-emerald-900/15 relative overflow-hidden">
+              {/* Subtle ambient lighting */}
+              <div className="absolute -right-6 -bottom-6 w-32 h-32 bg-white/10 rounded-full blur-2xl pointer-events-none" />
+              <div className="absolute right-4 -top-4 w-28 h-28 bg-emerald-300/10 rounded-full blur-xl pointer-events-none" />
+
+              {/* Header */}
+              <div className="flex justify-between items-center relative z-10 mb-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-white/15 backdrop-blur-md rounded-xl border border-white/20 shadow-xs">
+                    <Star size={18} className="fill-amber-300 text-amber-300" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-200/90 block">Rewards Club</span>
+                    <h3 className="text-base font-black tracking-tight text-white">Loyalty Points</h3>
+                  </div>
+                </div>
+
+                {/* Conversion Tag */}
+                <div className="flex items-center gap-1.5 px-3 py-1 bg-black/15 backdrop-blur-md rounded-full border border-white/15 text-[11px] font-bold text-white shadow-xs">
+                  <span className="text-emerald-200 font-medium">Value:</span>
+                  <span className="text-amber-300 font-black">1 Pt = ₹{pointValue}</span>
+                </div>
               </div>
-              <span className="text-sm font-bold uppercase tracking-wider opacity-90">Loyalty Points</span>
+
+              {/* Main Balance & Total Worth Showcase */}
+              <div className="grid grid-cols-2 gap-3 relative z-10">
+                {/* Available Points Block */}
+                <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3.5 border border-white/15 flex flex-col justify-between">
+                  <p className="text-[10px] font-bold text-emerald-100 uppercase tracking-wider mb-1">Points Available</p>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-3xl sm:text-4xl font-black text-white tracking-tight">{userPoints}</span>
+                    <span className="text-xs font-bold text-emerald-200">pts</span>
+                  </div>
+                </div>
+
+                {/* Total Cash Worth Block */}
+                <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3.5 border border-white/15 flex flex-col justify-between">
+                  <p className="text-[10px] font-bold text-emerald-100 uppercase tracking-wider mb-1">Total Worth</p>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-3xl sm:text-4xl font-black text-amber-300 tracking-tight">₹{formattedWorth}</span>
+                    <span className="text-[10px] font-bold text-emerald-200">off</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Dynamic Earn & Point Value strip */}
+              <div className="mt-3.5 pt-3 border-t border-white/15 flex items-center justify-between text-[11px] relative z-10">
+                <div className="flex items-center gap-1.5 text-emerald-50 font-medium">
+                  <span className="text-amber-300 font-bold">✦</span>
+                  <span>{earnText}</span>
+                </div>
+                <span className="text-[10px] font-semibold text-emerald-200/90 whitespace-nowrap ml-2">
+                  1 Point = ₹{pointValue}
+                </span>
+              </div>
+
+              {!isLoyaltyEnabled && (
+                <div className="mt-2.5 text-[10px] bg-amber-500/25 text-amber-100 border border-amber-400/30 px-3 py-1.5 rounded-xl font-medium relative z-10">
+                  ⚠️ Loyalty rewards program is temporarily paused
+                </div>
+              )}
             </div>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-4xl font-black">{user.loyaltyPoints || 0}</span>
-            <span className="text-sm font-medium opacity-80">Points Available</span>
-          </div>
-          <p className="text-[10px] mt-4 opacity-70 font-medium">Earn 5% points on every order above ₹100</p>
-        </div>
+          );
+        })()}
       </div>
 
       <div className="px-6 space-y-4">
