@@ -150,8 +150,14 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isValidOrder(request.resource.data);
       allow update: if isAdmin() || (
         isAuthenticated() && 
-        request.auth.uid == resource.data.userId &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewed'])
+        request.auth.uid == resource.data.userId && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewed']) ||
+          (
+            resource.data.status == 'pending' &&
+            request.resource.data.status == 'canceled' &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'canceledAt', 'canceledBy', 'cancelReason', 'viewed'])
+          )
+        )
       );
       allow delete: if isAdmin();
     }

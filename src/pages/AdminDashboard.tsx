@@ -13,6 +13,7 @@ import { INDIAN_STATES, POPULAR_INDIAN_STATES, getDistrictsForState } from '../l
 import * as XLSX from 'xlsx';
 import { downloadReceiptPdf, sendWhatsAppBill, sendOrderStatusWhatsAppAlert, calculateEarnedPoints, printIsolatedElement, shareReceiptPdf } from '../lib/receipt-utils';
 import { downloadSalesExcel, shareSalesExcel } from '../lib/excel-utils';
+import { sendTelegramOrderCancelAlert } from '../lib/telegram-utils';
 import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
 import { WhatsAppStatusAlertModal } from '../components/WhatsAppStatusAlertModal';
@@ -659,6 +660,26 @@ export const AdminDashboard = () => {
       
       await batch.commit();
       setSuccessMessage(`Order status updated to ${newStatus}`);
+
+      // Send Telegram cancel alert if canceled by admin
+      if (newStatus === 'canceled' && oldStatus !== 'canceled') {
+        let cancelCust: User | null = null;
+        try {
+          const userDoc = await getDoc(doc(db, 'users', orderData.userId));
+          if (userDoc.exists()) {
+            cancelCust = { uid: userDoc.id, ...userDoc.data() } as User;
+          }
+        } catch {
+          // ignore
+        }
+        sendTelegramOrderCancelAlert({
+          order: { ...orderData, id: orderId || orderData.id, status: 'canceled' },
+          customer: cancelCust,
+          canceledBy: 'admin',
+          reason: 'Canceled by store admin from Admin Dashboard',
+          storeSettings: appSettings
+        }).catch(err => console.warn('Telegram cancel alert failed:', err));
+      }
 
       // Check if WhatsApp alerts to customer are enabled (default to true)
       if (appSettings.autoCustomerWhatsAppAlerts !== false && (orderData.userPhone || orderData.userId)) {
@@ -2735,10 +2756,10 @@ const OrderList = ({
               <button 
                 onClick={() => handleQuickPrint(order)}
                 className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-gray-100 text-gray-700 rounded-xl text-[10px] font-bold border border-gray-200 shadow-2xs transition-all active:scale-95 cursor-pointer"
-                title="Print Bill / Receipt"
+                title="Print Receipt (Android & Bluetooth Printer)"
               >
                 <Printer size={11} className="text-gray-600" />
-                <span>Print</span>
+                <span>Print Receipt</span>
               </button>
             </div>
           </div>

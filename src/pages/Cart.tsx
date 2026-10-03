@@ -10,6 +10,7 @@ import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc, increment,
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { cacheUtils } from '../lib/cache-utils';
 import { showInterstitialAd, showRewardedAd } from '../lib/admob';
+import { sendTelegramNewOrderAlert } from '../lib/telegram-utils';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 import { UpiPaymentModal } from '../components/UpiPaymentModal';
 import { isProductDeliverable, getStateFromPincode, setStoredDeliveryLocation } from '../lib/location-utils';
@@ -235,10 +236,15 @@ export const Cart = ({
         setUser({ ...user!, address, pincode });
       }
 
-      const orderRef = await addDoc(collection(db, 'orders'), {
+      const finalAddress = address || user!.address || '';
+      const finalPincode = pincode || user!.pincode || '';
+
+      const orderPayload: any = {
         userId: user!.uid,
         userName: user!.displayName,
         userPhone: user!.phoneNumber || '',
+        address: finalAddress,
+        pincode: finalPincode,
         items: items.map(item => ({
           id: item.id,
           name: item.selectedVariant ? `${item.name} (${item.selectedVariant.weight})` : item.name,
@@ -246,7 +252,6 @@ export const Cart = ({
           quantity: item.quantity,
           weight: item.selectedVariant?.weight || null,
           variantId: item.selectedVariant?.id || null
-          // Removed large base64 image to prevent exceeding 1MB limit
         })),
         total,
         subtotal,
@@ -259,7 +264,9 @@ export const Cart = ({
         upiTransactionId: utr || '',
         status: 'pending',
         createdAt: serverTimestamp()
-      });
+      };
+
+      const orderRef = await addDoc(collection(db, 'orders'), orderPayload);
 
       // Update user loyalty points - Only subtract redeemed points
       // pointsEarned will be added when order is DELIVERED
@@ -283,48 +290,11 @@ export const Cart = ({
       });
       await batch.commit();
 
-      // Send Background Notifications
-      const fetchTelegramSettings = async () => {
-        try {
-          const sDoc = await getDoc(doc(db, 'settings', 'global'));
-          if (sDoc.exists()) {
-            const sData = sDoc.data();
-            if (sData.telegramEnabled && sData.telegramBotToken && sData.telegramChatId) {
-              const cleanToken = sData.telegramBotToken.trim().replace(/^bot/i, '');
-              const itemsDetails = items.map((item, idx) => {
-                const itemPrice = item.discountPrice || item.price;
-                return `🔹 ${idx + 1}. <b>${item.name}</b> x ${item.quantity} (₹${itemPrice})`;
-              }).join('\n');
-
-              const tgMessage = `🚀 <b>NEW ORDER RECEIVED</b>\n\n` +
-                `📦 <b>Order ID:</b> #${orderRef.id.slice(-6)}\n` +
-                `👤 <b>Customer:</b> ${user!.displayName || 'Guest'}\n` +
-                `💰 <b>Total:</b> ₹${total}\n` +
-                `💳 <b>Payment:</b> ${chosenPaymentMethod === 'upi' ? 'Online UPI (Direct 0% Fee)' : 'Cash on Delivery (COD)'}\n` +
-                `${utr ? `🧾 <b>UPI Ref/UTR:</b> <code>${utr}</code>\n` : ''}` +
-                `📍 <b>Pincode:</b> ${pincode || user!.pincode || 'N/A'}\n` +
-                `📞 <b>Phone:</b> ${user!.phoneNumber || 'N/A'}\n\n` +
-                `🛒 <b>Items Ordered:</b>\n${itemsDetails}\n\n` +
-                `Check Admin Dashboard for details.`;
-              
-              await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: cacheUtils.safeStringify({
-                  chat_id: sData.telegramChatId.trim(),
-                  text: tgMessage,
-                  parse_mode: 'HTML'
-                }),
-                keepalive: true
-              });
-              console.log("Telegram notification sent successfully");
-            }
-          }
-        } catch (tgErr) {
-          console.error("Telegram notification failed:", tgErr);
-        }
-      };
-      fetchTelegramSettings();
+      // Send Rich Telegram Notification Receipt with Delivery Address
+      sendTelegramNewOrderAlert({
+        order: { id: orderRef.id, ...orderPayload },
+        customer: user
+      }).catch(e => console.warn('Telegram new order notification error:', e));
 
       // 1. Prepare data for confirmation page
       const confirmationState = { 

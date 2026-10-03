@@ -338,28 +338,53 @@ export const printIsolatedElement = (
   const prevTitle = document.title;
   document.title = documentTitle;
 
-  // Add print isolation class to body and element
+  // Remove any lingering container
+  const oldContainer = document.getElementById('thermal-print-isolated-root');
+  if (oldContainer) {
+    oldContainer.remove();
+  }
+
+  // Create dedicated top-level container directly attached to document.body
+  // This bypasses any ancestor modal overlays with overflow:hidden / fixed position / clipping
+  const printContainer = document.createElement('div');
+  printContainer.id = 'thermal-print-isolated-root';
+  printContainer.className = 'thermal-receipt-printable';
+
+  // Clone element content
+  const clone = element.cloneNode(true) as HTMLElement;
+  clone.style.maxWidth = '100%';
+  clone.style.width = '100%';
+  clone.style.margin = '0';
+  clone.style.boxShadow = 'none';
+  printContainer.appendChild(clone);
+
+  document.body.appendChild(printContainer);
   document.body.classList.add('print-mode-active');
   element.classList.add('print-active-zone');
 
   const cleanup = () => {
     document.body.classList.remove('print-mode-active');
     element.classList.remove('print-active-zone');
+    if (printContainer && printContainer.parentNode) {
+      printContainer.parentNode.removeChild(printContainer);
+    }
     document.title = prevTitle;
     window.removeEventListener('afterprint', cleanup);
   };
 
   window.addEventListener('afterprint', cleanup);
 
-  // Trigger standard browser print
+  // Trigger Android Print Spooler / System Print Dialog
   try {
     window.print();
   } catch (e) {
     console.warn('Native window.print() failed:', e);
+    // Fallback: Share PDF directly for Bluetooth printer apps
+    shareReceiptPdf(element, `${documentTitle}.pdf`, documentTitle).catch(console.error);
   }
 
   // Safety timer if afterprint event is not triggered in mobile WebView
-  setTimeout(cleanup, 2500);
+  setTimeout(cleanup, 3000);
 };
 
 

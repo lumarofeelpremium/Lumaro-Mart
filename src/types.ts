@@ -95,6 +95,9 @@ export interface Order {
   paymentMethod?: 'cod' | 'upi';
   paymentStatus?: 'pending' | 'completed';
   upiTransactionId?: string;
+  adDiscount?: number;
+  canceledBy?: 'user' | 'admin';
+  cancelReason?: string;
 }
 
 export interface Review {
