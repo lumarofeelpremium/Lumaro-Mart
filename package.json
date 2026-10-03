@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "postinstall": "node -e \"const fs=require('fs');const f='node_modules/@capacitor-community/admob/android/build.gradle';if(fs.existsSync(f)){let c=fs.readFileSync(f,'utf8');c=c.replace('proguard-android.txt','proguard-android-optimize.txt');fs.writeFileSync(f,c);}\"",
     "cap:sync": "vite build && cap sync android",
     "android:build": "vite build && cap sync android && cd android && ./gradlew assembleDebug",
     "android:bundle": "vite build && cap sync android && cd android && ./gradlew bundleRelease",
