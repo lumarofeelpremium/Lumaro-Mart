@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Bell, Heart, Plus, X, ShoppingBag, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Bell, Heart, Plus, X, ShoppingBag, ChevronLeft, ChevronRight, MapPin, Globe } from 'lucide-react';
 import { Button, Input, Skeleton } from '../components/ui/Base';
 import { motion, AnimatePresence } from 'motion/react';
-import { Product, Category, Banner, User } from '../types';
+import { Product, Category, Banner, User, DeliveryLocation, ProductVariant } from '../types';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import { collection, query, limit, onSnapshot, orderBy, where } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { WishlistButton } from '../components/WishlistButton';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
-import { cn } from '../lib/utils';
+import { LocationSelectorModal } from '../components/LocationSelectorModal';
+import { filterProductsByLocation } from '../lib/location-utils';
+import { cn, sortVariantsByWeight } from '../lib/utils';
 import { cacheUtils } from '../lib/cache-utils';
 
 export const Home = ({ 
@@ -18,19 +20,24 @@ export const Home = ({
   categories,
   allProducts,
   banners,
-  initialDataLoading
+  initialDataLoading,
+  deliveryLocation,
+  onSelectDeliveryLocation
 }: { 
   user: User | null;
-  onAddToCart: (p: Product) => void;
+  onAddToCart: (p: Product, quantity?: number, variant?: ProductVariant) => void;
   categories: Category[];
   allProducts: Product[];
   banners: Banner[];
   initialDataLoading: boolean;
+  deliveryLocation?: DeliveryLocation | null;
+  onSelectDeliveryLocation?: (loc: DeliveryLocation | null) => void;
 }) => {
   const navigate = useNavigate();
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [hasUnreadNotifs, setHasUnreadNotifs] = useState(false);
+  const [showLocationModal, setShowLocationModal] = useState(false);
   
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -40,9 +47,14 @@ export const Home = ({
   // Deriving immediate states from properties for instant responses
   const loading = initialDataLoading && categories.length === 0 && allProducts.length === 0;
 
+  // Products filtered by selected delivery location (Pincode / State)
+  const locationFilteredProducts = useMemo(() => {
+    return filterProductsByLocation(allProducts, deliveryLocation || null);
+  }, [allProducts, deliveryLocation]);
+
   const popularItems = useMemo(() => {
-    if (!allProducts || allProducts.length === 0) return [];
-    const populars = allProducts.filter(product => product.isPopular);
+    if (!locationFilteredProducts || locationFilteredProducts.length === 0) return [];
+    const populars = locationFilteredProducts.filter(product => product.isPopular);
     if (populars.length > 0) {
       // Sort DESCENDING: the most recently added/marked popular product comes FIRST!
       const sorted = [...populars].sort((a, b) => {
@@ -63,20 +75,20 @@ export const Home = ({
       // Show up to 10 popular products
       return sorted.slice(0, 10);
     } else {
-      const sortedPopular = [...allProducts].sort((a, b) => (b.salesCount || 0) - (a.salesCount || 0));
+      const sortedPopular = [...locationFilteredProducts].sort((a, b) => (b.salesCount || 0) - (a.salesCount || 0));
       return sortedPopular.slice(0, 10);
     }
-  }, [allProducts]);
+  }, [locationFilteredProducts]);
 
   const newArrivals = useMemo(() => {
-    if (!allProducts || allProducts.length === 0) return [];
-    const sortedNew = [...allProducts].sort((a, b) => {
+    if (!locationFilteredProducts || locationFilteredProducts.length === 0) return [];
+    const sortedNew = [...locationFilteredProducts].sort((a, b) => {
       const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
       const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
       return timeB - timeA;
     });
     return sortedNew.slice(0, 4);
-  }, [allProducts]);
+  }, [locationFilteredProducts]);
 
   // Handle Notifications query
   useEffect(() => {
@@ -120,9 +132,9 @@ export const Home = ({
       
     if (queryWords.length === 0) return [];
 
-    const scored = allProducts.map(p => {
-      const productName = p.name.toLowerCase();
-      const productCategory = p.category.toLowerCase();
+    const scored = locationFilteredProducts.map(p => {
+      const productName = (p.name || '').toLowerCase();
+      const productCategory = (p.category || '').toLowerCase();
       const productDesc = (p.description || '').toLowerCase();
       
       // All search words must be present in either the name, category, or description
@@ -189,16 +201,16 @@ export const Home = ({
       .filter(item => item.score >= 0)
       .sort((a, b) => b.score - a.score)
       .map(item => item.product);
-  }, [searchQuery, allProducts]);
+  }, [searchQuery, locationFilteredProducts]);
 
   const isSearching = searchQuery.trim().length > 0;
 
   // Pagination Logic
-  const totalPages = Math.ceil(allProducts.length / itemsPerPage);
+  const totalPages = Math.ceil(locationFilteredProducts.length / itemsPerPage);
   const paginatedProducts = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
-    return allProducts.slice(start, start + itemsPerPage);
-  }, [allProducts, currentPage]);
+    return locationFilteredProducts.slice(start, start + itemsPerPage);
+  }, [locationFilteredProducts, currentPage]);
 
   const handleJumpPage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -218,7 +230,7 @@ export const Home = ({
   return (
     <div className="pb-24 px-6 pt-8 bg-[#F8FBF9] min-h-screen">
       {/* Header */}
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center mb-4">
         <div>
           <h1 className="text-2xl font-bold text-[#1A1A1A]">
             Lumaro <span className="text-[#66D2A4]">Mart</span>
@@ -235,6 +247,58 @@ export const Home = ({
           )}
         </button>
       </div>
+
+      {/* Delivery Location Selector Bar */}
+      <div className="flex items-center justify-between mb-4 bg-emerald-50/90 border border-emerald-100 rounded-2xl px-3.5 py-2.5 shadow-2xs">
+        <button 
+          onClick={() => setShowLocationModal(true)}
+          className="flex items-center gap-2.5 text-left flex-1 min-w-0 group"
+        >
+          <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+            <MapPin size={16} />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800">Delivering To</span>
+              <span className="text-[10px] font-bold text-emerald-600 underline group-hover:text-emerald-800">Change</span>
+            </div>
+            <p className="text-xs font-extrabold text-gray-900 truncate">
+              {deliveryLocation?.label || (deliveryLocation?.district ? `${deliveryLocation.district}, ${deliveryLocation.state || ''}` : deliveryLocation?.state || 'All India (Select State / District / Pincode)')}
+            </p>
+          </div>
+        </button>
+        {deliveryLocation ? (
+          <button
+            onClick={() => onSelectDeliveryLocation?.(null)}
+            className="text-[10px] font-bold text-gray-500 hover:text-gray-700 bg-white px-2.5 py-1.5 rounded-xl border border-gray-200 ml-2 shrink-0 shadow-2xs"
+            title="Show All Products (Remove Location Filter)"
+          >
+            Show All
+          </button>
+        ) : (
+          <button
+            onClick={() => setShowLocationModal(true)}
+            className="text-[10px] font-bold text-emerald-700 bg-white px-2.5 py-1.5 rounded-xl border border-emerald-200 ml-2 shrink-0 shadow-2xs hover:bg-emerald-50"
+          >
+            📍 Set Location
+          </button>
+        )}
+      </div>
+
+      {/* Location Filter Active Notice */}
+      {deliveryLocation && (
+        <div className="mb-4 -mt-2 px-1 flex items-center justify-between text-[11px] text-gray-500">
+          <span>
+            📍 Showing {locationFilteredProducts.length} items for <strong>{deliveryLocation.label}</strong>
+          </span>
+          <button 
+            onClick={() => onSelectDeliveryLocation?.(null)}
+            className="text-emerald-600 font-bold hover:underline"
+          >
+            Clear Filter
+          </button>
+        </div>
+      )}
 
       {/* Search */}
       <div className="flex gap-3 mb-8">
@@ -548,7 +612,7 @@ export const Home = ({
             <div className="pb-8" id="all-products-section">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-bold text-[#1A1A1A]">All Products</h3>
-                <span className="text-xs text-gray-400 font-medium">{allProducts.length} items</span>
+                <span className="text-xs text-gray-400 font-medium">{locationFilteredProducts.length} items</span>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 {loading ? (
@@ -565,8 +629,26 @@ export const Home = ({
                   ))
                 ) : (
                   <>
-                    {allProducts.length === 0 && (
-                      <p className="text-xs text-gray-400 col-span-2 py-8 text-center">No products found</p>
+                    {locationFilteredProducts.length === 0 && (
+                      <div className="col-span-2 py-8 text-center bg-white rounded-3xl p-6 border border-gray-100 shadow-2xs">
+                        <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto mb-3 text-emerald-600">
+                          <MapPin size={24} />
+                        </div>
+                        <p className="text-sm font-bold text-gray-800">
+                          {deliveryLocation ? `No products deliverable to ${deliveryLocation.label}` : 'No products found'}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-1 mb-4">
+                          {deliveryLocation ? 'Try changing your pincode or view products available Pan-India' : 'Check back later for fresh stock.'}
+                        </p>
+                        {deliveryLocation && (
+                          <button 
+                            onClick={() => onSelectDeliveryLocation?.(null)}
+                            className="bg-[#66D2A4] hover:bg-[#55b88e] text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-xs transition-colors"
+                          >
+                            View All-India Products
+                          </button>
+                        )}
+                      </div>
                     )}
                     {paginatedProducts.map((product) => (
                       <ProductCard key={product.id} product={product} user={user} onAddToCart={onAddToCart} navigate={navigate} />
@@ -576,7 +658,7 @@ export const Home = ({
               </div>
 
               {/* Pagination UI */}
-              {!loading && allProducts.length > itemsPerPage && (
+              {!loading && locationFilteredProducts.length > itemsPerPage && (
                 <div className="mt-10 space-y-6">
                   <div className="flex items-center justify-center gap-2">
                     <button 
@@ -660,67 +742,150 @@ export const Home = ({
           </motion.div>
         )}
       </AnimatePresence>
+
+      <LocationSelectorModal 
+        isOpen={showLocationModal} 
+        onClose={() => setShowLocationModal(false)} 
+        currentLocation={deliveryLocation || null} 
+        onSelectLocation={(loc) => onSelectDeliveryLocation?.(loc)} 
+        user={user} 
+      />
     </div>
   );
 };
 
-const ProductCard: React.FC<{ product: Product, user: User | null, onAddToCart: (p: Product) => void, navigate: any }> = ({ product, user, onAddToCart, navigate }) => (
-  <motion.div 
-    whileHover={{ scale: 1.02 }}
-    className="bg-white rounded-[32px] p-4 shadow-sm border border-gray-50 flex flex-col cursor-pointer h-full"
-    onClick={() => navigate(`/product/${product.id}`)}
-  >
-    <div className="relative aspect-square mb-3 rounded-2xl overflow-hidden bg-gray-100 flex items-center justify-center">
-      {product.image ? (
-        <img 
-          src={product.image} 
-          alt={product.name}
-          className="w-full h-full object-cover"
-          referrerPolicy="no-referrer"
-        />
-      ) : (
-        <Plus size={24} className="text-gray-300" />
-      )}
-      {(product.offerLabel || product.discountPrice) && (
-        <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
-          {product.offerLabel || 'Offer'}
+const ProductCard: React.FC<{ 
+  product: Product, 
+  user: User | null, 
+  onAddToCart: (p: Product, quantity?: number, variant?: ProductVariant) => void, 
+  navigate: any 
+}> = ({ product, user, onAddToCart, navigate }) => {
+  const sortedVariants = useMemo(() => {
+    return product.hasVariants && product.variants ? sortVariantsByWeight(product.variants) : [];
+  }, [product.hasVariants, product.variants]);
+
+  const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(() => {
+    return sortedVariants.length > 0 ? sortedVariants[0] : null;
+  });
+
+  useEffect(() => {
+    if (sortedVariants.length > 0) {
+      setSelectedVariant(prev => {
+        if (!prev) return sortedVariants[0];
+        const match = sortedVariants.find(v => v.id === prev.id || v.weight === prev.weight);
+        return match || sortedVariants[0];
+      });
+    } else {
+      setSelectedVariant(null);
+    }
+  }, [sortedVariants]);
+
+  const effectivePrice = selectedVariant 
+    ? (selectedVariant.discountPrice || selectedVariant.price)
+    : (product.discountPrice || product.price);
+
+  const effectiveOriginalPrice = selectedVariant
+    ? (selectedVariant.discountPrice ? selectedVariant.price : null)
+    : (product.discountPrice ? product.price : null);
+
+  const effectiveStock = selectedVariant?.stock !== undefined 
+    ? selectedVariant.stock 
+    : product.stock;
+
+  return (
+    <motion.div 
+      whileHover={{ scale: 1.02 }}
+      className="bg-white rounded-[32px] p-4 shadow-sm border border-gray-50 flex flex-col cursor-pointer h-full"
+      onClick={() => navigate(`/product/${product.id}`)}
+    >
+      <div className="relative aspect-square mb-3 rounded-2xl overflow-hidden bg-gray-100 flex items-center justify-center">
+        {product.image ? (
+          <img 
+            src={product.image} 
+            alt={product.name}
+            className="w-full h-full object-cover"
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <Plus size={24} className="text-gray-300" />
+        )}
+        {(product.offerLabel || product.discountPrice) && (
+          <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
+            {product.offerLabel || 'Offer'}
+          </div>
+        )}
+        <div className="absolute bottom-2 left-2 bg-white/80 backdrop-blur-sm text-gray-600 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase border border-gray-100 z-10">
+          {product.category}
+        </div>
+        <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-8 h-8 rounded-xl z-10" />
+      </div>
+      <h4 className="font-bold text-sm text-[#1A1A1A] mb-1 line-clamp-1">{product.name}</h4>
+      <p className={cn(
+        "text-[10px] mb-1 font-bold",
+        effectiveStock > 0 ? "text-gray-400" : "text-red-500"
+      )}>
+        {effectiveStock > 0 ? `${effectiveStock} in stock` : "Out of Stock"}
+      </p>
+
+      {/* Weight Variant quick chips if product has multiple weights */}
+      {product.hasVariants && sortedVariants.length > 0 && (
+        <div className="mb-2 flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5" onClick={(e) => e.stopPropagation()}>
+          {sortedVariants.map((v) => {
+            const isSelected = (selectedVariant?.id && selectedVariant.id === v.id) || selectedVariant?.weight === v.weight;
+            return (
+              <button
+                key={v.id || v.weight}
+                type="button"
+                onClick={() => setSelectedVariant(v)}
+                className={cn(
+                  "text-[9px] font-extrabold px-2 py-0.5 rounded-lg border transition-all shrink-0 cursor-pointer",
+                  isSelected
+                    ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                    : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-emerald-50 hover:border-emerald-200"
+                )}
+              >
+                {v.weight}
+              </button>
+            );
+          })}
         </div>
       )}
-      <div className="absolute bottom-2 left-2 bg-white/80 backdrop-blur-sm text-gray-600 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase border border-gray-100 z-10">
-        {product.category}
+
+      <div className="mb-2 min-h-[18px] flex items-center">
+        <MultiSavingsBadge product={{
+          ...product,
+          price: selectedVariant ? selectedVariant.price : product.price,
+          discountPrice: selectedVariant ? selectedVariant.discountPrice : product.discountPrice
+        }} variant="pill" />
       </div>
-      <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-8 h-8 rounded-xl z-10" />
-    </div>
-    <h4 className="font-bold text-sm text-[#1A1A1A] mb-1 line-clamp-1">{product.name}</h4>
-    <p className={cn(
-      "text-[10px] mb-1 font-bold",
-      product.stock > 0 ? "text-gray-400" : "text-red-500"
-    )}>
-      {product.stock > 0 ? `${product.stock} in stock` : "Out of Stock"}
-    </p>
-    <div className="mb-2 min-h-[18px] flex items-center">
-      <MultiSavingsBadge product={product} variant="pill" />
-    </div>
-    <div className="flex justify-between items-center mt-auto">
-      <div className="flex flex-col">
-        <span className="font-bold text-[#66D2A4]">₹{product.discountPrice || product.price}</span>
-        {product.discountPrice && (
-          <span className="text-[10px] text-gray-400 line-through">₹{product.price}</span>
-        )}
+      <div className="flex justify-between items-center mt-auto">
+        <div className="flex flex-col">
+          <div className="flex items-center gap-1">
+            <span className="font-bold text-[#66D2A4]">₹{effectivePrice}</span>
+            {selectedVariant && (
+              <span className="text-[9px] font-bold text-emerald-800 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-100">
+                {selectedVariant.weight}
+              </span>
+            )}
+          </div>
+          {effectiveOriginalPrice && (
+            <span className="text-[10px] text-gray-400 line-through">₹{effectiveOriginalPrice}</span>
+          )}
+        </div>
+        <button 
+          disabled={effectiveStock <= 0}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (effectiveStock > 0) onAddToCart(product, 1, selectedVariant || undefined);
+          }}
+          className={cn(
+            "text-white p-2 rounded-xl transition-colors",
+            effectiveStock > 0 ? "bg-[#66D2A4] hover:bg-[#55b88e]" : "bg-gray-300 cursor-not-allowed"
+          )}
+        >
+          <Plus size={16} />
+        </button>
       </div>
-      <button 
-        disabled={product.stock <= 0}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (product.stock > 0) onAddToCart(product);
-        }}
-        className={cn(
-          "text-white p-2 rounded-xl transition-colors",
-          product.stock > 0 ? "bg-[#66D2A4] hover:bg-[#55b88e]" : "bg-gray-300 cursor-not-allowed"
-        )}
-      >
-        <Plus size={16} />
-      </button>
-    </div>
-  </motion.div>
-);
+    </motion.div>
+  );
+};

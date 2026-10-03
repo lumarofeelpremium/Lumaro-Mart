@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Star, Plus, Minus, ShoppingCart, MessageSquare, Send, Loader2, Heart, Zap, Sparkles, Check } from 'lucide-react';
+import { ChevronLeft, Star, Plus, Minus, ShoppingCart, MessageSquare, Send, Loader2, Heart, Zap, Sparkles, Check, MapPin, Globe, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Button, Input, Skeleton } from '../components/ui/Base';
-import { Product, Review, User } from '../types';
+import { Product, Review, User, DeliveryLocation, ProductVariant } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../firebase';
 import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
@@ -10,7 +10,9 @@ import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { WishlistButton } from '../components/WishlistButton';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 import { getMultiQuantitySavings } from '../lib/savings-utils';
+import { isProductDeliverable, getStateFromPincode } from '../lib/location-utils';
 import { cacheUtils } from '../lib/cache-utils';
+import { sortVariantsByWeight } from '../lib/utils';
 
 // Mock products for fallback if not in Firestore
 const MOCK_PRODUCTS: Product[] = [
@@ -54,14 +56,19 @@ const MOCK_PRODUCTS: Product[] = [
 
 export const ProductDetails = ({ 
   user, 
-  onAddToCart 
+  onAddToCart,
+  deliveryLocation,
+  onSelectDeliveryLocation
 }: { 
-  user: User | null, 
-  onAddToCart: (p: Product, quantity?: number) => void 
+  user: User | null;
+  onAddToCart: (p: Product, quantity?: number, variant?: ProductVariant) => void;
+  deliveryLocation?: DeliveryLocation | null;
+  onSelectDeliveryLocation?: (loc: DeliveryLocation | null) => void;
 }) => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [product, setProduct] = useState<Product | null>(null);
+  const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [quantity, setQuantity] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -70,6 +77,31 @@ export const ProductDetails = ({
   const [justAdded, setJustAdded] = useState(false);
   const [addedCount, setAddedCount] = useState(0);
   const reviewsRef = useRef<HTMLDivElement>(null);
+
+  // Delivery check state
+  const [checkPincode, setCheckPincode] = useState(deliveryLocation?.pincode || '');
+  const [checkResult, setCheckResult] = useState<{ deliverable: boolean; state?: string | null; reason?: string } | null>(null);
+
+  useEffect(() => {
+    if (deliveryLocation?.pincode) {
+      setCheckPincode(deliveryLocation.pincode);
+    }
+  }, [deliveryLocation]);
+
+  const handleCheckPincode = () => {
+    if (!product || checkPincode.length !== 6) return;
+    const inferredState = getStateFromPincode(checkPincode);
+    const testLocation: DeliveryLocation = {
+      pincode: checkPincode,
+      state: inferredState || undefined
+    };
+    const res = isProductDeliverable(product, testLocation);
+    setCheckResult({
+      deliverable: res.deliverable,
+      state: inferredState,
+      reason: res.reason
+    });
+  };
 
   const scrollToReviews = () => {
     reviewsRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -133,6 +165,19 @@ export const ProductDetails = ({
 
     fetchProduct();
   }, [id]);
+
+  const sortedVariants = React.useMemo(() => {
+    if (!product?.variants || product.variants.length === 0) return [];
+    return sortVariantsByWeight(product.variants);
+  }, [product?.variants]);
+
+  useEffect(() => {
+    if (product?.hasVariants && sortedVariants.length > 0) {
+      setSelectedVariant(sortedVariants[0]);
+    } else {
+      setSelectedVariant(null);
+    }
+  }, [product?.hasVariants, sortedVariants]);
 
   useEffect(() => {
     if (!id) return;
@@ -238,7 +283,23 @@ export const ProductDetails = ({
     ? (reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length).toFixed(1)
     : '0.0';
 
-  const savingsInfo = product ? getMultiQuantitySavings(product, quantity) : null;
+  const effectivePrice = selectedVariant 
+    ? (selectedVariant.discountPrice || selectedVariant.price)
+    : (product ? (product.discountPrice || product.price) : 0);
+
+  const effectiveOriginalPrice = selectedVariant
+    ? (selectedVariant.discountPrice ? selectedVariant.price : null)
+    : (product?.discountPrice ? product.price : null);
+
+  const effectiveStock = selectedVariant?.stock !== undefined 
+    ? selectedVariant.stock 
+    : (product?.stock ?? 0);
+
+  const savingsInfo = product ? getMultiQuantitySavings({
+    ...product,
+    price: selectedVariant ? selectedVariant.price : product.price,
+    discountPrice: selectedVariant ? selectedVariant.discountPrice : product.discountPrice
+  }, quantity) : null;
 
   return (
     <div className="min-h-screen bg-[#F8FBF9] pb-32">
@@ -273,39 +334,43 @@ export const ProductDetails = ({
           )}
         </div>
 
-        <div className="flex justify-between items-start mb-2">
+        <div className="flex justify-between items-start mb-4">
           <div>
             <div className="inline-block bg-[#F0F7F4] text-[#66D2A4] text-[10px] font-bold px-2 py-0.5 rounded-full uppercase mb-1">
               {product.category}
             </div>
             <h1 className="text-2xl font-extrabold text-[#1A1A1A]">{product.name}</h1>
             <div className="flex items-center gap-3">
-              <p className="text-[#66D2A4] font-bold text-xl">₹{product.discountPrice || product.price}</p>
-              {product.discountPrice && (
-                <p className="text-gray-400 text-sm line-through">₹{product.price}</p>
+              <p className="text-[#66D2A4] font-bold text-xl">₹{effectivePrice}</p>
+              {effectiveOriginalPrice && (
+                <p className="text-gray-400 text-sm line-through">₹{effectiveOriginalPrice}</p>
               )}
-              {(product.offerLabel || product.discountPrice) && (
+              {(product.offerLabel || effectiveOriginalPrice) && (
                 <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
                   {product.offerLabel || 'Special Offer'}
                 </span>
               )}
-              {product.stock <= 0 && (
+              {effectiveStock <= 0 && (
                 <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-1 rounded-full uppercase">
                   Out of Stock
                 </span>
               )}
             </div>
             <div className="mt-2 flex items-center gap-2 flex-wrap">
-              <MultiSavingsBadge product={product} variant="chip" />
+              <MultiSavingsBadge product={{
+                ...product,
+                price: selectedVariant ? selectedVariant.price : product.price,
+                discountPrice: selectedVariant ? selectedVariant.discountPrice : product.discountPrice
+              }} variant="chip" />
             </div>
           </div>
           <div className={cn(
             "flex items-center gap-3 bg-[#F0F7F4] rounded-2xl p-1",
-            product.stock <= 0 && "opacity-50 pointer-events-none"
+            effectiveStock <= 0 && "opacity-50 pointer-events-none"
           )}>
             <button 
               onClick={() => setQuantity(Math.max(1, quantity - 1))}
-              disabled={product.stock <= 0}
+              disabled={effectiveStock <= 0}
               className="w-10 h-10 flex items-center justify-center text-gray-500 hover:text-[#66D2A4]"
             >
               <Minus size={18} />
@@ -313,13 +378,64 @@ export const ProductDetails = ({
             <span className="font-bold w-6 text-center text-lg">{quantity}</span>
             <button 
               onClick={() => setQuantity(quantity + 1)}
-              disabled={product.stock <= 0}
+              disabled={effectiveStock <= 0 || quantity >= effectiveStock}
               className="w-10 h-10 flex items-center justify-center text-gray-500 hover:text-[#66D2A4]"
             >
               <Plus size={18} />
             </button>
           </div>
         </div>
+
+        {/* Weight Variants Selector (if product has variants) */}
+        {product.hasVariants && sortedVariants.length > 0 && (
+          <div className="mb-6 p-4 rounded-3xl bg-white border border-emerald-100 shadow-2xs space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                <span>⚖️ Select Weight / Pack (वजन चुनें):</span>
+              </span>
+              {selectedVariant && (
+                <span className="text-[11px] font-extrabold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                  {selectedVariant.weight}
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-2 pt-0.5">
+              {sortedVariants.map((v) => {
+                const isSelected = (selectedVariant?.id && selectedVariant.id === v.id) || selectedVariant?.weight === v.weight;
+                const vPrice = v.discountPrice || v.price;
+                return (
+                  <button
+                    key={v.id || v.weight}
+                    type="button"
+                    onClick={() => {
+                      setSelectedVariant(v);
+                      setQuantity(1);
+                    }}
+                    className={cn(
+                      "px-3.5 py-2.5 rounded-2xl border transition-all flex flex-col items-center justify-center cursor-pointer min-w-[76px]",
+                      isSelected
+                        ? "bg-emerald-50 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs"
+                        : "bg-gray-50/70 border-gray-200 hover:border-emerald-300"
+                    )}
+                  >
+                    <span className={cn("text-xs font-extrabold", isSelected ? "text-emerald-950" : "text-gray-800")}>
+                      {v.weight}
+                    </span>
+                    <span className={cn("text-xs font-bold mt-0.5", isSelected ? "text-emerald-600" : "text-gray-600")}>
+                      ₹{vPrice}
+                    </span>
+                    {v.discountPrice && (
+                      <span className="text-[9px] text-gray-400 line-through">
+                        ₹{v.price}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Multi-Quantity Savings Interactive Helper Card */}
         {savingsInfo && savingsInfo.hasSavings && product.stock >= 2 && (
@@ -411,6 +527,101 @@ export const ProductDetails = ({
           </div>
         )}
         
+        {/* Delivery & Pincode Availability Card */}
+        <div className="mb-6 p-4 rounded-3xl bg-[#F0F7F4] border border-[#66D2A4]/30 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MapPin size={18} className="text-[#66D2A4]" />
+              <span className="text-xs font-bold text-gray-900">Delivery & Availability</span>
+            </div>
+            {/* Availability Badge */}
+            {product.availabilityType === 'districts' && product.availableDistricts && product.availableDistricts.length > 0 ? (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900">
+                🏘️ {product.availableDistricts.length} Districts Only
+              </span>
+            ) : product.availabilityType === 'states' && product.availableStates && product.availableStates.length > 0 ? (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                🏛️ {product.availableStates.length} States Only
+              </span>
+            ) : product.availabilityType === 'pincodes' && product.availablePincodes && product.availablePincodes.length > 0 ? (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">
+                📮 {product.availablePincodes.length} Pincodes Only
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                <Globe size={11} /> Pan-India Delivery
+              </span>
+            )}
+          </div>
+
+          {/* Region details */}
+          {product.availabilityType === 'districts' && product.availableDistricts && product.availableDistricts.length > 0 ? (
+            <p className="text-[11px] text-gray-600">
+              Deliverable to select districts: <strong>{product.availableDistricts.join(', ')}</strong> {product.availableStates?.[0] ? `(${product.availableStates[0]})` : ''}
+            </p>
+          ) : product.availabilityType === 'states' && product.availableStates && product.availableStates.length > 0 ? (
+            <p className="text-[11px] text-gray-600">
+              Deliverable to: <strong>{product.availableStates.join(', ')}</strong>
+            </p>
+          ) : product.availabilityType === 'pincodes' && product.availablePincodes && product.availablePincodes.length > 0 ? (
+            <p className="text-[11px] text-gray-600">
+              Deliverable to select pincodes: {product.availablePincodes.slice(0, 5).join(', ')}{product.availablePincodes.length > 5 ? '...' : ''}
+            </p>
+          ) : (
+            <p className="text-[11px] text-gray-600">
+              Available across all states and postal pincodes in India.
+            </p>
+          )}
+
+          {/* Pincode Checker Input */}
+          <div className="pt-1">
+            <div className="flex gap-2">
+              <input 
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={checkPincode}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/\D/g, '').slice(0, 6);
+                  setCheckPincode(val);
+                  setCheckResult(null);
+                }}
+                placeholder="Enter 6-digit Pincode to check"
+                className="flex-1 bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-[#66D2A4]"
+              />
+              <button
+                type="button"
+                onClick={handleCheckPincode}
+                disabled={checkPincode.length !== 6}
+                className="bg-[#1A1A1A] hover:bg-black text-white text-xs font-bold px-3 py-2 rounded-xl disabled:opacity-40 transition-colors"
+              >
+                Check
+              </button>
+            </div>
+
+            {/* Check Result Feedback */}
+            {checkResult && (
+              <div className={cn(
+                "mt-2 p-2 rounded-xl flex items-center gap-1.5 text-xs font-bold animate-in fade-in",
+                checkResult.deliverable ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-700"
+              )}>
+                {checkResult.deliverable ? (
+                  <>
+                    <CheckCircle2 size={14} className="shrink-0 text-emerald-600" />
+                    <span>✅ Yes! Delivery available to {checkPincode} {checkResult.state ? `(${checkResult.state})` : ''}</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle size={14} className="shrink-0 text-red-600" />
+                    <span>❌ Delivery not available to {checkPincode}. {checkResult.reason || ''}</span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
         <p className="text-gray-400 text-sm leading-relaxed mb-6">
           {product.description || "No description available for this product."}
           {product.stock > 0 && (
@@ -424,14 +635,14 @@ export const ProductDetails = ({
           <Button 
             className={cn(
               "flex-grow py-5 rounded-3xl shadow-lg flex items-center justify-center gap-3 text-lg transition-all",
-              product.stock > 0 
+              effectiveStock > 0 
                 ? (justAdded ? "bg-[#55b88e] text-white shadow-[#66D2A4]/30 scale-[1.01]" : "shadow-[#66D2A4]/20") 
                 : "bg-gray-300 shadow-none cursor-not-allowed"
             )}
-            disabled={product.stock <= 0}
+            disabled={effectiveStock <= 0}
             onClick={() => {
-              if (product.stock > 0) {
-                onAddToCart(product, quantity);
+              if (effectiveStock > 0) {
+                onAddToCart(product, quantity, selectedVariant || undefined);
                 setAddedCount(quantity);
                 setJustAdded(true);
                 setTimeout(() => {
@@ -446,7 +657,7 @@ export const ProductDetails = ({
               </span>
             ) : (
               <span className="flex items-center gap-2">
-                <ShoppingCart size={22} /> {product.stock > 0 ? "Add to Cart" : "Out of Stock"}
+                <ShoppingCart size={22} /> {effectiveStock > 0 ? "Add to Cart" : "Out of Stock"}
               </span>
             )}
           </Button>

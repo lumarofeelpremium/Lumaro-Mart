@@ -39,11 +39,9 @@ export const PrintableOrderReceipt = React.forwardRef<HTMLDivElement, PrintableO
           color: '#111827',
           fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
           maxWidth: '580px',
-          margin: '0 auto',
-          padding: '32px',
           boxSizing: 'border-box'
         }}
-        className="print:p-4 print:text-black"
+        className="w-full mx-auto p-4 sm:p-8 print:p-2 print:max-w-full print:text-black thermal-receipt-printable"
       >
         {/* Header */}
         <div style={{ textAlign: 'center', paddingBottom: '16px', borderBottom: '2px solid #111827' }}>

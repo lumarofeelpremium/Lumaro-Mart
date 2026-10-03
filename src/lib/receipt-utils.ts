@@ -153,10 +153,10 @@ export const sendWhatsAppBill = (
   window.open(url, '_blank', 'noopener,noreferrer');
 };
 
-export const downloadReceiptPdf = async (
+export const generateReceiptPdfBlob = async (
   element: HTMLElement,
   fileName: string = 'Order-Receipt.pdf'
-): Promise<boolean> => {
+): Promise<{ blob: Blob; file: File } | null> => {
   try {
     const toRgbColor = (colorStr: string): string => {
       if (!colorStr || (!colorStr.includes('oklch') && !colorStr.includes('color(') && !colorStr.includes('lab('))) {
@@ -181,7 +181,6 @@ export const downloadReceiptPdf = async (
       logging: false,
       backgroundColor: '#ffffff',
       onclone: (clonedDoc, clonedElem) => {
-        // Ensure element in clone is visible and measurable
         clonedElem.style.display = 'block';
         clonedElem.style.visibility = 'visible';
         clonedElem.style.opacity = '1';
@@ -244,10 +243,26 @@ export const downloadReceiptPdf = async (
       heightLeft -= pageHeight;
     }
 
-    // Handle Android & Capacitor saving
+    const pdfBlob = pdf.output('blob');
+    const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+    return { blob: pdfBlob, file };
+  } catch (err) {
+    console.error('Error generating PDF blob:', err);
+    return null;
+  }
+};
+
+export const downloadReceiptPdf = async (
+  element: HTMLElement,
+  fileName: string = 'Order-Receipt.pdf'
+): Promise<boolean> => {
+  try {
+    const res = await generateReceiptPdfBlob(element, fileName);
+    if (!res) return false;
+
+    // Handle Android & Mobile browser saving
     try {
-      const pdfBlob = pdf.output('blob');
-      const blobUrl = URL.createObjectURL(pdfBlob);
+      const blobUrl = URL.createObjectURL(res.blob);
       const downloadLink = document.createElement('a');
       downloadLink.href = blobUrl;
       downloadLink.download = fileName;
@@ -255,17 +270,96 @@ export const downloadReceiptPdf = async (
       document.body.appendChild(downloadLink);
       downloadLink.click();
       setTimeout(() => {
-        document.body.removeChild(downloadLink);
+        if (document.body.contains(downloadLink)) {
+          document.body.removeChild(downloadLink);
+        }
         URL.revokeObjectURL(blobUrl);
-      }, 2000);
+      }, 2500);
     } catch {
-      pdf.save(fileName);
+      // Fallback
+      const url = URL.createObjectURL(res.blob);
+      window.open(url, '_blank');
     }
 
     return true;
   } catch (error) {
-    console.error('Failed to generate PDF:', error);
+    console.error('Failed to download PDF:', error);
     return false;
   }
 };
+
+/**
+ * Mobile-friendly Bluetooth Printer & Share helper.
+ * Lets the user share the PDF bill directly to Android Bluetooth printer apps
+ * (like RawBT Print, Bluetooth Print, Quick Printer) or WhatsApp!
+ */
+export const shareReceiptPdf = async (
+  element: HTMLElement,
+  fileName: string = 'Order-Receipt.pdf',
+  orderShortTitle: string = 'Order Bill'
+): Promise<boolean> => {
+  try {
+    const res = await generateReceiptPdfBlob(element, fileName);
+    if (!res) return false;
+
+    if (navigator.canShare && navigator.canShare({ files: [res.file] })) {
+      await navigator.share({
+        files: [res.file],
+        title: orderShortTitle,
+        text: `Bill for ${orderShortTitle} from Lumaro Mart`,
+      });
+      return true;
+    } else {
+      // Fallback to downloading
+      return downloadReceiptPdf(element, fileName);
+    }
+  } catch (err: any) {
+    if (err?.name === 'AbortError') return true; // user canceled share dialog
+    console.warn('Share not supported, downloading PDF:', err);
+    return downloadReceiptPdf(element, fileName);
+  }
+};
+
+/**
+ * Universal Mobile & Desktop Printer.
+ * Isolates the bill or report on the screen so that Android's Print Spooler
+ * or Desktop Print Dialog prints ONLY the document (compatible with Bluetooth printers,
+ * WiFi printers, and thermal 58mm/80mm rolls).
+ */
+export const printIsolatedElement = (
+  element: HTMLElement | null,
+  documentTitle: string = 'Lumaro Mart Document'
+): void => {
+  if (!element) {
+    console.warn('No element to print');
+    return;
+  }
+
+  const prevTitle = document.title;
+  document.title = documentTitle;
+
+  // Add print isolation class to body and element
+  document.body.classList.add('print-mode-active');
+  element.classList.add('print-active-zone');
+
+  const cleanup = () => {
+    document.body.classList.remove('print-mode-active');
+    element.classList.remove('print-active-zone');
+    document.title = prevTitle;
+    window.removeEventListener('afterprint', cleanup);
+  };
+
+  window.addEventListener('afterprint', cleanup);
+
+  // Trigger standard browser print
+  try {
+    window.print();
+  } catch (e) {
+    console.warn('Native window.print() failed:', e);
+  }
+
+  // Safety timer if afterprint event is not triggered in mobile WebView
+  setTimeout(cleanup, 2500);
+};
+
 

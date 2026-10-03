@@ -1,30 +1,38 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, Search, Plus, Filter, ArrowUpDown, X } from 'lucide-react';
+import { ChevronLeft, Search, Plus, Filter, ArrowUpDown, X, MapPin } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Input, Button, Skeleton } from '../components/ui/Base';
 import { motion, AnimatePresence } from 'motion/react';
-import { Product, Category, User } from '../types';
+import { Product, Category, User, DeliveryLocation, ProductVariant } from '../types';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { WishlistButton } from '../components/WishlistButton';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
+import { LocationSelectorModal } from '../components/LocationSelectorModal';
+import { filterProductsByLocation } from '../lib/location-utils';
 import { cacheUtils } from '../lib/cache-utils';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
+import { cn, sortVariantsByWeight } from '../lib/utils';
 
 export const Categories = ({ 
   user, 
   onAddToCart,
   categories,
-  allProducts
+  allProducts,
+  deliveryLocation,
+  onSelectDeliveryLocation
 }: { 
   user: User | null;
-  onAddToCart: (p: Product) => void;
+  onAddToCart: (p: Product, quantity?: number, variant?: ProductVariant) => void;
   categories: Category[];
   allProducts: Product[];
+  deliveryLocation?: DeliveryLocation | null;
+  onSelectDeliveryLocation?: (loc: DeliveryLocation | null) => void;
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [selectedCategory, setSelectedCategory] = useState(location.state?.category || '');
+  const [showLocationModal, setShowLocationModal] = useState(false);
   
   // Filter & Sort State
   const [showFilters, setShowFilters] = useState(false);
@@ -36,6 +44,11 @@ export const Categories = ({
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
+
+  // Filter products by location first
+  const locationFilteredProducts = useMemo(() => {
+    return filterProductsByLocation(allProducts, deliveryLocation || null);
+  }, [allProducts, deliveryLocation]);
 
   // Set default selected category to first category once loaded, or update if current selected category is hidden/inactive
   useEffect(() => {
@@ -63,12 +76,12 @@ export const Categories = ({
     }
   }, [selectedCategory, categories]);
 
-  // Deriving products for the selected category from the centralized global list
+  // Deriving products for the selected category from the centralized location-filtered list
   const products = useMemo(() => {
     if (!selectedCategory) return [];
     const normalizedTarget = selectedCategory.trim().toLowerCase();
-    return allProducts.filter(p => (p.category || '').trim().toLowerCase() === normalizedTarget);
-  }, [allProducts, selectedCategory]);
+    return locationFilteredProducts.filter(p => (p.category || '').trim().toLowerCase() === normalizedTarget);
+  }, [locationFilteredProducts, selectedCategory]);
 
   const loading = allProducts.length === 0 && categories.length === 0;
 
@@ -131,7 +144,36 @@ export const Categories = ({
         </button>
       </div>
 
-      <div className="px-6 pt-6">
+      <div className="px-6 pt-4">
+        {/* Delivery Location Selector Bar */}
+        <div className="flex items-center justify-between mb-4 bg-emerald-50/90 border border-emerald-100 rounded-2xl px-3.5 py-2.5 shadow-2xs">
+          <button 
+            onClick={() => setShowLocationModal(true)}
+            className="flex items-center gap-2 text-left flex-1 min-w-0 group"
+          >
+            <div className="w-7 h-7 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <MapPin size={14} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800">Delivering To</span>
+                <span className="text-[10px] font-bold text-emerald-600 underline group-hover:text-emerald-800">Change</span>
+              </div>
+              <p className="text-xs font-extrabold text-gray-900 truncate">
+                {deliveryLocation?.label || (deliveryLocation?.district ? `${deliveryLocation.district}, ${deliveryLocation.state || ''}` : deliveryLocation?.state || 'All India (Select State / District / Pincode)')}
+              </p>
+            </div>
+          </button>
+          {deliveryLocation && (
+            <button
+              onClick={() => onSelectDeliveryLocation?.(null)}
+              className="text-[10px] font-bold text-gray-500 hover:text-gray-700 bg-white px-2.5 py-1.5 rounded-xl border border-gray-200 ml-2 shrink-0 shadow-2xs"
+            >
+              Show All
+            </button>
+          )}
+        </div>
+
         {/* Category Selection */}
         <div className="flex flex-wrap gap-2 pb-2">
           {categories.length === 0 ? (
@@ -246,71 +288,162 @@ export const Categories = ({
                   </div>
                 )}
                 {filteredAndSortedProducts.map((product) => (
-                  <motion.div 
+                  <CategoryProductCard
                     key={product.id}
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    whileHover={{ scale: 1.02 }}
-                    className="bg-white rounded-[32px] p-4 shadow-sm border border-gray-50 cursor-pointer"
-                    onClick={() => navigate(`/product/${product.id}`)}
-                  >
-                    <div className="relative aspect-square mb-3 rounded-2xl overflow-hidden bg-gray-100 flex items-center justify-center">
-                      {product.image ? (
-                        <img 
-                          src={product.image} 
-                          alt={product.name}
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <Plus size={24} className="text-gray-300" />
-                      )}
-                      {(product.offerLabel || product.discountPrice) && (
-                        <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
-                          {product.offerLabel || 'Offer'}
-                        </div>
-                      )}
-                      <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-8 h-8 rounded-xl" />
-                    </div>
-                    <h4 className="font-bold text-sm text-[#1A1A1A] mb-1 line-clamp-1">{product.name}</h4>
-                    <p className={cn(
-                      "text-[10px] mb-1 font-bold",
-                      product.stock > 0 ? "text-gray-400" : "text-red-500"
-                    )}>
-                      {product.stock > 0 ? `${product.stock} in stock` : "Out of Stock"}
-                    </p>
-                    <div className="mb-2 min-h-[18px] flex items-center">
-                      <MultiSavingsBadge product={product} variant="pill" />
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <div className="flex flex-col">
-                        <span className="font-bold text-[#66D2A4]">₹{product.discountPrice || product.price}</span>
-                        {product.discountPrice && (
-                          <span className="text-[10px] text-gray-400 line-through">₹{product.price}</span>
-                        )}
-                      </div>
-                      <button 
-                        disabled={product.stock <= 0}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (product.stock > 0) onAddToCart(product);
-                        }}
-                        className={cn(
-                          "text-white p-2 rounded-xl transition-colors",
-                          product.stock > 0 ? "bg-[#66D2A4] hover:bg-[#55b88e]" : "bg-gray-300 cursor-not-allowed"
-                        )}
-                      >
-                        <Plus size={16} />
-                      </button>
-                    </div>
-                  </motion.div>
+                    product={product}
+                    user={user}
+                    onAddToCart={onAddToCart}
+                    navigate={navigate}
+                  />
                 ))}
               </>
             )}
           </div>
         </div>
       </div>
+
+      <LocationSelectorModal 
+        isOpen={showLocationModal} 
+        onClose={() => setShowLocationModal(false)} 
+        currentLocation={deliveryLocation || null} 
+        onSelectLocation={(loc) => onSelectDeliveryLocation?.(loc)} 
+      />
     </div>
+  );
+};
+
+const CategoryProductCard: React.FC<{
+  product: Product;
+  user: User | null;
+  onAddToCart: (p: Product, quantity?: number, variant?: ProductVariant) => void;
+  navigate: any;
+}> = ({ product, user, onAddToCart, navigate }) => {
+  const sortedVariants = useMemo(() => {
+    return product.hasVariants && product.variants ? sortVariantsByWeight(product.variants) : [];
+  }, [product.hasVariants, product.variants]);
+
+  const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(() => {
+    return sortedVariants.length > 0 ? sortedVariants[0] : null;
+  });
+
+  useEffect(() => {
+    if (sortedVariants.length > 0) {
+      setSelectedVariant(prev => {
+        if (!prev) return sortedVariants[0];
+        const match = sortedVariants.find(v => v.id === prev.id || v.weight === prev.weight);
+        return match || sortedVariants[0];
+      });
+    } else {
+      setSelectedVariant(null);
+    }
+  }, [sortedVariants]);
+
+  const effectivePrice = selectedVariant 
+    ? (selectedVariant.discountPrice || selectedVariant.price)
+    : (product.discountPrice || product.price);
+
+  const effectiveOriginalPrice = selectedVariant
+    ? (selectedVariant.discountPrice ? selectedVariant.price : null)
+    : (product.discountPrice ? product.price : null);
+
+  const effectiveStock = selectedVariant?.stock !== undefined 
+    ? selectedVariant.stock 
+    : product.stock;
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      whileHover={{ scale: 1.02 }}
+      className="bg-white rounded-[32px] p-4 shadow-sm border border-gray-50 flex flex-col cursor-pointer h-full"
+      onClick={() => navigate(`/product/${product.id}`)}
+    >
+      <div className="relative aspect-square mb-3 rounded-2xl overflow-hidden bg-gray-100 flex items-center justify-center">
+        {product.image ? (
+          <img 
+            src={product.image} 
+            alt={product.name} 
+            className="w-full h-full object-cover"
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <Plus size={24} className="text-gray-300" />
+        )}
+        {(product.offerLabel || product.discountPrice) && (
+          <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
+            {product.offerLabel || 'Offer'}
+          </div>
+        )}
+        <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-8 h-8 rounded-xl" />
+      </div>
+      <h4 className="font-bold text-sm text-[#1A1A1A] mb-1 line-clamp-1">{product.name}</h4>
+      <p className={cn(
+        "text-[10px] mb-1 font-bold",
+        effectiveStock > 0 ? "text-gray-400" : "text-red-500"
+      )}>
+        {effectiveStock > 0 ? `${effectiveStock} in stock` : "Out of Stock"}
+      </p>
+
+      {/* Weight Variant quick chips */}
+      {product.hasVariants && sortedVariants.length > 0 && (
+        <div className="mb-2 flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5" onClick={(e) => e.stopPropagation()}>
+          {sortedVariants.map((v) => {
+            const isSelected = (selectedVariant?.id && selectedVariant.id === v.id) || selectedVariant?.weight === v.weight;
+            return (
+              <button
+                key={v.id || v.weight}
+                type="button"
+                onClick={() => setSelectedVariant(v)}
+                className={cn(
+                  "text-[9px] font-extrabold px-2 py-0.5 rounded-lg border transition-all shrink-0 cursor-pointer",
+                  isSelected
+                    ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                    : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-emerald-50 hover:border-emerald-200"
+                )}
+              >
+                {v.weight}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="mb-2 min-h-[18px] flex items-center">
+        <MultiSavingsBadge product={{
+          ...product,
+          price: selectedVariant ? selectedVariant.price : product.price,
+          discountPrice: selectedVariant ? selectedVariant.discountPrice : product.discountPrice
+        }} variant="pill" />
+      </div>
+      <div className="flex justify-between items-center mt-auto">
+        <div className="flex flex-col">
+          <div className="flex items-center gap-1">
+            <span className="font-bold text-[#66D2A4]">₹{effectivePrice}</span>
+            {selectedVariant && (
+              <span className="text-[9px] font-bold text-emerald-800 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-100">
+                {selectedVariant.weight}
+              </span>
+            )}
+          </div>
+          {effectiveOriginalPrice && (
+            <span className="text-[10px] text-gray-400 line-through">₹{effectiveOriginalPrice}</span>
+          )}
+        </div>
+        <button 
+          disabled={effectiveStock <= 0}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (effectiveStock > 0) onAddToCart(product, 1, selectedVariant || undefined);
+          }}
+          className={cn(
+            "text-white p-2 rounded-xl transition-colors",
+            effectiveStock > 0 ? "bg-[#66D2A4] hover:bg-[#55b88e]" : "bg-gray-300 cursor-not-allowed"
+          )}
+        >
+          <Plus size={16} />
+        </button>
+      </div>
+    </motion.div>
   );
 };
 
@@ -327,7 +460,3 @@ const SortOption = ({ active, onClick, label }: { active: boolean, onClick: () =
     {label}
   </button>
 );
-
-function cn(...inputs: any[]) {
-  return inputs.filter(Boolean).join(' ');
-}

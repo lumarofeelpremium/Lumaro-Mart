@@ -3,6 +3,7 @@ import { X, Send, CheckCircle2, PackageCheck, Truck, Check, AlertCircle } from '
 import { Order, User, AppSettings } from '../types';
 import { formatOrderStatusWhatsAppText, sendOrderStatusWhatsAppAlert } from '../lib/receipt-utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { useModalBackHandler } from '../lib/back-button-handler';
 
 interface WhatsAppStatusAlertModalProps {
   order: Order | null;
@@ -19,6 +20,9 @@ export const WhatsAppStatusAlertModal: React.FC<WhatsAppStatusAlertModalProps> =
   storeSettings,
   onClose,
 }) => {
+  // Sync with mobile back button
+  useModalBackHandler(Boolean(order), onClose, 'whatsapp_status_modal');
+
   if (!order) return null;
 
   const rawPhone = order?.userPhone || customer?.phoneNumber || '';

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Minus, Plus, Trash2, Loader2, MapPin, X, Star, CheckCircle2, ShoppingCart, User as UserIcon, Clock, Sparkles, Zap, Smartphone, Truck, QrCode } from 'lucide-react';
+import { ChevronLeft, Minus, Plus, Trash2, Loader2, MapPin, X, Star, CheckCircle2, ShoppingCart, User as UserIcon, Clock, Sparkles, Zap, Smartphone, Truck, QrCode, AlertTriangle } from 'lucide-react';
 import { Button, Input } from '../components/ui/Base';
 import { useNavigate } from 'react-router-dom';
-import { CartItem, User, AppSettings } from '../types';
+import { CartItem, User, AppSettings, DeliveryLocation } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../firebase';
 import { cn } from '../lib/utils';
@@ -12,6 +12,8 @@ import { cacheUtils } from '../lib/cache-utils';
 import { showInterstitialAd, showRewardedAd } from '../lib/admob';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 import { UpiPaymentModal } from '../components/UpiPaymentModal';
+import { isProductDeliverable, getStateFromPincode, setStoredDeliveryLocation } from '../lib/location-utils';
+import { useModalBackHandler } from '../lib/back-button-handler';
 
 export const Cart = ({ 
   user,
@@ -19,14 +21,18 @@ export const Cart = ({
   items, 
   onUpdateQuantity, 
   onRemove, 
-  onClear 
+  onClear,
+  deliveryLocation,
+  onSelectDeliveryLocation
 }: { 
   user: User | null,
   setUser: (u: User | null) => void,
   items: CartItem[], 
   onUpdateQuantity: (id: string, q: number) => void,
   onRemove: (id: string) => void,
-  onClear: () => void
+  onClear: () => void,
+  deliveryLocation?: DeliveryLocation | null,
+  onSelectDeliveryLocation?: (loc: DeliveryLocation | null) => void
 }) => {
   const navigate = useNavigate();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -34,7 +40,7 @@ export const Cart = ({
   const [showAddressModal, setShowAddressModal] = useState(false);
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [address, setAddress] = useState(user?.address || '');
-  const [pincode, setPincode] = useState(user?.pincode || '');
+  const [pincode, setPincode] = useState(user?.pincode || deliveryLocation?.pincode || '');
   const [whatsappNumber, setWhatsappNumber] = useState('');
   const [whatsappEnabled, setWhatsappEnabled] = useState(true);
   const [orderTimingEnabled, setOrderTimingEnabled] = useState(true);
@@ -52,6 +58,33 @@ export const Cart = ({
   const [loyaltyPointsPerHundred, setLoyaltyPointsPerHundred] = useState(5);
   const [loyaltyPointValue, setLoyaltyPointValue] = useState(1);
   const [showUpiModal, setShowUpiModal] = useState(false);
+
+  // Sync mobile back button with open modals in Cart
+  useModalBackHandler(showAddressModal, () => setShowAddressModal(false), 'cart_address_modal');
+  useModalBackHandler(showLoginPrompt, () => setShowLoginPrompt(false), 'cart_login_modal');
+  useModalBackHandler(showUpiModal, () => setShowUpiModal(false), 'cart_upi_modal');
+
+  const activeDeliveryLoc = React.useMemo<DeliveryLocation | null>(() => {
+    const activePincode = (pincode || deliveryLocation?.pincode || user?.pincode || '').replace(/\D/g, '').trim();
+    if (activePincode) {
+      const state = getStateFromPincode(activePincode) || deliveryLocation?.state || undefined;
+      const district = deliveryLocation?.district;
+      return {
+        pincode: activePincode,
+        state,
+        district,
+        label: state ? `${district ? `${district}, ` : ''}${state} - ${activePincode}` : `Pincode ${activePincode}`
+      };
+    }
+    return deliveryLocation || null;
+  }, [pincode, deliveryLocation, user?.pincode]);
+
+  const undeliverableItems = React.useMemo(() => {
+    if (!activeDeliveryLoc) return [];
+    return items.filter(item => !isProductDeliverable(item, activeDeliveryLoc).deliverable);
+  }, [items, activeDeliveryLoc]);
+
+  const hasUndeliverableItems = undeliverableItems.length > 0;
 
   useEffect(() => {
     if (!user) {
@@ -197,9 +230,11 @@ export const Cart = ({
         userPhone: user!.phoneNumber || '',
         items: items.map(item => ({
           id: item.id,
-          name: item.name,
+          name: item.selectedVariant ? `${item.name} (${item.selectedVariant.weight})` : item.name,
           price: item.discountPrice || item.price,
-          quantity: item.quantity
+          quantity: item.quantity,
+          weight: item.selectedVariant?.weight || null,
+          variantId: item.selectedVariant?.id || null
           // Removed large base64 image to prevent exceeding 1MB limit
         })),
         total,
@@ -228,7 +263,8 @@ export const Cart = ({
       // Update Product Stock and Sales Count
       const batch = writeBatch(db);
       items.forEach(item => {
-        const productRef = doc(db, 'products', item.id);
+        const originalId = item.productId || item.id.split('_')[0];
+        const productRef = doc(db, 'products', originalId);
         batch.update(productRef, {
           stock: increment(-item.quantity),
           salesCount: increment(item.quantity)
@@ -431,7 +467,14 @@ export const Cart = ({
                   )}
                 </div>
                 <div className="flex-grow">
-                  <h3 className="font-bold text-[#1A1A1A]">{item.name}</h3>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <h3 className="font-bold text-[#1A1A1A]">{item.name}</h3>
+                    {item.selectedVariant && (
+                      <span className="text-[10px] font-extrabold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100">
+                        {item.selectedVariant.weight}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2">
                     <p className="text-[#66D2A4] font-bold">₹{item.discountPrice || item.price}</p>
                     {item.discountPrice && (
@@ -461,6 +504,13 @@ export const Cart = ({
                   ) : item.quantity > item.stock ? (
                     <p className="text-[10px] text-orange-500 font-bold">Only {item.stock} left</p>
                   ) : null}
+
+                  {activeDeliveryLoc && !isProductDeliverable(item, activeDeliveryLoc).deliverable && (
+                    <p className="text-[10px] text-red-600 font-bold mt-1 bg-red-50 px-2 py-0.5 rounded-md border border-red-100 flex items-center gap-1">
+                      <AlertTriangle size={11} className="shrink-0" />
+                      <span>Not deliverable to {activeDeliveryLoc.label}</span>
+                    </p>
+                  )}
                 </div>
                 <div className={cn(
                   "flex items-center gap-3 bg-[#F0F7F4] rounded-xl p-1",
@@ -639,6 +689,21 @@ export const Cart = ({
                     <span>You are saving a total of ₹{totalMrpSavings} on this order!</span>
                   </div>
                 )}
+
+                {/* Undeliverable Items Alert */}
+                {hasUndeliverableItems && (
+                  <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-xs font-bold flex items-start gap-2.5">
+                    <AlertTriangle size={18} className="shrink-0 text-red-600 mt-0.5" />
+                    <div>
+                      <p className="leading-tight">
+                        {undeliverableItems.length} item(s) cannot be delivered to {activeDeliveryLoc?.label || 'your pincode'}.
+                      </p>
+                      <p className="text-[10px] text-red-500 font-medium mt-1">
+                        Kripya undeliverable items ko cart se remove karein ya delivery pincode change karein.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Payment Method Selector */}
@@ -719,12 +784,12 @@ export const Cart = ({
               <Button 
                 className={cn(
                   "w-full py-5 text-lg rounded-3xl shadow-lg flex items-center justify-center gap-2 transition-all",
-                  (isProcessing || hasOutOfStockItems || hasInsufficientStock || !isOrderingOpen)
+                  (isProcessing || hasOutOfStockItems || hasInsufficientStock || !isOrderingOpen || hasUndeliverableItems)
                     ? "bg-gray-300 shadow-none cursor-not-allowed"
                     : "shadow-[#66D2A4]/20"
                 )}
                 onClick={handleConfirmOrder}
-                disabled={isProcessing || hasOutOfStockItems || hasInsufficientStock || !isOrderingOpen}
+                disabled={isProcessing || hasOutOfStockItems || hasInsufficientStock || !isOrderingOpen || hasUndeliverableItems}
               >
                 {isProcessing ? (
                   <>
@@ -736,6 +801,8 @@ export const Cart = ({
                   'Items Out of Stock'
                 ) : hasInsufficientStock ? (
                   'Insufficient Stock'
+                ) : hasUndeliverableItems ? (
+                  'Remove Undeliverable Items'
                 ) : paymentMethod === 'upi' ? (
                   `Pay via UPI (₹${total})`
                 ) : (
@@ -814,9 +881,15 @@ export const Cart = ({
                   <Input 
                     placeholder="6-digit pincode"
                     value={pincode}
-                    onChange={(e) => setPincode(e.target.value)}
+                    maxLength={6}
+                    onChange={(e) => setPincode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     className="bg-gray-50 border-none"
                   />
+                  {pincode.length >= 2 && getStateFromPincode(pincode) && (
+                    <p className="text-[11px] text-emerald-600 font-bold mt-1">
+                      🟢 Detected State: {getStateFromPincode(pincode)}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -824,6 +897,16 @@ export const Cart = ({
                 className="w-full py-4 rounded-2xl"
                 onClick={() => {
                   if (address && pincode) {
+                    const inferred = getStateFromPincode(pincode) || deliveryLocation?.state || undefined;
+                    const district = deliveryLocation?.district;
+                    const newLoc: DeliveryLocation = {
+                      pincode,
+                      state: inferred,
+                      district,
+                      label: inferred ? `${district ? `${district}, ` : ''}${inferred} - ${pincode}` : `Pincode ${pincode}`
+                    };
+                    setStoredDeliveryLocation(newLoc);
+                    onSelectDeliveryLocation?.(newLoc);
                     setShowAddressModal(false);
                     handleConfirmOrder();
                   } else {

@@ -18,8 +18,11 @@ import { ProductDetails } from './pages/ProductDetails';
 import { BottomNav } from './components/BottomNav';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import ScrollToTop from './components/ScrollToTop';
-import { User, CartItem, Product, Category, Banner } from './types';
+import { MobileBackButtonSync } from './components/MobileBackButtonSync';
+import { User, CartItem, Product, Category, Banner, DeliveryLocation, ProductVariant } from './types';
+import { getStoredDeliveryLocation, setStoredDeliveryLocation, getStateFromPincode } from './lib/location-utils';
 import { cacheUtils } from './lib/cache-utils';
+import { sortVariantsByWeight } from './lib/utils';
 
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -56,6 +59,21 @@ export default function App() {
   const [banners, setBanners] = useState<Banner[]>([]);
   const [initialDataLoading, setInitialDataLoading] = useState(true);
   const [isQuotaExhausted, setIsQuotaExhausted] = useState(false);
+  const [deliveryLocation, setDeliveryLocation] = useState<DeliveryLocation | null>(() => getStoredDeliveryLocation());
+
+  // Auto-sync delivery location if user has saved pincode in their profile
+  useEffect(() => {
+    if (user?.pincode && !deliveryLocation) {
+      const inferred = getStateFromPincode(user.pincode) || undefined;
+      const loc: DeliveryLocation = {
+        pincode: user.pincode,
+        state: inferred,
+        label: inferred ? `${inferred} - ${user.pincode}` : `Pincode ${user.pincode}`
+      };
+      setDeliveryLocation(loc);
+      setStoredDeliveryLocation(loc);
+    }
+  }, [user?.pincode]);
 
   useEffect(() => {
     const unsub = onQuotaExhaustedChange((exhausted) => {
@@ -249,18 +267,35 @@ export default function App() {
     };
   }, []);
 
-  const handleAddToCart = (product: Product, quantityToAdd: number = 1) => {
-    if (product.stock <= 0 || quantityToAdd <= 0) return;
+  const handleAddToCart = (product: Product, quantityToAdd: number = 1, variant?: ProductVariant) => {
+    const selectedVariant = variant || (product.hasVariants && product.variants && product.variants.length > 0 ? sortVariantsByWeight(product.variants)[0] : undefined);
+    const effectiveStock = selectedVariant?.stock !== undefined ? selectedVariant.stock : product.stock;
+    if (effectiveStock <= 0 || quantityToAdd <= 0) return;
+
+    const cartItemId = selectedVariant ? `${product.id}_${selectedVariant.id || selectedVariant.weight}` : product.id;
+    const effectivePrice = selectedVariant ? selectedVariant.price : product.price;
+    const effectiveDiscountPrice = selectedVariant ? selectedVariant.discountPrice : product.discountPrice;
     
     let newCart: CartItem[] = [];
     setCart(prev => {
-      const existing = prev.find(item => item.id === product.id);
+      const existing = prev.find(item => (item.cartItemId || item.id) === cartItemId);
       if (existing) {
         newCart = prev.map(item => 
-          item.id === product.id ? { ...item, quantity: item.quantity + quantityToAdd } : item
+          (item.cartItemId || item.id) === cartItemId ? { ...item, quantity: item.quantity + quantityToAdd } : item
         );
       } else {
-        newCart = [...prev, { ...product, quantity: quantityToAdd }];
+        const newCartItem: CartItem = {
+          ...product,
+          id: cartItemId,
+          cartItemId: cartItemId,
+          productId: product.id,
+          price: effectivePrice,
+          discountPrice: effectiveDiscountPrice,
+          stock: effectiveStock,
+          selectedVariant: selectedVariant,
+          quantity: quantityToAdd
+        };
+        newCart = [...prev, newCartItem];
       }
       
       // Update Firestore if user is logged in
@@ -341,6 +376,7 @@ export default function App() {
     <ErrorBoundary>
       <Router>
         <ScrollToTop />
+        <MobileBackButtonSync />
         <div className="max-w-md mx-auto bg-white min-h-screen relative shadow-2xl shadow-black/10 overflow-x-hidden pb-24">
           {isQuotaExhausted && (
             <div className="bg-amber-600/95 backdrop-blur-xs text-white text-[11px] font-semibold py-1.5 px-3 flex items-center justify-between sticky top-0 z-50 shadow-xs">
@@ -355,10 +391,26 @@ export default function App() {
             </div>
           )}
           <Routes>
-            <Route path="/" element={<Home user={user} onAddToCart={handleAddToCart} categories={visibleCategories} allProducts={visibleProducts} banners={banners} initialDataLoading={initialDataLoading} />} />
+            <Route path="/" element={<Home 
+              user={user} 
+              onAddToCart={handleAddToCart} 
+              categories={visibleCategories} 
+              allProducts={visibleProducts} 
+              banners={banners} 
+              initialDataLoading={initialDataLoading}
+              deliveryLocation={deliveryLocation}
+              onSelectDeliveryLocation={setDeliveryLocation}
+            />} />
             <Route path="/signup" element={<Signup setUser={setUser} />} />
             <Route path="/login" element={<Login setUser={setUser} />} />
-            <Route path="/categories" element={<Categories user={user} onAddToCart={handleAddToCart} categories={visibleCategories} allProducts={visibleProducts} />} />
+            <Route path="/categories" element={<Categories 
+              user={user} 
+              onAddToCart={handleAddToCart} 
+              categories={visibleCategories} 
+              allProducts={visibleProducts}
+              deliveryLocation={deliveryLocation}
+              onSelectDeliveryLocation={setDeliveryLocation}
+            />} />
             <Route path="/cart" element={<Cart 
               user={user}
               setUser={setUser}
@@ -366,8 +418,15 @@ export default function App() {
               onUpdateQuantity={handleUpdateQuantity} 
               onRemove={handleRemoveFromCart}
               onClear={handleClearCart}
+              deliveryLocation={deliveryLocation}
+              onSelectDeliveryLocation={setDeliveryLocation}
             />} />
-            <Route path="/product/:id" element={<ProductDetails user={user} onAddToCart={handleAddToCart} />} />
+            <Route path="/product/:id" element={<ProductDetails 
+              user={user} 
+              onAddToCart={handleAddToCart}
+              deliveryLocation={deliveryLocation}
+              onSelectDeliveryLocation={setDeliveryLocation}
+            />} />
             <Route path="/order-confirmation" element={<OrderConfirmation />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/my-orders" element={<MyOrders user={user} />} />

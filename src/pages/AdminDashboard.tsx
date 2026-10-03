@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle, QrCode, ArrowUpDown, Award, Sparkles, Gift, Wallet } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle, QrCode, ArrowUpDown, Award, Sparkles, Gift, Wallet, Globe, MapPin, Building2, Zap, Share2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
-import { User, Product, Category, Order, AppSettings, Banner } from '../types';
+import { User, Product, Category, Order, AppSettings, Banner, ProductVariant } from '../types';
 import { auth, db } from '../firebase';
 import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, where, getDoc, getDocs, increment, writeBatch, deleteField, limit } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
-import { compressImage } from '../lib/utils';
+import { compressImage, sortVariantsByWeight } from '../lib/utils';
 import { cacheUtils } from '../lib/cache-utils';
+import { INDIAN_STATES, POPULAR_INDIAN_STATES, getDistrictsForState } from '../lib/location-utils';
 import * as XLSX from 'xlsx';
-import { useReactToPrint } from 'react-to-print';
-import { downloadReceiptPdf, sendWhatsAppBill, sendOrderStatusWhatsAppAlert, calculateEarnedPoints } from '../lib/receipt-utils';
+import { downloadReceiptPdf, sendWhatsAppBill, sendOrderStatusWhatsAppAlert, calculateEarnedPoints, printIsolatedElement, shareReceiptPdf } from '../lib/receipt-utils';
+import { downloadSalesExcel, shareSalesExcel } from '../lib/excel-utils';
 import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
 import { WhatsAppStatusAlertModal } from '../components/WhatsAppStatusAlertModal';
@@ -19,6 +20,7 @@ import { OrderStatusTracker } from '../components/OrderStatusTracker';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 import { showBannerAd, showInterstitialAd, showRewardedAd, ADMOB_TEST_IDS } from '../lib/admob';
 import { QRCodeSVG } from 'qrcode.react';
+import { useModalBackHandler } from '../lib/back-button-handler';
 
 export const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -148,8 +150,9 @@ export const AdminDashboard = () => {
       setUsers(fetchedUsers);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
 
-    const unsubProducts = onSnapshot(query(collection(db, 'products'), orderBy('name')), (snapshot) => {
+    const unsubProducts = onSnapshot(collection(db, 'products'), (snapshot) => {
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      prods.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       setProducts(prods);
       try {
         // Strip heavy base64 strings so localStorage stays slim, but preserve all products
@@ -1590,7 +1593,7 @@ const ProductList = ({
   onPageChange: (page: number) => void
 }) => {
   const [isAlertsExpanded, setIsAlertsExpanded] = useState(false);
-  const [filterTab, setFilterTab] = useState<'all' | 'popular' | 'low-stock'>('all');
+  const [filterTab, setFilterTab] = useState<'all' | 'popular' | 'low-stock' | 'all-india' | 'states' | 'districts' | 'pincodes'>('all');
   const lowStockItems = products.filter(p => p.stock <= stockThreshold);
   
   const hiddenCategoryNames = useMemo(() => {
@@ -1630,6 +1633,8 @@ const ProductList = ({
     return map;
   }, [sortedPopularProducts]);
 
+  const [itemsPerPage, setItemsPerPage] = useState<number>(25);
+
   const displayedSourceList = useMemo(() => {
     if (filterTab === 'popular') {
       return sortedPopularProducts;
@@ -1637,16 +1642,27 @@ const ProductList = ({
     if (filterTab === 'low-stock') {
       return lowStockItems;
     }
+    if (filterTab === 'all-india') {
+      return products.filter(p => !p.availabilityType || p.availabilityType === 'all' || (!p.availableStates?.length && !p.availablePincodes?.length));
+    }
+    if (filterTab === 'states') {
+      return products.filter(p => p.availabilityType === 'states' && p.availableStates && p.availableStates.length > 0);
+    }
+    if (filterTab === 'districts') {
+      return products.filter(p => p.availabilityType === 'districts' && p.availableDistricts && p.availableDistricts.length > 0);
+    }
+    if (filterTab === 'pincodes') {
+      return products.filter(p => p.availabilityType === 'pincodes' && p.availablePincodes && p.availablePincodes.length > 0);
+    }
     return products;
   }, [filterTab, products, sortedPopularProducts, lowStockItems]);
 
   const filteredProducts = displayedSourceList.filter(p => 
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    p.category.toLowerCase().includes(searchQuery.toLowerCase())
+    (p.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (p.category || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const itemsPerPage = 10;
-  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage));
   const paginatedProducts = filteredProducts.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
@@ -1782,6 +1798,66 @@ const ProductList = ({
           >
             Low Stock ({lowStockItems.length})
           </button>
+          <button
+            onClick={() => {
+              setFilterTab('all-india');
+              onPageChange(1);
+            }}
+            className={cn(
+              "px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1",
+              filterTab === 'all-india'
+                ? "bg-emerald-600 text-white shadow-sm"
+                : "bg-white text-emerald-700 hover:bg-emerald-50 border border-emerald-100"
+            )}
+          >
+            <Globe size={13} />
+            All India ({products.filter(p => !p.availabilityType || p.availabilityType === 'all' || (!p.availableStates?.length && !p.availablePincodes?.length)).length})
+          </button>
+          <button
+            onClick={() => {
+              setFilterTab('states');
+              onPageChange(1);
+            }}
+            className={cn(
+              "px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1",
+              filterTab === 'states'
+                ? "bg-blue-600 text-white shadow-sm"
+                : "bg-white text-blue-700 hover:bg-blue-50 border border-blue-100"
+            )}
+          >
+            <Building2 size={13} />
+            State-Specific ({products.filter(p => p.availabilityType === 'states' && p.availableStates && p.availableStates.length > 0).length})
+          </button>
+          <button
+            onClick={() => {
+              setFilterTab('districts');
+              onPageChange(1);
+            }}
+            className={cn(
+              "px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1",
+              filterTab === 'districts'
+                ? "bg-amber-600 text-white shadow-sm"
+                : "bg-white text-amber-700 hover:bg-amber-50 border border-amber-100"
+            )}
+          >
+            <Layers size={13} />
+            District-Specific ({products.filter(p => p.availabilityType === 'districts' && p.availableDistricts && p.availableDistricts.length > 0).length})
+          </button>
+          <button
+            onClick={() => {
+              setFilterTab('pincodes');
+              onPageChange(1);
+            }}
+            className={cn(
+              "px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1",
+              filterTab === 'pincodes'
+                ? "bg-purple-600 text-white shadow-sm"
+                : "bg-white text-purple-700 hover:bg-purple-50 border border-purple-100"
+            )}
+          >
+            <MapPin size={13} />
+            Pincode-Specific ({products.filter(p => p.availabilityType === 'pincodes' && p.availablePincodes && p.availablePincodes.length > 0).length})
+          </button>
         </div>
 
         {/* Popular items explanation banner */}
@@ -1891,7 +1967,30 @@ const ProductList = ({
                         <p className="text-[8px] text-red-400 line-through">₹{product.price}</p>
                       )}
                       <span className="text-[10px] text-gray-400">• {product.stock} in stock • {product.category}</span>
+                      {product.hasVariants && product.variants && product.variants.length > 0 && (
+                        <span className="text-[9px] px-2 py-0.5 rounded-full font-bold bg-teal-50 text-teal-800 border border-teal-200 flex items-center gap-1">
+                          ⚖️ {product.variants.length} Weights ({sortVariantsByWeight(product.variants).map(v => v.weight).join(', ')})
+                        </span>
+                      )}
                       <MultiSavingsBadge product={product} variant="pill" />
+                      {/* Delivery Availability Badge */}
+                      {product.availabilityType === 'districts' && product.availableDistricts && product.availableDistricts.length > 0 ? (
+                        <span className="text-[9px] px-2 py-0.5 rounded-full font-bold bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1">
+                          🏘️ {product.availableDistricts.length} District{product.availableDistricts.length > 1 ? 's' : ''} ({product.availableDistricts.slice(0, 2).join(', ')}{product.availableDistricts.length > 2 ? '...' : ''})
+                        </span>
+                      ) : product.availabilityType === 'states' && product.availableStates && product.availableStates.length > 0 ? (
+                        <span className="text-[9px] px-2 py-0.5 rounded-full font-bold bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1">
+                          🏛️ {product.availableStates.length} State{product.availableStates.length > 1 ? 's' : ''} ({product.availableStates.slice(0, 2).join(', ')}{product.availableStates.length > 2 ? '...' : ''})
+                        </span>
+                      ) : product.availabilityType === 'pincodes' && product.availablePincodes && product.availablePincodes.length > 0 ? (
+                        <span className="text-[9px] px-2 py-0.5 rounded-full font-bold bg-purple-50 text-purple-700 border border-purple-200 flex items-center gap-1">
+                          📮 {product.availablePincodes.length} Pincodes
+                        </span>
+                      ) : (
+                        <span className="text-[9px] px-2 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-0.5">
+                          <Globe size={9} /> All India
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1930,6 +2029,34 @@ const ProductList = ({
             );
           })
         )}
+
+        {/* Page size & count indicator */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-4 border-t border-gray-100 text-xs text-gray-500">
+          <p className="font-medium">
+            Showing <strong>{paginatedProducts.length}</strong> of <strong>{filteredProducts.length}</strong> products (Total in database: {products.length})
+          </p>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-bold text-gray-400">Items per page:</span>
+            {[10, 25, 50, 100, 9999].map(num => (
+              <button
+                key={num}
+                type="button"
+                onClick={() => {
+                  setItemsPerPage(num);
+                  onPageChange(1);
+                }}
+                className={cn(
+                  "px-2.5 py-1 rounded-lg text-xs font-bold transition-all",
+                  itemsPerPage === num
+                    ? "bg-[#1A1A1A] text-white shadow-2xs"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                )}
+              >
+                {num === 9999 ? 'All' : num}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* Pagination Controls */}
         {totalPages > 1 && (
@@ -2275,11 +2402,6 @@ const OrderList = ({
   const [previewOrder, setPreviewOrder] = useState<Order | null>(null);
   const [previewCustomer, setPreviewCustomer] = useState<User | null>(null);
   const printReceiptRef = useRef<HTMLDivElement>(null);
-
-  const handleTriggerPrint = useReactToPrint({
-    contentRef: printReceiptRef,
-    documentTitle: printingOrder?.id ? `Bill-${printingOrder.id.slice(-6)}` : 'Order-Bill',
-  });
 
   const fetchCustomerForOrder = async (order: Order): Promise<User | null> => {
     try {
@@ -2703,15 +2825,89 @@ const OrderList = ({
 
 const SalesReport = ({ orders }: { orders: Order[] }) => {
   const componentRef = useRef<HTMLDivElement>(null);
-  const [timeframe, setTimeframe] = useState<'today' | 'week' | 'month' | 'year' | 'all'>('all');
+  const [timeframe, setTimeframe] = useState<'today' | 'week' | 'month' | 'year' | 'custom' | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<Order['status'] | 'all'>('all');
+  const [customStartDate, setCustomStartDate] = useState<string>('');
+  const [customEndDate, setCustomEndDate] = useState<string>('');
+  const [isFetchingDateRange, setIsFetchingDateRange] = useState<boolean>(false);
+  const [fetchedRangeOrders, setFetchedRangeOrders] = useState<Order[] | null>(null);
+  const [isDownloadingExcel, setIsDownloadingExcel] = useState<boolean>(false);
+  const [isSharingExcel, setIsSharingExcel] = useState<boolean>(false);
 
-  const handlePrint = useReactToPrint({
-    contentRef: componentRef,
-  });
+  // Quick preset helper for custom date range
+  const setQuickRange = (type: 'last7' | 'last30' | 'thisMonth' | 'lastMonth') => {
+    const now = new Date();
+    const formatDate = (d: Date) => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    if (type === 'last7') {
+      const start = new Date();
+      start.setDate(now.getDate() - 7);
+      setCustomStartDate(formatDate(start));
+      setCustomEndDate(formatDate(now));
+    } else if (type === 'last30') {
+      const start = new Date();
+      start.setDate(now.getDate() - 30);
+      setCustomStartDate(formatDate(start));
+      setCustomEndDate(formatDate(now));
+    } else if (type === 'thisMonth') {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      setCustomStartDate(formatDate(start));
+      setCustomEndDate(formatDate(now));
+    } else if (type === 'lastMonth') {
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const end = new Date(now.getFullYear(), now.getMonth(), 0);
+      setCustomStartDate(formatDate(start));
+      setCustomEndDate(formatDate(end));
+    }
+  };
+
+  // Fetch older orders matching custom range directly from Firebase if needed
+  const handleFetchCustomRangeFromFirebase = async () => {
+    if (!customStartDate && !customEndDate) return;
+    setIsFetchingDateRange(true);
+    try {
+      const start = customStartDate ? new Date(customStartDate) : new Date(2020, 0, 1);
+      start.setHours(0, 0, 0, 0);
+      const end = customEndDate ? new Date(customEndDate) : new Date();
+      end.setHours(23, 59, 59, 999);
+
+      // Query from Firestore
+      const q = query(
+        collection(db, 'orders'),
+        where('createdAt', '>=', start),
+        where('createdAt', '<=', end),
+        orderBy('createdAt', 'desc')
+      );
+      const snap = await getDocs(q);
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
+      setFetchedRangeOrders(list);
+    } catch (err) {
+      console.warn('Direct range query failed, fetching recent fallback:', err);
+      try {
+        const snapAll = await getDocs(query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(400)));
+        const list = snapAll.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
+        setFetchedRangeOrders(list);
+      } catch (e2) {
+        console.error('Fallback query error:', e2);
+      }
+    } finally {
+      setIsFetchingDateRange(false);
+    }
+  };
+
+  const handlePrint = () => {
+    if (!componentRef.current) return;
+    printIsolatedElement(componentRef.current, `LumaroMart-Sales-Report-${timeframe}`);
+  };
 
   const filterOrders = () => {
-    let filtered = [...orders];
+    const baseOrders = (timeframe === 'custom' && fetchedRangeOrders) ? fetchedRangeOrders : orders;
+    let filtered = [...baseOrders];
     const now = new Date();
 
     if (statusFilter !== 'all') {
@@ -2720,7 +2916,10 @@ const SalesReport = ({ orders }: { orders: Order[] }) => {
 
     if (timeframe !== 'all') {
       filtered = filtered.filter(o => {
-        const orderDate = o.createdAt?.toDate ? o.createdAt.toDate() : new Date();
+        const orderDate = o.createdAt?.toDate 
+          ? o.createdAt.toDate() 
+          : (o.createdAt?.seconds ? new Date(o.createdAt.seconds * 1000) : new Date());
+
         if (timeframe === 'today') {
           return orderDate.toDateString() === now.toDateString();
         }
@@ -2735,6 +2934,19 @@ const SalesReport = ({ orders }: { orders: Order[] }) => {
         if (timeframe === 'year') {
           return orderDate.getFullYear() === now.getFullYear();
         }
+        if (timeframe === 'custom') {
+          if (customStartDate) {
+            const start = new Date(customStartDate);
+            start.setHours(0, 0, 0, 0);
+            if (orderDate < start) return false;
+          }
+          if (customEndDate) {
+            const end = new Date(customEndDate);
+            end.setHours(23, 59, 59, 999);
+            if (orderDate > end) return false;
+          }
+          return true;
+        }
         return true;
       });
     }
@@ -2743,36 +2955,31 @@ const SalesReport = ({ orders }: { orders: Order[] }) => {
 
   const currentOrders = filterOrders();
 
-  const downloadExcel = () => {
-    const data = currentOrders.flatMap(o => o.items.map(item => {
-        const orderDate = o.createdAt?.toDate ? o.createdAt.toDate() : null;
-        const formattedDate = orderDate 
-            ? `${String(orderDate.getDate()).padStart(2, '0')}/${String(orderDate.getMonth() + 1).padStart(2, '0')}/${orderDate.getFullYear()}`
-            : 'N/A';
-            
-        return {
-            'Date': formattedDate,
-            'Order ID': o.id,
-            'Customer': o.userName || 'N/A',
-            'Customer Mobile': o.userPhone || 'N/A',
-            'Product': item.name,
-            'Qty': item.quantity,
-            'Price': item.price,
-            'Total Item Price': item.price * item.quantity,
-            'Discount (Points)': o.pointsRedeemed || 0,
-            'Delivery': o.delivery || 0,
-            'Grand Total': o.total,
-            'Status': o.status.toUpperCase()
-        };
-    }));
-
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Sales Report");
-    XLSX.writeFile(workbook, `LumaroMart_Sales_Report_${timeframe}_${new Date().toLocaleDateString()}.xlsx`);
+  const handleDownloadExcel = async () => {
+    setIsDownloadingExcel(true);
+    try {
+      const label = timeframe === 'custom' 
+        ? `${customStartDate || 'start'}_to_${customEndDate || 'end'}` 
+        : timeframe;
+      await downloadSalesExcel(currentOrders, label);
+    } finally {
+      setIsDownloadingExcel(false);
+    }
   };
 
-  const totalSales = currentOrders.reduce((sum, o) => sum + o.total, 0);
+  const handleShareExcel = async () => {
+    setIsSharingExcel(true);
+    try {
+      const label = timeframe === 'custom' 
+        ? `${customStartDate || 'start'}_to_${customEndDate || 'end'}` 
+        : timeframe;
+      await shareSalesExcel(currentOrders, label);
+    } finally {
+      setIsSharingExcel(false);
+    }
+  };
+
+  const totalSales = currentOrders.reduce((sum, o) => sum + (o.total || 0), 0);
   const totalOrders = currentOrders.length;
   const successfulOrders = currentOrders.filter(o => o.status === 'delivered').length;
   const canceledOrders = currentOrders.filter(o => o.status === 'canceled').length;
@@ -2780,21 +2987,21 @@ const SalesReport = ({ orders }: { orders: Order[] }) => {
   return (
     <div className="space-y-6">
       {/* Date Range & Status Filters */}
-      <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
+      <div className="bg-white p-5 sm:p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex-grow min-w-[200px]">
-            <label className="text-[10px] font-bold text-gray-400 uppercase mb-2 block">Timeframe</label>
-            <div className="flex gap-2 overflow-x-auto no-scrollbar">
-              {(['all', 'today', 'week', 'month', 'year'] as const).map(t => (
+            <label className="text-[10px] font-bold text-gray-400 uppercase mb-2 block">Timeframe Period</label>
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+              {(['all', 'today', 'week', 'month', 'year', 'custom'] as const).map(t => (
                 <button
                   key={t}
                   onClick={() => setTimeframe(t)}
                   className={cn(
-                    "px-4 py-2 rounded-xl text-[10px] font-bold uppercase transition-all whitespace-nowrap",
-                    timeframe === t ? "bg-[#66D2A4] text-white" : "bg-gray-50 text-gray-400 hover:bg-gray-100"
+                    "px-3.5 py-2 rounded-xl text-[10px] font-bold uppercase transition-all whitespace-nowrap cursor-pointer",
+                    timeframe === t ? "bg-[#66D2A4] text-white shadow-xs" : "bg-gray-50 text-gray-400 hover:bg-gray-100"
                   )}
                 >
-                  {t}
+                  {t === 'custom' ? '📅 Custom Period' : t}
                 </button>
               ))}
             </div>
@@ -2804,7 +3011,7 @@ const SalesReport = ({ orders }: { orders: Order[] }) => {
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="w-full bg-gray-50 border-none rounded-xl py-2 px-3 text-[10px] font-bold uppercase outline-none"
+              className="w-full bg-gray-50 border-none rounded-xl py-2 px-3 text-[10px] font-bold uppercase outline-none cursor-pointer"
             >
               <option value="all">All Status</option>
               <option value="pending">Pending</option>
@@ -2815,22 +3022,126 @@ const SalesReport = ({ orders }: { orders: Order[] }) => {
           </div>
         </div>
 
-        <div className="flex gap-3 pt-2">
+        {/* Custom Date Range Picker */}
+        {timeframe === 'custom' && (
+          <div className="p-4 bg-teal-50/60 border border-teal-100/80 rounded-2xl space-y-3 animate-in fade-in duration-200">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold text-teal-900 flex items-center gap-1.5">
+                <span>📅 Manchaha Period (Custom Date Range Select Karein)</span>
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setQuickRange('last7')}
+                  className="px-2.5 py-1 text-[10px] font-bold bg-white text-teal-700 rounded-lg border border-teal-200 hover:bg-teal-50 active:scale-95 transition cursor-pointer"
+                >
+                  Last 7 Days
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQuickRange('last30')}
+                  className="px-2.5 py-1 text-[10px] font-bold bg-white text-teal-700 rounded-lg border border-teal-200 hover:bg-teal-50 active:scale-95 transition cursor-pointer"
+                >
+                  Last 30 Days
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQuickRange('thisMonth')}
+                  className="px-2.5 py-1 text-[10px] font-bold bg-white text-teal-700 rounded-lg border border-teal-200 hover:bg-teal-50 active:scale-95 transition cursor-pointer"
+                >
+                  This Month
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQuickRange('lastMonth')}
+                  className="px-2.5 py-1 text-[10px] font-bold bg-white text-teal-700 rounded-lg border border-teal-200 hover:bg-teal-50 active:scale-95 transition cursor-pointer"
+                >
+                  Last Month
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 items-end">
+              <div>
+                <label className="text-[10px] font-bold text-teal-800 uppercase mb-1 block">From Date (Kahan Se)</label>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="w-full bg-white border border-teal-200 rounded-xl px-3 py-2 text-xs font-medium text-gray-800 outline-none focus:ring-2 focus:ring-teal-400"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-teal-800 uppercase mb-1 block">To Date (Kahan Tak)</label>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="w-full bg-white border border-teal-200 rounded-xl px-3 py-2 text-xs font-medium text-gray-800 outline-none focus:ring-2 focus:ring-teal-400"
+                />
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={handleFetchCustomRangeFromFirebase}
+                  disabled={isFetchingDateRange || (!customStartDate && !customEndDate)}
+                  className="w-full py-2 px-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-2xs active:scale-95 disabled:opacity-50 cursor-pointer"
+                >
+                  {isFetchingDateRange ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                  <span>Firebase Se Range Load Karein</span>
+                </button>
+              </div>
+            </div>
+
+            {fetchedRangeOrders && (
+              <p className="text-[11px] text-teal-800 font-semibold">
+                ✓ Firebase se is range ke total <strong>{fetchedRangeOrders.length} orders</strong> load ho chuke hain!
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Action Buttons: Mobile & Desktop Synced */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2">
           <Button 
-            onClick={downloadExcel} 
+            onClick={handleDownloadExcel} 
+            disabled={isDownloadingExcel}
             variant="secondary" 
-            className="flex-grow py-3 flex items-center justify-center gap-2 text-xs"
+            className="py-3 flex items-center justify-center gap-2 text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 active:scale-95 transition cursor-pointer"
           >
-            <Download size={16} /> Excel Download
+            {isDownloadingExcel ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+            <span>Excel Download (.xlsx)</span>
           </Button>
+
           <Button 
-            onClick={() => handlePrint()} 
-            className="flex-grow py-3 flex items-center justify-center gap-2 text-xs"
+            onClick={handleShareExcel} 
+            disabled={isSharingExcel}
+            className="py-3 flex items-center justify-center gap-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white border-none active:scale-95 transition cursor-pointer"
           >
-            <Printer size={16} /> Print Report
+            {isSharingExcel ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} />}
+            <span>Mobile Share / WhatsApp</span>
+          </Button>
+
+          <Button 
+            onClick={handlePrint} 
+            className="py-3 flex items-center justify-center gap-2 text-xs font-bold bg-gray-900 hover:bg-black text-white border-none active:scale-95 transition cursor-pointer"
+          >
+            <Printer size={16} />
+            <span>Print Report (Mobile & PC)</span>
           </Button>
         </div>
+
+        {/* Mobile & Excel Tips */}
+        <div className="p-3 bg-gray-50 rounded-2xl text-[11px] text-gray-500 space-y-1">
+          <p>
+            📊 <strong className="text-gray-800">Clean Excel Layout:</strong> Har order me customer ka naam, delivery charge, loyalty points aur grand total sirf <strong>pehle product ki line</strong> par aayega, aur baaki items clean alag lines par bina repetition ke show honge!
+          </p>
+          <p>
+            📱 <strong className="text-gray-800">Mobile Bluetooth Print:</strong> Mobile par <strong className="text-gray-900">Print Report</strong> dabayein to direct Android Print Spooler open hota hai, jahan Bluetooth ya WiFi printer select karke direct print kar sakte hain.
+          </p>
+        </div>
       </div>
+
 
       {/* Summary Stats */}
       <div className="grid grid-cols-3 gap-3">
@@ -2967,11 +3278,6 @@ const OrderDetailsModal = ({
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [showReceiptPreview, setShowReceiptPreview] = useState(false);
   const printReceiptRef = useRef<HTMLDivElement>(null);
-
-  const handlePrint = useReactToPrint({
-    contentRef: printReceiptRef,
-    documentTitle: order?.id ? `Bill-${order.id.slice(-6)}` : 'Order-Bill',
-  });
 
   const handleWhatsApp = () => {
     sendWhatsAppBill(order, customer, storeSettings);
@@ -4161,7 +4467,42 @@ const ProductFormModal = ({
     image: '',
     description: ''
   });
+  const [availabilityType, setAvailabilityType] = useState<'all' | 'states' | 'districts' | 'pincodes'>(() => {
+    if (product?.availabilityType) return product.availabilityType;
+    if (product?.availableDistricts && product.availableDistricts.length > 0) return 'districts';
+    if (product?.availableStates && product.availableStates.length > 0) return 'states';
+    if (product?.availablePincodes && product.availablePincodes.length > 0) return 'pincodes';
+    return 'all';
+  });
+  const [selectedStates, setSelectedStates] = useState<string[]>(product?.availableStates || []);
+  const [districtParentState, setDistrictParentState] = useState<string>(
+    product?.availableStates?.[0] || 'Uttar Pradesh'
+  );
+  const [selectedDistricts, setSelectedDistricts] = useState<string[]>(product?.availableDistricts || []);
+  const [districtSearch, setDistrictSearch] = useState('');
+  const [pincodesInput, setPincodesInput] = useState<string>((product?.availablePincodes || []).join(', '));
+  const [stateSearch, setStateSearch] = useState('');
   const [uploading, setUploading] = useState(false);
+
+  // Sync with mobile hardware/gesture back button
+  useModalBackHandler(true, onClose, 'admin_product_form');
+  const [hasVariants, setHasVariants] = useState<boolean>(product?.hasVariants || false);
+  const [hasBulkDiscount, setHasBulkDiscount] = useState<boolean>(() => {
+    return Boolean(product?.bulkDiscountQty && product.bulkDiscountQty > 1);
+  });
+  const [variants, setVariants] = useState<ProductVariant[]>(() => {
+    if (product?.variants && product.variants.length > 0) {
+      return sortVariantsByWeight(product.variants);
+    }
+    const basePrice = product?.price || 50;
+    const baseDiscountPrice = product?.discountPrice || 45;
+    return sortVariantsByWeight([
+      { id: 'v_100g', weight: '100g', price: Math.round(basePrice * 0.25) || 20, discountPrice: Math.round(baseDiscountPrice * 0.25) || 18, stock: 50 },
+      { id: 'v_250g', weight: '250g', price: Math.round(basePrice * 0.5) || 35, discountPrice: Math.round(baseDiscountPrice * 0.5) || 30, stock: 50 },
+      { id: 'v_500g', weight: '500g', price: basePrice, discountPrice: baseDiscountPrice, stock: 50 },
+      { id: 'v_1kg', weight: '1kg', price: Math.round(basePrice * 1.9) || 95, discountPrice: Math.round(baseDiscountPrice * 1.9) || 85, stock: 50 }
+    ]);
+  });
 
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -4226,7 +4567,7 @@ const ProductFormModal = ({
         }
       }
 
-      if (finalData.bulkDiscountQty === undefined || finalData.bulkDiscountQty === null || finalData.bulkDiscountQty === 0) {
+      if (!hasBulkDiscount || finalData.bulkDiscountQty === undefined || finalData.bulkDiscountQty === null || finalData.bulkDiscountQty === 0) {
         if (mode === 'edit') {
           // @ts-ignore
           finalData.bulkDiscountQty = deleteField();
@@ -4235,7 +4576,7 @@ const ProductFormModal = ({
         }
       }
 
-      if (finalData.bulkDiscountPrice === undefined || finalData.bulkDiscountPrice === null || finalData.bulkDiscountPrice === 0) {
+      if (!hasBulkDiscount || finalData.bulkDiscountPrice === undefined || finalData.bulkDiscountPrice === null || finalData.bulkDiscountPrice === 0) {
         if (mode === 'edit') {
           // @ts-ignore
           finalData.bulkDiscountPrice = deleteField();
@@ -4244,7 +4585,7 @@ const ProductFormModal = ({
         }
       }
 
-      if (!finalData.bulkDiscountLabel || finalData.bulkDiscountLabel.trim() === '') {
+      if (!hasBulkDiscount || !finalData.bulkDiscountLabel || finalData.bulkDiscountLabel.trim() === '') {
         if (mode === 'edit') {
           // @ts-ignore
           finalData.bulkDiscountLabel = deleteField();
@@ -4264,6 +4605,100 @@ const ProductFormModal = ({
         } else {
           delete finalData.isPopular;
           delete finalData.popularUpdatedAt;
+        }
+      }
+
+      // Handle Regional / Delivery Availability
+      finalData.availabilityType = availabilityType;
+      if (availabilityType === 'districts') {
+        finalData.availableDistricts = selectedDistricts;
+        finalData.availableStates = [districtParentState];
+        if (mode === 'edit') {
+          // @ts-ignore
+          finalData.availablePincodes = deleteField();
+        } else {
+          delete finalData.availablePincodes;
+        }
+      } else if (availabilityType === 'states') {
+        finalData.availableStates = selectedStates;
+        if (mode === 'edit') {
+          // @ts-ignore
+          finalData.availablePincodes = deleteField();
+          // @ts-ignore
+          finalData.availableDistricts = deleteField();
+        } else {
+          delete finalData.availablePincodes;
+          delete finalData.availableDistricts;
+        }
+      } else if (availabilityType === 'pincodes') {
+        const parsedPincodes = pincodesInput
+          .split(/[\s,]+/)
+          .map(p => p.replace(/\D/g, '').trim())
+          .filter(p => p.length === 6);
+        finalData.availablePincodes = parsedPincodes;
+        if (mode === 'edit') {
+          // @ts-ignore
+          finalData.availableStates = deleteField();
+          // @ts-ignore
+          finalData.availableDistricts = deleteField();
+        } else {
+          delete finalData.availableStates;
+          delete finalData.availableDistricts;
+        }
+      } else {
+        // 'all' availability (Pan-India)
+        if (mode === 'edit') {
+          // @ts-ignore
+          finalData.availableStates = deleteField();
+          // @ts-ignore
+          finalData.availablePincodes = deleteField();
+          // @ts-ignore
+          finalData.availableDistricts = deleteField();
+        } else {
+          delete finalData.availableStates;
+          delete finalData.availablePincodes;
+          delete finalData.availableDistricts;
+        }
+      }
+
+      // Handle Weight Variants
+      if (hasVariants && variants.length > 0) {
+        const cleanVariants = sortVariantsByWeight(
+          variants
+            .filter(v => v.weight && v.weight.trim() !== '')
+            .map((v, idx) => ({
+              id: v.id || `v_${idx}_${Date.now()}`,
+              weight: v.weight.trim(),
+              price: Number(v.price) || 0,
+              discountPrice: v.discountPrice ? Number(v.discountPrice) : undefined,
+              stock: v.stock !== undefined ? Number(v.stock) : Number(formData.stock) || 50
+            }))
+        );
+        
+        if (cleanVariants.length > 0) {
+          finalData.hasVariants = true;
+          finalData.variants = cleanVariants;
+          // Set base price from first variant to ensure list & sorting consistency
+          finalData.price = cleanVariants[0].price;
+          if (cleanVariants[0].discountPrice) {
+            finalData.discountPrice = cleanVariants[0].discountPrice;
+          }
+        } else {
+          finalData.hasVariants = false;
+          if (mode === 'edit') {
+            // @ts-ignore
+            finalData.variants = deleteField();
+          } else {
+            delete finalData.variants;
+          }
+        }
+      } else {
+        finalData.hasVariants = false;
+        if (mode === 'edit') {
+          // @ts-ignore
+          finalData.variants = deleteField();
+        } else {
+          delete finalData.variants;
         }
       }
 
@@ -4287,7 +4722,7 @@ const ProductFormModal = ({
         initial={{ y: '100%' }}
         animate={{ y: 0 }}
         exit={{ y: '100%' }}
-        className="bg-white w-full max-w-md rounded-t-[40px] sm:rounded-[40px] p-8 max-h-[90vh] overflow-y-auto"
+        className="bg-white w-full max-w-2xl rounded-t-[32px] sm:rounded-[36px] p-4 sm:p-6 md:p-8 max-h-[92vh] overflow-y-auto overflow-x-hidden shadow-2xl"
       >
         <div className="flex justify-between items-center mb-8">
           <h2 className="text-2xl font-bold text-[#1A1A1A]">
@@ -4392,49 +4827,369 @@ const ProductFormModal = ({
           </div>
 
           {/* Multi-Quantity / Bulk Discount Settings */}
-          <div className="p-3.5 rounded-2xl bg-emerald-50/50 border border-emerald-100 space-y-3">
+          <div className="p-4 rounded-3xl bg-emerald-50/60 border border-emerald-100 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-emerald-800">
-                ⚡ Multi-Quantity Savings Settings (Optional)
-              </span>
-              <span className="text-[10px] text-emerald-600 font-medium">Automatic badge if regular discount exists</span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-gray-500 ml-1">Min Quantity for Special Bulk Price</label>
-                <Input 
-                  type="number"
-                  min="2"
-                  value={formData.bulkDiscountQty !== undefined ? formData.bulkDiscountQty : ''}
-                  onChange={e => {
-                    const val = e.target.value;
-                    setFormData({ ...formData, bulkDiscountQty: val === '' ? undefined : Math.max(2, Number(val)) });
-                  }}
-                  placeholder="e.g. 2 or 3"
-                />
+              <div className="flex flex-col pr-4">
+                <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                  <Zap size={15} className="text-amber-500 fill-amber-500" />
+                  ⚡ Multi-Quantity Savings Settings (Optional)
+                </span>
+                <span className="text-[10px] text-emerald-700">
+                  2 ya usse zyada quantity lene par special discounted price offer karein (e.g. 2 lene par ₹85/unit).
+                </span>
               </div>
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-gray-500 ml-1">Special Bulk Unit Price (₹)</label>
-                <Input 
-                  type="number"
-                  min="0"
-                  value={formData.bulkDiscountPrice !== undefined ? formData.bulkDiscountPrice : ''}
-                  onChange={e => {
-                    const val = e.target.value;
-                    setFormData({ ...formData, bulkDiscountPrice: val === '' ? undefined : Math.max(0, Number(val)) });
-                  }}
-                  placeholder="e.g. 85 (instead of 100)"
+              <button
+                type="button"
+                onClick={() => {
+                  const nextVal = !hasBulkDiscount;
+                  setHasBulkDiscount(nextVal);
+                  if (nextVal && (!formData.bulkDiscountQty || formData.bulkDiscountQty < 2)) {
+                    const currentEffectivePrice = Number(formData.discountPrice || formData.price) || 100;
+                    const suggestedBulkPrice = Math.max(1, Math.round(currentEffectivePrice * 0.9));
+                    setFormData(prev => ({
+                      ...prev,
+                      bulkDiscountQty: 2,
+                      bulkDiscountPrice: prev.bulkDiscountPrice || suggestedBulkPrice,
+                      bulkDiscountLabel: prev.bulkDiscountLabel || `Buy 2 & Save ₹${currentEffectivePrice - suggestedBulkPrice}`
+                    }));
+                  }
+                }}
+                className={cn(
+                  "w-12 h-6 rounded-full p-0.5 transition-colors duration-200 focus:outline-none relative flex items-center shrink-0 cursor-pointer",
+                  hasBulkDiscount ? "bg-emerald-600" : "bg-gray-300"
+                )}
+              >
+                <div 
+                  className={cn(
+                    "w-5 h-5 rounded-full bg-white shadow-md transform transition-transform duration-200",
+                    hasBulkDiscount ? "translate-x-6" : "translate-x-0"
+                  )}
                 />
+              </button>
+            </div>
+
+            {hasBulkDiscount && (
+              <div className="space-y-3 pt-2 border-t border-emerald-100">
+                {/* Quick Presets based on current base price */}
+                <div>
+                  <p className="text-[10px] font-bold text-emerald-900 uppercase tracking-wider mb-1.5">
+                    Quick Preset Deals:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { qty: 2, discountPercent: 5, label: 'Buy 2 (5% Off)' },
+                      { qty: 2, discountPercent: 10, label: 'Buy 2 (10% Off)' },
+                      { qty: 3, discountPercent: 15, label: 'Buy 3 (15% Off)' },
+                      { qty: 4, discountPercent: 20, label: 'Buy 4 (20% Off)' }
+                    ].map(preset => {
+                      const base = Number(formData.discountPrice || formData.price) || 100;
+                      const calculatedPrice = Math.max(1, Math.round(base * (1 - preset.discountPercent / 100)));
+                      const isSelected = formData.bulkDiscountQty === preset.qty && formData.bulkDiscountPrice === calculatedPrice;
+                      return (
+                        <button
+                          key={`${preset.qty}-${preset.discountPercent}`}
+                          type="button"
+                          onClick={() => {
+                            setFormData(prev => ({
+                              ...prev,
+                              bulkDiscountQty: preset.qty,
+                              bulkDiscountPrice: calculatedPrice,
+                              bulkDiscountLabel: `Buy ${preset.qty} & Save ₹${(base - calculatedPrice) * preset.qty}`
+                            }));
+                          }}
+                          className={cn(
+                            "text-[10px] font-bold px-2.5 py-1 rounded-lg transition-all cursor-pointer shadow-2xs flex items-center gap-1",
+                            isSelected
+                              ? "bg-emerald-600 text-white border border-emerald-600"
+                              : "bg-white text-emerald-800 border border-emerald-200 hover:bg-emerald-100"
+                          )}
+                        >
+                          <Zap size={11} className={isSelected ? "text-amber-300 fill-amber-300" : "text-amber-500 fill-amber-500"} />
+                          {preset.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-gray-600 ml-1">Min Quantity for Special Bulk Price</label>
+                    <Input 
+                      type="number"
+                      min="2"
+                      value={formData.bulkDiscountQty !== undefined ? formData.bulkDiscountQty : ''}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setFormData({ ...formData, bulkDiscountQty: val === '' ? undefined : Math.max(2, Number(val)) });
+                      }}
+                      placeholder="e.g. 2 or 3"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-gray-600 ml-1">Special Bulk Unit Price (₹)</label>
+                    <Input 
+                      type="number"
+                      min="0"
+                      value={formData.bulkDiscountPrice !== undefined ? formData.bulkDiscountPrice : ''}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setFormData({ ...formData, bulkDiscountPrice: val === '' ? undefined : Math.max(0, Number(val)) });
+                      }}
+                      placeholder="e.g. 85 (instead of 100)"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-gray-600 ml-1">Custom Bulk Badge Label (Optional)</label>
+                  <Input 
+                    value={formData.bulkDiscountLabel || ''}
+                    onChange={e => setFormData({ ...formData, bulkDiscountLabel: e.target.value })}
+                    placeholder="e.g. Buy 2 & Save ₹30"
+                  />
+                </div>
+
+                {/* Helpful preview notice */}
+                {formData.bulkDiscountQty && formData.bulkDiscountPrice !== undefined && (
+                  <div className="p-2.5 rounded-xl bg-white border border-emerald-200 text-[11px] text-emerald-900 flex items-center justify-between">
+                    <span>
+                      💡 <strong>Customer Preview:</strong> Agar koi <strong>{formData.bulkDiscountQty}+</strong> quantity cart me add karega to use <strong>₹{formData.bulkDiscountPrice}/unit</strong> rate lagega!
+                    </span>
+                    <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md shrink-0 ml-2">
+                      Active ✨
+                    </span>
+                  </div>
+                )}
               </div>
+            )}
+          </div>
+
+          {/* Weight Variants Section */}
+          <div className="p-4 rounded-3xl bg-teal-50/60 border border-teal-100 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex flex-col pr-4">
+                <span className="text-xs font-bold text-teal-950 flex items-center gap-1.5">
+                  <Package size={15} className="text-teal-600" />
+                  Multiple Weight Variants (100g, 250g, 500g, 1kg etc.)
+                </span>
+                <span className="text-[10px] text-teal-700">
+                  Ek hi product me alag-alag weight aur unki prices set karein (baar-baar alag list nahi karna padega).
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHasVariants(!hasVariants)}
+                className={cn(
+                  "w-12 h-6 rounded-full p-0.5 transition-colors duration-200 focus:outline-none relative flex items-center shrink-0 cursor-pointer",
+                  hasVariants ? "bg-teal-600" : "bg-gray-300"
+                )}
+              >
+                <div 
+                  className={cn(
+                    "w-5 h-5 rounded-full bg-white shadow-md transform transition-transform duration-200",
+                    hasVariants ? "translate-x-6" : "translate-x-0"
+                  )}
+                />
+              </button>
             </div>
-            <div className="space-y-1">
-              <label className="text-[11px] font-bold text-gray-500 ml-1">Custom Bulk Badge Label (Optional)</label>
-              <Input 
-                value={formData.bulkDiscountLabel || ''}
-                onChange={e => setFormData({ ...formData, bulkDiscountLabel: e.target.value })}
-                placeholder="e.g. Buy 2 & Save ₹30"
-              />
-            </div>
+
+            {hasVariants && (
+              <div className="space-y-3 pt-2">
+                {/* Quick Add Weight Suggestion Chips */}
+                <div>
+                  <p className="text-[10px] font-bold text-teal-900 uppercase tracking-wider mb-1.5">
+                    Quick Add Weight / Size:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 max-w-full">
+                    {['100g', '250g', '500g', '1kg', '2kg', '5kg', '10kg', '200ml', '500ml', '1L', '5L'].map((w) => {
+                      const exists = variants.some(v => v.weight.toLowerCase() === w.toLowerCase());
+                      return (
+                        <button
+                          key={w}
+                          type="button"
+                          disabled={exists}
+                          onClick={() => {
+                            const newV: ProductVariant = {
+                              id: `v_${w.toLowerCase()}_${Date.now()}`,
+                              weight: w,
+                              price: Number(formData.price) || 100,
+                              discountPrice: formData.discountPrice ? Number(formData.discountPrice) : undefined,
+                              stock: Number(formData.stock) || 50
+                            };
+                            setVariants(prev => sortVariantsByWeight([...prev, newV]));
+                          }}
+                          className={cn(
+                            "text-[10px] font-bold px-2.5 py-1 rounded-lg transition-all",
+                            exists 
+                              ? "bg-gray-100 text-gray-400 cursor-not-allowed" 
+                              : "bg-white text-teal-800 border border-teal-200 hover:bg-teal-100 cursor-pointer shadow-2xs"
+                          )}
+                        >
+                          + {w}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Variants List */}
+                <div className="space-y-2 w-full min-w-0">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-gray-700">
+                        Configured Variants ({variants.length})
+                      </span>
+                      {variants.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setVariants(prev => sortVariantsByWeight(prev))}
+                          className="text-[10px] font-bold text-teal-700 bg-teal-100/70 hover:bg-teal-200 px-2 py-0.5 rounded-lg flex items-center gap-1 cursor-pointer transition-colors"
+                          title="Sort weights in ascending order (कम से ज्यादा वजन)"
+                        >
+                          <ArrowUpDown size={11} /> Auto-Sort
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newV: ProductVariant = {
+                          id: `v_${Date.now()}`,
+                          weight: '',
+                          price: Number(formData.price) || 100,
+                          discountPrice: formData.discountPrice ? Number(formData.discountPrice) : undefined,
+                          stock: Number(formData.stock) || 50
+                        };
+                        setVariants(prev => [...prev, newV]);
+                      }}
+                      className="text-[10px] font-bold text-teal-700 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus size={12} /> Add Custom Variant
+                    </button>
+                  </div>
+
+                  <div className="space-y-2.5 w-full min-w-0">
+                    {variants.map((v, index) => (
+                      <div 
+                        key={v.id || index} 
+                        className="p-3 bg-white rounded-2xl border border-teal-100/90 shadow-2xs space-y-2.5 w-full min-w-0"
+                      >
+                        {/* Variant Item Header: Index, Current Label & Trash */}
+                        <div className="flex items-center justify-between border-b border-gray-100 pb-1.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-[10px] font-extrabold text-teal-800 bg-teal-50 px-2 py-0.5 rounded-lg border border-teal-200 shrink-0">
+                              #{index + 1}
+                            </span>
+                            <span className="text-xs font-bold text-gray-800 truncate">
+                              {v.weight ? `Variant: ${v.weight}` : 'New Custom Variant'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setVariants(prev => sortVariantsByWeight(prev.filter((_, i) => i !== index)));
+                            }}
+                            className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer shrink-0"
+                            title="Delete Variant"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+
+                        {/* Responsive 4-Column Inputs Grid (2 columns on mobile, 4 columns on desktop/tablet) */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-2.5 w-full min-w-0">
+                          {/* 1. Weight */}
+                          <div className="min-w-0">
+                            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-0.5 truncate">
+                              Weight / Size
+                            </label>
+                            <input 
+                              type="text"
+                              value={v.weight}
+                              onChange={(e) => {
+                                const updated = [...variants];
+                                updated[index].weight = e.target.value;
+                                setVariants(updated);
+                              }}
+                              onBlur={() => {
+                                setVariants(prev => sortVariantsByWeight(prev));
+                              }}
+                              placeholder="e.g. 500g"
+                              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-gray-800 outline-none focus:border-teal-500 focus:bg-white transition-all"
+                            />
+                          </div>
+
+                          {/* 2. MRP Price */}
+                          <div className="min-w-0">
+                            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-0.5 truncate">
+                              MRP Price (₹)
+                            </label>
+                            <input 
+                              type="number"
+                              min="0"
+                              value={v.price}
+                              onChange={(e) => {
+                                const updated = [...variants];
+                                updated[index].price = Number(e.target.value);
+                                setVariants(updated);
+                              }}
+                              placeholder="MRP"
+                              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-gray-800 outline-none focus:border-teal-500 focus:bg-white transition-all"
+                            />
+                          </div>
+
+                          {/* 3. Discount Price */}
+                          <div className="min-w-0">
+                            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-0.5 truncate">
+                              Offer Price (₹)
+                            </label>
+                            <input 
+                              type="number"
+                              min="0"
+                              value={v.discountPrice !== undefined ? v.discountPrice : ''}
+                              onChange={(e) => {
+                                const updated = [...variants];
+                                const val = e.target.value;
+                                updated[index].discountPrice = val === '' ? undefined : Number(val);
+                                setVariants(updated);
+                              }}
+                              placeholder="Optional"
+                              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-emerald-600 outline-none focus:border-teal-500 focus:bg-white transition-all"
+                            />
+                          </div>
+
+                          {/* 4. Stock */}
+                          <div className="min-w-0">
+                            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-0.5 truncate">
+                              Stock
+                            </label>
+                            <input 
+                              type="number"
+                              min="0"
+                              value={v.stock !== undefined ? v.stock : ''}
+                              onChange={(e) => {
+                                const updated = [...variants];
+                                const val = e.target.value;
+                                updated[index].stock = val === '' ? undefined : Number(val);
+                                setVariants(updated);
+                              }}
+                              placeholder="Stock"
+                              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-gray-800 outline-none focus:border-teal-500 focus:bg-white transition-all"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {variants.length === 0 && (
+                      <p className="text-center text-xs text-gray-400 py-3 bg-white rounded-xl border border-dashed border-gray-200">
+                        Koi variant add nahi hua hai. Upar diye gaye quick chips se ya 'Add Custom Variant' se add karein.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -4477,6 +5232,295 @@ const ProductFormModal = ({
                 )}
               />
             </button>
+          </div>
+
+          {/* Regional & Delivery Availability Settings */}
+          <div className="p-4 rounded-3xl bg-blue-50/60 border border-blue-100 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                <MapPin size={15} className="text-blue-600" />
+                Delivery Availability / डिलीवरी क्षेत्र
+              </span>
+              <span className="text-[10px] text-blue-600 font-semibold">
+                {availabilityType === 'all' 
+                  ? '🌐 All India' 
+                  : availabilityType === 'states' 
+                    ? `🏛️ ${selectedStates.length} States` 
+                    : availabilityType === 'districts'
+                      ? `🏘️ ${selectedDistricts.length} Districts (${districtParentState})`
+                      : '📮 Specific Pincodes'}
+              </span>
+            </div>
+
+            {/* Radio Mode Selection */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <button
+                type="button"
+                onClick={() => setAvailabilityType('all')}
+                className={cn(
+                  "p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer",
+                  availabilityType === 'all'
+                    ? "bg-white border-blue-500 text-blue-900 shadow-2xs ring-1 ring-blue-500"
+                    : "bg-white/50 border-gray-200 text-gray-600 hover:bg-white"
+                )}
+              >
+                <Globe size={14} className={availabilityType === 'all' ? "text-blue-600" : "text-gray-400"} />
+                <span>All India</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAvailabilityType('states')}
+                className={cn(
+                  "p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer",
+                  availabilityType === 'states'
+                    ? "bg-white border-blue-500 text-blue-900 shadow-2xs ring-1 ring-blue-500"
+                    : "bg-white/50 border-gray-200 text-gray-600 hover:bg-white"
+                )}
+              >
+                <Building2 size={14} className={availabilityType === 'states' ? "text-blue-600" : "text-gray-400"} />
+                <span>States Only</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAvailabilityType('districts')}
+                className={cn(
+                  "p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer",
+                  availabilityType === 'districts'
+                    ? "bg-white border-blue-500 text-blue-900 shadow-2xs ring-1 ring-blue-500"
+                    : "bg-white/50 border-gray-200 text-gray-600 hover:bg-white"
+                )}
+              >
+                <Layers size={14} className={availabilityType === 'districts' ? "text-blue-600" : "text-gray-400"} />
+                <span>Districts Only</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAvailabilityType('pincodes')}
+                className={cn(
+                  "p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer",
+                  availabilityType === 'pincodes'
+                    ? "bg-white border-blue-500 text-blue-900 shadow-2xs ring-1 ring-blue-500"
+                    : "bg-white/50 border-gray-200 text-gray-600 hover:bg-white"
+                )}
+              >
+                <MapPin size={14} className={availabilityType === 'pincodes' ? "text-blue-600" : "text-gray-400"} />
+                <span>Pincodes Only</span>
+              </button>
+            </div>
+
+            {/* Mode 1: All India explanation */}
+            {availabilityType === 'all' && (
+              <p className="text-[11px] text-gray-600 bg-white/80 p-2.5 rounded-xl border border-blue-100/50">
+                ✅ <strong>Pan-India:</strong> Yeh product sabhi states aur sabhi pincodes ke customers ko show hoga.
+              </p>
+            )}
+
+            {/* Mode 2: Specific States */}
+            {availabilityType === 'states' && (
+              <div className="space-y-2.5 bg-white p-3 rounded-2xl border border-blue-100">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-gray-700">
+                    Select Available States ({selectedStates.length} chosen)
+                  </label>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedStates(INDIAN_STATES)}
+                      className="text-[10px] text-blue-600 font-bold hover:underline"
+                    >
+                      Select All
+                    </button>
+                    <span className="text-[10px] text-gray-300">•</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedStates([])}
+                      className="text-[10px] text-red-500 font-bold hover:underline"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                {/* Popular State Quick Chips */}
+                <div className="flex flex-wrap gap-1">
+                  {POPULAR_INDIAN_STATES.map(st => {
+                    const isSelected = selectedStates.includes(st);
+                    return (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedStates(selectedStates.filter(s => s !== st));
+                          } else {
+                            setSelectedStates([...selectedStates, st]);
+                          }
+                        }}
+                        className={cn(
+                          "text-[10px] font-bold px-2 py-1 rounded-lg transition-all",
+                          isSelected
+                            ? "bg-blue-600 text-white"
+                            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                        )}
+                      >
+                        {isSelected ? `✓ ${st}` : `+ ${st}`}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Search State */}
+                <input
+                  type="text"
+                  value={stateSearch}
+                  onChange={(e) => setStateSearch(e.target.value)}
+                  placeholder="Search and select all other states..."
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5 text-xs outline-none focus:border-blue-500 font-medium"
+                />
+
+                {/* State Checkbox List */}
+                <div className="max-h-36 overflow-y-auto space-y-1 divide-y divide-gray-50 border border-gray-100 rounded-xl p-1 bg-white">
+                  {INDIAN_STATES.filter(s => s.toLowerCase().includes(stateSearch.toLowerCase())).map(st => {
+                    const isChecked = selectedStates.includes(st);
+                    return (
+                      <label key={st} className="flex items-center gap-2 py-1.5 px-2 hover:bg-gray-50 rounded-lg cursor-pointer text-xs">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedStates([...selectedStates, st]);
+                            } else {
+                              setSelectedStates(selectedStates.filter(s => s !== st));
+                            }
+                          }}
+                          className="rounded text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className={isChecked ? "font-bold text-blue-900" : "text-gray-700"}>{st}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Mode 2.5: Specific Districts */}
+            {availabilityType === 'districts' && (
+              <div className="space-y-2.5 bg-white p-3 rounded-2xl border border-blue-100">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-gray-700">
+                    Step 1: Select State
+                  </label>
+                  <span className="text-[10px] text-blue-600 font-bold">
+                    {selectedDistricts.length} Districts Selected
+                  </span>
+                </div>
+
+                {/* State selector dropdown */}
+                <select
+                  value={districtParentState}
+                  onChange={(e) => {
+                    setDistrictParentState(e.target.value);
+                    setDistrictSearch('');
+                  }}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-800 outline-none focus:border-blue-500"
+                >
+                  {INDIAN_STATES.map((st) => (
+                    <option key={st} value={st}>{st}</option>
+                  ))}
+                </select>
+
+                <div className="flex items-center justify-between pt-1">
+                  <label className="text-[11px] font-bold text-gray-700">
+                    Step 2: Choose Districts in {districtParentState}
+                  </label>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const dists = getDistrictsForState(districtParentState);
+                        const combined = Array.from(new Set([...selectedDistricts, ...dists]));
+                        setSelectedDistricts(combined);
+                      }}
+                      className="text-[10px] text-blue-600 font-bold hover:underline"
+                    >
+                      Select All in State
+                    </button>
+                    <span className="text-[10px] text-gray-300">•</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDistricts([])}
+                      className="text-[10px] text-red-500 font-bold hover:underline"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                </div>
+
+                {/* Search District */}
+                <input
+                  type="text"
+                  value={districtSearch}
+                  onChange={(e) => setDistrictSearch(e.target.value)}
+                  placeholder={`Search district in ${districtParentState}...`}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5 text-xs outline-none focus:border-blue-500 font-medium"
+                />
+
+                {/* District Checkboxes */}
+                <div className="max-h-36 overflow-y-auto space-y-1 divide-y divide-gray-50 border border-gray-100 rounded-xl p-1 bg-white">
+                  {getDistrictsForState(districtParentState)
+                    .filter(d => d.toLowerCase().includes(districtSearch.toLowerCase()))
+                    .map(d => {
+                      const isChecked = selectedDistricts.includes(d);
+                      return (
+                        <label key={d} className="flex items-center gap-2 py-1.5 px-2 hover:bg-gray-50 rounded-lg cursor-pointer text-xs">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedDistricts([...selectedDistricts, d]);
+                              } else {
+                                setSelectedDistricts(selectedDistricts.filter(item => item !== d));
+                              }
+                            }}
+                            className="rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className={isChecked ? "font-bold text-blue-900" : "text-gray-700"}>{d}</span>
+                        </label>
+                      );
+                    })}
+                  {getDistrictsForState(districtParentState).length === 0 && (
+                    <p className="text-center text-xs text-gray-400 py-3">No districts found for {districtParentState}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Mode 3: Specific Pincodes */}
+            {availabilityType === 'pincodes' && (
+              <div className="space-y-2 bg-white p-3 rounded-2xl border border-blue-100">
+                <label className="text-[11px] font-bold text-gray-700 block">
+                  Enter Allowed 6-Digit Pincodes (comma separated)
+                </label>
+                <textarea
+                  value={pincodesInput}
+                  onChange={(e) => setPincodesInput(e.target.value)}
+                  placeholder="e.g. 110001, 201301, 560001, 400001"
+                  rows={2}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5 text-xs font-mono outline-none focus:border-blue-500"
+                />
+                <div className="flex items-center justify-between text-[10px] text-gray-500">
+                  <span>
+                    Valid Pincodes Detected: <strong>{pincodesInput.split(/[\s,]+/).map(p => p.replace(/\D/g, '')).filter(p => p.length === 6).length}</strong>
+                  </span>
+                  <span className="text-gray-400">Comma se separate karein</span>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">

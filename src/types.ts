@@ -1,3 +1,11 @@
+export interface ProductVariant {
+  id: string;
+  weight: string;
+  price: number;
+  discountPrice?: number;
+  stock?: number;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -16,6 +24,22 @@ export interface Product {
   rating?: number;
   salesCount?: number;
   createdAt?: any;
+  availabilityType?: 'all' | 'states' | 'districts' | 'pincodes';
+  availableStates?: string[];
+  availableDistricts?: string[];
+  availablePincodes?: string[];
+  hasVariants?: boolean;
+  variants?: ProductVariant[];
+  defaultVariantId?: string;
+  unit?: string;
+}
+
+export interface DeliveryLocation {
+  pincode?: string;
+  state?: string;
+  district?: string;
+  city?: string;
+  label?: string;
 }
 
 export interface Category {
@@ -45,6 +69,9 @@ export interface User {
 
 export interface CartItem extends Product {
   quantity: number;
+  selectedVariant?: ProductVariant;
+  cartItemId?: string;
+  productId?: string;
 }
 
 export interface Order {
