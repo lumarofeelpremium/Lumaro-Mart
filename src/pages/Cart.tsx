@@ -46,6 +46,9 @@ export const Cart = ({
   const [orderTimingEnabled, setOrderTimingEnabled] = useState(true);
   const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
   const [isFirstOrder, setIsFirstOrder] = useState(false);
+  const [admobEnabled, setAdmobEnabled] = useState(false);
+  const [admobRewardedId, setAdmobRewardedId] = useState('');
+  const [admobTesting, setAdmobTesting] = useState(true);
   const [adDiscount, setAdDiscount] = useState(0);
   const [isAdLoading, setIsAdLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'cod' | 'upi'>('upi');
@@ -126,17 +129,19 @@ export const Cart = ({
   const pointsToRedeem = useLoyaltyPoints && loyaltyProgramEnabled ? Math.min(pointsAvailable, maxPointsNeeded) : 0;
   const pointsDiscountAmount = Math.min(maxDiscountAllowed, Math.round(pointsToRedeem * (loyaltyPointValue || 1)));
   
-  const total = Math.max(0, subtotal + delivery - pointsDiscountAmount - adDiscount);
+  const effectiveAdDiscount = admobEnabled ? adDiscount : 0;
+  const total = Math.max(0, subtotal + delivery - pointsDiscountAmount - effectiveAdDiscount);
   const spendBase = Math.max(1, loyaltySpendBase || 100);
   const earnedPerBase = loyaltyPointsEarned ?? loyaltyPointsPerHundred ?? 5;
   const pointsEarned = loyaltyProgramEnabled ? Math.floor(subtotal / spendBase) * earnedPerBase : 0;
 
   const handleWatchRewardAd = async () => {
+    if (!admobEnabled) return;
     setIsAdLoading(true);
     try {
       await showRewardedAd((reward) => {
         setAdDiscount(10);
-      });
+      }, admobRewardedId, admobTesting);
     } catch (e) {
       console.warn("Failed to complete reward ad:", e);
     } finally {
@@ -163,6 +168,9 @@ export const Cart = ({
         if (data.loyaltyPointsEarned !== undefined) setLoyaltyPointsEarned(data.loyaltyPointsEarned);
         if (data.loyaltyPointsPerHundred !== undefined) setLoyaltyPointsPerHundred(data.loyaltyPointsPerHundred);
         if (data.loyaltyPointValue !== undefined) setLoyaltyPointValue(data.loyaltyPointValue);
+        if (data.admobEnabled !== undefined) setAdmobEnabled(Boolean(data.admobEnabled));
+        if (data.admobRewardedId) setAdmobRewardedId(data.admobRewardedId);
+        if (data.admobTesting !== undefined) setAdmobTesting(data.admobTesting);
       } catch (e) {
         // silent parse error
       }
@@ -183,6 +191,9 @@ export const Cart = ({
         if (data.loyaltyPointsEarned !== undefined) setLoyaltyPointsEarned(data.loyaltyPointsEarned);
         if (data.loyaltyPointsPerHundred !== undefined) setLoyaltyPointsPerHundred(data.loyaltyPointsPerHundred);
         if (data.loyaltyPointValue !== undefined) setLoyaltyPointValue(data.loyaltyPointValue);
+        setAdmobEnabled(Boolean(data.admobEnabled));
+        if (data.admobRewardedId) setAdmobRewardedId(data.admobRewardedId);
+        if (data.admobTesting !== undefined) setAdmobTesting(data.admobTesting);
       }
     }, (error: any) => {
       const isOffline = error?.code === 'unavailable' || 
@@ -347,10 +358,12 @@ export const Cart = ({
         onClear();
       }, 100);
 
-      // 4. Show AdMob Interstitial Ad after order placement
-      setTimeout(() => {
-        showInterstitialAd().catch((e) => console.log('AdMob interstitial skipped:', e));
-      }, 800);
+      // 4. Show AdMob Interstitial Ad after order placement (only if enabled)
+      if (admobEnabled) {
+        setTimeout(() => {
+          showInterstitialAd().catch((e) => console.log('AdMob interstitial skipped:', e));
+        }, 800);
+      }
 
     } catch (error: any) {
       handleFirestoreError(error, OperationType.CREATE, 'orders');
@@ -619,7 +632,7 @@ export const Cart = ({
                     <span className="font-bold">-₹{pointsDiscountAmount}</span>
                   </div>
                 )}
-                {adDiscount > 0 && (
+                {admobEnabled && adDiscount > 0 && (
                   <div className="flex justify-between text-amber-600 font-medium">
                     <span className="flex items-center gap-1">
                       <Sparkles size={13} className="text-amber-500" />
@@ -644,33 +657,35 @@ export const Cart = ({
                   </p>
                 )}
 
-                {/* AdMob Rewarded Video Savings */}
-                {adDiscount === 0 ? (
-                  <button
-                    type="button"
-                    onClick={handleWatchRewardAd}
-                    disabled={isAdLoading}
-                    className="w-full flex items-center justify-between p-3 bg-amber-50/90 hover:bg-amber-100 border border-amber-200/80 rounded-2xl text-amber-900 transition-colors text-xs cursor-pointer disabled:opacity-50"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="bg-amber-600 text-white font-bold text-[9px] px-1.5 py-0.5 rounded tracking-wide">
-                        SPONSOR
+                {/* AdMob Rewarded Video Savings (Only shown if enabled in Admin Settings) */}
+                {admobEnabled && (
+                  adDiscount === 0 ? (
+                    <button
+                      type="button"
+                      onClick={handleWatchRewardAd}
+                      disabled={isAdLoading}
+                      className="w-full flex items-center justify-between p-3 bg-amber-50/90 hover:bg-amber-100 border border-amber-200/80 rounded-2xl text-amber-900 transition-colors text-xs cursor-pointer disabled:opacity-50"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="bg-amber-600 text-white font-bold text-[9px] px-1.5 py-0.5 rounded tracking-wide">
+                          SPONSOR
+                        </span>
+                        <span className="font-semibold text-gray-800">
+                          {isAdLoading ? 'Loading AdMob Video...' : 'Watch short video & get ₹10 OFF!'}
+                        </span>
+                      </div>
+                      <span className="text-amber-700 font-bold underline text-[11px]">
+                        {isAdLoading ? 'Loading...' : 'Watch & Save'}
                       </span>
-                      <span className="font-semibold text-gray-800">
-                        {isAdLoading ? 'Loading AdMob Video...' : 'Watch short video & get ₹10 OFF!'}
+                    </button>
+                  ) : (
+                    <div className="flex justify-between items-center p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-semibold">
+                      <span className="flex items-center gap-1">
+                        <CheckCircle2 size={14} className="text-emerald-600" />
+                        <span>₹{adDiscount} Sponsor Video Discount Applied!</span>
                       </span>
                     </div>
-                    <span className="text-amber-700 font-bold underline text-[11px]">
-                      {isAdLoading ? 'Loading...' : 'Watch & Save'}
-                    </span>
-                  </button>
-                ) : (
-                  <div className="flex justify-between items-center p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-semibold">
-                    <span className="flex items-center gap-1">
-                      <CheckCircle2 size={14} className="text-emerald-600" />
-                      <span>₹{adDiscount} Sponsor Video Discount Applied!</span>
-                    </span>
-                  </div>
+                  )
                 )}
                 <div className="h-px bg-dashed border-t border-dashed border-gray-200" />
                 <div className="flex justify-between items-center">

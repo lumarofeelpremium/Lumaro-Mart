@@ -140,13 +140,6 @@ export const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({
               />
             </div>
           </div>
-
-          {/* Bluetooth & Mobile Tip */}
-          <div className="px-4 py-2.5 bg-gray-50 border-t border-gray-100 text-center">
-            <p className="text-[11px] text-gray-500 font-medium leading-relaxed">
-              📱 <strong className="text-gray-900">Bluetooth Printer Tip:</strong> Mobile me direct print ke liye <strong className="text-gray-900">Print Bill</strong> dabayein (Android Print Dialog open hoga), ya <strong className="text-indigo-600">Bluetooth / Share</strong> dabakar apne <strong className="text-indigo-600">RawBT Print / Bluetooth POS App</strong> par 1-tap me bhejein!
-            </p>
-          </div>
         </motion.div>
       </div>
     </AnimatePresence>

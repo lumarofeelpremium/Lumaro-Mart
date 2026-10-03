@@ -32,6 +32,7 @@ export interface Product {
   variants?: ProductVariant[];
   defaultVariantId?: string;
   unit?: string;
+  weight?: string;
 }
 
 export interface DeliveryLocation {

@@ -3130,16 +3130,6 @@ const SalesReport = ({ orders }: { orders: Order[] }) => {
             <span>Print Report (Mobile & PC)</span>
           </Button>
         </div>
-
-        {/* Mobile & Excel Tips */}
-        <div className="p-3 bg-gray-50 rounded-2xl text-[11px] text-gray-500 space-y-1">
-          <p>
-            📊 <strong className="text-gray-800">Clean Excel Layout:</strong> Har order me customer ka naam, delivery charge, loyalty points aur grand total sirf <strong>pehle product ki line</strong> par aayega, aur baaki items clean alag lines par bina repetition ke show honge!
-          </p>
-          <p>
-            📱 <strong className="text-gray-800">Mobile Bluetooth Print:</strong> Mobile par <strong className="text-gray-900">Print Report</strong> dabayein to direct Android Print Spooler open hota hai, jahan Bluetooth ya WiFi printer select karke direct print kar sakte hain.
-          </p>
-        </div>
       </div>
 
 
@@ -3619,7 +3609,7 @@ const SettingsTab = ({
   const [telegramChatId, setTelegramChatId] = useState(settings.telegramChatId || '');
   const [telegramEnabled, setTelegramEnabled] = useState(settings.telegramEnabled ?? false);
   const [orderTimingEnabled, setOrderTimingEnabled] = useState(settings.orderTimingEnabled ?? true);
-  const [admobEnabled, setAdmobEnabled] = useState(settings.admobEnabled ?? true);
+  const [admobEnabled, setAdmobEnabled] = useState(settings.admobEnabled ?? false);
   const [admobTesting, setAdmobTesting] = useState(settings.admobTesting ?? true);
   const [admobAppId, setAdmobAppId] = useState(settings.admobAppId || '');
   const [admobBannerId, setAdmobBannerId] = useState(settings.admobBannerId || '');
@@ -3658,7 +3648,7 @@ const SettingsTab = ({
     setTelegramChatId(settings.telegramChatId || '');
     setTelegramEnabled(settings.telegramEnabled ?? false);
     setOrderTimingEnabled(settings.orderTimingEnabled ?? true);
-    setAdmobEnabled(settings.admobEnabled ?? true);
+    setAdmobEnabled(settings.admobEnabled ?? false);
     setAdmobTesting(settings.admobTesting ?? true);
     setAdmobAppId(settings.admobAppId || '');
     setAdmobBannerId(settings.admobBannerId || '');
@@ -4504,6 +4494,14 @@ const ProductFormModal = ({
     ]);
   });
 
+  const activeVariants = useMemo(() => {
+    return variants.filter(v => v.weight && v.weight.trim() !== '');
+  }, [variants]);
+
+  const lowestVariantPrice = activeVariants[0]?.price;
+  const lowestVariantDiscountPrice = activeVariants[0]?.discountPrice;
+  const totalVariantsStock = activeVariants.reduce((sum, v) => sum + (Number(v.stock) || 0), 0);
+
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -4534,14 +4532,22 @@ const ProductFormModal = ({
       return;
     }
 
-    if ((formData.price || 0) < 0) {
-      alert("Price cannot be negative.");
-      return;
-    }
+    if (!hasVariants) {
+      if (formData.price === undefined || formData.price === null || Number(formData.price) <= 0) {
+        alert("Please enter a valid product price.");
+        return;
+      }
 
-    if ((formData.stock || 0) < 0) {
-      alert("Stock cannot be negative.");
-      return;
+      if (formData.stock === undefined || formData.stock === null || Number(formData.stock) < 0) {
+        alert("Please enter a valid stock quantity.");
+        return;
+      }
+    } else {
+      const validVariants = variants.filter(v => v.weight && v.weight.trim() !== '' && Number(v.price) > 0);
+      if (validVariants.length === 0) {
+        alert("Multiple Weight Variants ON hai. Kripya kam se kam ek weight variant (jaise 250g, 500g, 1kg) aur uski price zaroor dalein.");
+        return;
+      }
     }
 
     setUploading(true);
@@ -4665,13 +4671,13 @@ const ProductFormModal = ({
       if (hasVariants && variants.length > 0) {
         const cleanVariants = sortVariantsByWeight(
           variants
-            .filter(v => v.weight && v.weight.trim() !== '')
+            .filter(v => v.weight && v.weight.trim() !== '' && Number(v.price) > 0)
             .map((v, idx) => ({
               id: v.id || `v_${idx}_${Date.now()}`,
               weight: v.weight.trim(),
               price: Number(v.price) || 0,
               discountPrice: v.discountPrice ? Number(v.discountPrice) : undefined,
-              stock: v.stock !== undefined ? Number(v.stock) : Number(formData.stock) || 50
+              stock: v.stock !== undefined ? Number(v.stock) : 50
             }))
         );
         
@@ -4682,7 +4688,17 @@ const ProductFormModal = ({
           finalData.price = cleanVariants[0].price;
           if (cleanVariants[0].discountPrice) {
             finalData.discountPrice = cleanVariants[0].discountPrice;
+          } else {
+            if (mode === 'edit') {
+              // @ts-ignore
+              finalData.discountPrice = deleteField();
+            } else {
+              delete finalData.discountPrice;
+            }
           }
+          // Automatically calculate total stock from variants
+          finalData.stock = cleanVariants.reduce((sum, v) => sum + (Number(v.stock) || 0), 0);
+          finalData.weight = cleanVariants.map(v => v.weight).join(', ');
         } else {
           finalData.hasVariants = false;
           if (mode === 'edit') {
@@ -4773,7 +4789,14 @@ const ProductFormModal = ({
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2">Price (₹)</label>
+              <div className="flex items-center justify-between ml-2">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Price (₹)</label>
+                {hasVariants && (
+                  <span className="text-[10px] text-teal-600 font-bold bg-teal-50 px-1.5 py-0.5 rounded-md border border-teal-100">
+                    Optional
+                  </span>
+                )}
+              </div>
               <Input 
                 type="number"
                 min="0"
@@ -4782,12 +4805,19 @@ const ProductFormModal = ({
                   const val = e.target.value;
                   setFormData({ ...formData, price: val === '' ? undefined : Math.max(0, Number(val)) });
                 }}
-                placeholder="0"
-                required
+                placeholder={hasVariants && lowestVariantPrice ? `₹${lowestVariantPrice}` : "0"}
+                required={!hasVariants}
               />
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2">Stock</label>
+              <div className="flex items-center justify-between ml-2">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Stock</label>
+                {hasVariants && (
+                  <span className="text-[10px] text-teal-600 font-bold bg-teal-50 px-1.5 py-0.5 rounded-md border border-teal-100">
+                    Optional
+                  </span>
+                )}
+              </div>
               <Input 
                 type="number"
                 min="0"
@@ -4796,15 +4826,22 @@ const ProductFormModal = ({
                   const val = e.target.value;
                   setFormData({ ...formData, stock: val === '' ? undefined : Math.max(0, Math.floor(Number(val))) });
                 }}
-                placeholder="0"
-                required
+                placeholder={hasVariants && totalVariantsStock > 0 ? `${totalVariantsStock}` : "0"}
+                required={!hasVariants}
               />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2">Offer Price (Optional)</label>
+              <div className="flex items-center justify-between ml-2">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Offer Price (Optional)</label>
+                {hasVariants && lowestVariantDiscountPrice && (
+                  <span className="text-[10px] text-teal-600 font-bold bg-teal-50 px-1.5 py-0.5 rounded-md border border-teal-100">
+                    ₹{lowestVariantDiscountPrice}
+                  </span>
+                )}
+              </div>
               <Input 
                 type="number"
                 min="0"
@@ -4813,7 +4850,7 @@ const ProductFormModal = ({
                   const val = e.target.value;
                   setFormData({ ...formData, discountPrice: val === '' ? undefined : Math.max(0, Number(val)) });
                 }}
-                placeholder="₹ Offer Price"
+                placeholder={hasVariants && lowestVariantDiscountPrice ? `₹${lowestVariantDiscountPrice} (Variant se auto)` : "₹ Offer Price"}
               />
             </div>
             <div className="space-y-2">
