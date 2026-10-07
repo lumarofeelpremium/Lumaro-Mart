@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { getMessaging } from 'firebase/messaging';
+import { getAnalytics, isSupported } from 'firebase/analytics';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase SDK
@@ -70,6 +71,19 @@ export const verifyFirestoreConnection = async (): Promise<boolean> => {
 
 export const storage = getStorage(app, firebaseConfig.storageBucket);
 export const messaging = typeof window !== 'undefined' ? getMessaging(app) : null;
+
+// Firebase Analytics initialization with fallback check
+export let analytics: ReturnType<typeof getAnalytics> | null = null;
+if (typeof window !== 'undefined') {
+  isSupported().then((supported) => {
+    if (supported) {
+      analytics = getAnalytics(app);
+      console.log("[Analytics] Firebase Analytics (gtag) initialized with Measurement ID:", firebaseConfig.measurementId);
+    }
+  }).catch((err) => {
+    console.warn("[Analytics] Firebase Analytics not supported in this environment:", err);
+  });
+}
 
 console.log("Firebase initialized with storage bucket:", firebaseConfig.storageBucket);
 
