@@ -94,6 +94,87 @@ export default function App() {
     };
   }, []);
 
+  // Real-time listener for Customer's Orders to trigger Instant Browser & Phone Notifications
+  const previousOrderStatuses = useRef<Record<string, string>>({});
+  const isOrdersInitRef = useRef(true);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    isOrdersInitRef.current = true;
+    previousOrderStatuses.current = {};
+
+    const q = query(collection(db, 'orders'), where('userId', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (isOrdersInitRef.current) {
+        snapshot.docs.forEach(docSnap => {
+          previousOrderStatuses.current[docSnap.id] = docSnap.data().status;
+        });
+        isOrdersInitRef.current = false;
+        return;
+      }
+
+      snapshot.docChanges().forEach((change) => {
+        const orderData = change.doc.data();
+        const orderId = change.doc.id;
+        const currentStatus = orderData.status;
+        const oldStatus = previousOrderStatuses.current[orderId];
+
+        if (change.type === 'modified' && oldStatus && oldStatus !== currentStatus) {
+          previousOrderStatuses.current[orderId] = currentStatus;
+
+          const statusTitles: Record<string, { title: string; message: string }> = {
+            confirmed: {
+              title: `Order Confirmed! (#${orderId.slice(-6).toUpperCase()})`,
+              message: `Aapka order confirm ho gaya hai aur pack kiya ja raha hai.`
+            },
+            packed: {
+              title: `Order Packed! (#${orderId.slice(-6).toUpperCase()})`,
+              message: `Aapka order pack ho chuka hai aur delivery ke liye ready hai.`
+            },
+            out_for_delivery: {
+              title: `Order Out for Delivery! 🚚 (#${orderId.slice(-6).toUpperCase()})`,
+              message: `Aapka order delivery person ke sath nikal chuka hai. Jaldi hi pahuchega!`
+            },
+            delivered: {
+              title: `Order Delivered! 🎉 (#${orderId.slice(-6).toUpperCase()})`,
+              message: `Aapka order deliver ho gaya hai. Lumaro Mart se shopping ke liye dhanyawad!`
+            },
+            canceled: {
+              title: `Order Canceled (#${orderId.slice(-6).toUpperCase()})`,
+              message: `Aapka order cancel kar diya gaya hai.`
+            }
+          };
+
+          const info = statusTitles[currentStatus];
+          if (info) {
+            try {
+              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+              audio.volume = 0.6;
+              audio.play().catch(() => {});
+            } catch (_) {}
+
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              try {
+                new Notification(info.title, {
+                  body: info.message,
+                  icon: '/favicon.ico',
+                  tag: `order-${orderId}`
+                });
+              } catch (_) {}
+            }
+          }
+        } else if (change.type === 'added') {
+          previousOrderStatuses.current[orderId] = currentStatus;
+        }
+      });
+    }, (err) => {
+      console.warn('Customer order notification listener error:', err);
+    });
+
+    return () => unsubscribe();
+  }, [user?.uid]);
+
   // Centralized real-time listener for ALL products without artificial limits
   useEffect(() => {
     const unsubAllProds = onSnapshot(collection(db, 'products'), (snapshot) => {

@@ -296,6 +296,28 @@ export const Cart = ({
         customer: user
       }).catch(e => console.warn('Telegram new order notification error:', e));
 
+      // Add Customer Order Placed Notification in Firestore
+      if (user?.uid) {
+        addDoc(collection(db, 'notifications'), {
+          title: `Order Placed Successfully! (#${orderRef.id.slice(-6).toUpperCase()})`,
+          message: `Aapka order ₹${total} ka place ho gaya hai. Hum jaldi hi isko pack karke deliver karenge.`,
+          type: 'order_update',
+          orderId: orderRef.id,
+          userId: user.uid,
+          createdAt: serverTimestamp()
+        }).catch(e => console.warn('Order notification error:', e));
+      }
+
+      // Trigger Instant Native Browser Notification on user device
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification(`Order Placed! (#${orderRef.id.slice(-6).toUpperCase()})`, {
+            body: `Aapka order ₹${total} ka successfully place ho gaya hai.`,
+            icon: '/favicon.ico'
+          });
+        } catch (_) {}
+      }
+
       // 1. Prepare data for confirmation page
       const confirmationState = { 
         orderId: orderRef.id,

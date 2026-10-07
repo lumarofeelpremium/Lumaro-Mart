@@ -116,9 +116,11 @@ export interface Notification {
   id: string;
   title: string;
   message: string;
-  type: 'new_product' | 'offer' | 'order_update';
+  type: 'new_product' | 'offer' | 'order_update' | 'flash_sale' | 'discount' | 'announcement';
   createdAt: any;
   productId?: string;
+  orderId?: string;
+  userId?: string;
   read?: boolean;
 }
 

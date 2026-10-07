@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, BellOff, Bell, Package, CheckCircle2 } from 'lucide-react';
+import { ChevronLeft, BellOff, Bell, Package, CheckCircle2, Sparkles, Tag, Zap, Megaphone } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, limit } from 'firebase/firestore';
@@ -81,7 +81,9 @@ export const Notifications = () => {
       cacheUtils.setItem('read_notifications', newReadIds);
     }
 
-    if (notif.productId) {
+    if (notif.orderId) {
+      navigate('/my-orders');
+    } else if (notif.productId) {
       navigate(`/product/${notif.productId}`);
     }
   };
@@ -170,16 +172,41 @@ export const Notifications = () => {
                   )}
                   <div className={cn(
                     "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0",
-                    notif.type === 'new_product' ? "bg-green-50 text-green-500" : "bg-blue-50 text-blue-500"
+                    notif.type === 'flash_sale' ? "bg-amber-100 text-amber-600" :
+                    notif.type === 'offer' || notif.type === 'discount' ? "bg-rose-100 text-rose-600" :
+                    notif.type === 'announcement' ? "bg-purple-100 text-purple-600" :
+                    notif.type === 'new_product' ? "bg-emerald-100 text-emerald-600" :
+                    "bg-blue-100 text-blue-600"
                   )}>
-                    {notif.type === 'new_product' ? <Package size={24} /> : <Bell size={24} />}
+                    {notif.type === 'flash_sale' ? <Zap size={22} className="animate-pulse" /> :
+                     notif.type === 'offer' || notif.type === 'discount' ? <Tag size={22} /> :
+                     notif.type === 'announcement' ? <Megaphone size={22} /> :
+                     notif.type === 'new_product' ? <Package size={22} /> :
+                     <Bell size={22} />}
                   </div>
                   <div className="flex-grow">
                     <div className="flex justify-between items-start mb-1">
-                      <h3 className={cn(
-                        "text-sm text-[#1A1A1A]",
-                        isRead ? "font-medium opacity-70" : "font-bold"
-                      )}>{notif.title}</h3>
+                      <div>
+                        {notif.type && notif.type !== 'order_update' && (
+                          <span className={cn(
+                            "text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.2 rounded mb-1 inline-block",
+                            notif.type === 'flash_sale' ? "bg-amber-50 text-amber-700" :
+                            notif.type === 'offer' || notif.type === 'discount' ? "bg-rose-50 text-rose-700" :
+                            notif.type === 'announcement' ? "bg-purple-50 text-purple-700" :
+                            "bg-emerald-50 text-emerald-700"
+                          )}>
+                            {notif.type === 'flash_sale' ? '⚡ Flash Sale' :
+                             notif.type === 'offer' ? '🏷️ Special Offer' :
+                             notif.type === 'discount' ? '🎁 Discount' :
+                             notif.type === 'announcement' ? '📢 Notice' :
+                             '📦 New Arrival'}
+                          </span>
+                        )}
+                        <h3 className={cn(
+                          "text-sm text-[#1A1A1A]",
+                          isRead ? "font-medium opacity-70" : "font-bold"
+                        )}>{notif.title}</h3>
+                      </div>
                       <span className="text-[10px] text-gray-400">
                         {notif.createdAt?.toDate ? notif.createdAt.toDate().toLocaleDateString() : 'Just now'}
                       </span>

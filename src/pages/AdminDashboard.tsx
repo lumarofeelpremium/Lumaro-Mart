@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle, QrCode, ArrowUpDown, Award, Sparkles, Gift, Wallet, Globe, MapPin, Building2, Zap, Share2, Copy, Key } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle, QrCode, ArrowUpDown, Award, Sparkles, Gift, Wallet, Globe, MapPin, Building2, Zap, Share2, Copy, Key, Megaphone, Tag } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner, ProductVariant } from '../types';
+import type { Notification } from '../types';
 import { auth, db } from '../firebase';
 import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, where, getDoc, getDocs, increment, writeBatch, deleteField, limit } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
@@ -20,13 +21,14 @@ import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
 import { WhatsAppStatusAlertModal } from '../components/WhatsAppStatusAlertModal';
 import { OrderStatusTracker } from '../components/OrderStatusTracker';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
+import { BroadcastNotificationModal } from '../components/BroadcastNotificationModal';
 import { showBannerAd, showInterstitialAd, showRewardedAd, ADMOB_TEST_IDS } from '../lib/admob';
 import { QRCodeSVG } from 'qrcode.react';
 import { useModalBackHandler } from '../lib/back-button-handler';
 
 export const AdminDashboard = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'users' | 'products' | 'orders' | 'categories' | 'settings' | 'banners' | 'reports'>('orders');
+  const [activeTab, setActiveTab] = useState<'users' | 'products' | 'orders' | 'categories' | 'settings' | 'banners' | 'reports' | 'broadcast'>('orders');
   const [users, setUsers] = useState<User[]>([]);
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userCurrentPage, setUserCurrentPage] = useState(1);
@@ -92,6 +94,8 @@ export const AdminDashboard = () => {
   const [updatingOrderIds, setUpdatingOrderIds] = useState<Record<string, boolean>>({});
   const [isCleaningCanceledOrders, setIsCleaningCanceledOrders] = useState(false);
   const [statusAlertOrder, setStatusAlertOrder] = useState<{ order: Order; newStatus: Order['status']; customer?: User | null } | null>(null);
+  const [isBroadcastingOffer, setIsBroadcastingOffer] = useState(false);
+  const [broadcastNotifications, setBroadcastNotifications] = useState<Notification[]>([]);
   const isInitialLoad = React.useRef(true);
   const notificationAudio = React.useRef<HTMLAudioElement | null>(null);
 
@@ -245,6 +249,16 @@ export const AdminDashboard = () => {
       setBanners(sortedBanners);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'banners'));
 
+    const unsubNotifications = onSnapshot(query(collection(db, 'notifications'), limit(50)), (snapshot) => {
+      const notifsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Notification));
+      const sortedNotifs = notifsData.sort((a, b) => {
+        const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+        const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+        return timeB - timeA;
+      });
+      setBroadcastNotifications(sortedNotifs);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'notifications'));
+
     return () => {
       unsubUsers();
       unsubProducts();
@@ -252,6 +266,7 @@ export const AdminDashboard = () => {
       unsubOrders();
       unsubSettings();
       unsubBanners();
+      unsubNotifications();
     };
   }, [auth.currentUser?.uid, ordersLimit, usersLimit]);
 
@@ -662,6 +677,46 @@ export const AdminDashboard = () => {
       await batch.commit();
       setSuccessMessage(`Order status updated to ${newStatus}`);
 
+      // Create Customer Order Update Notification in Firestore
+      const statusTitles: Record<string, { title: string; message: string }> = {
+        confirmed: {
+          title: `Order Confirmed! (#${(orderId || orderData.id).slice(-6).toUpperCase()})`,
+          message: `Aapka order confirm ho gaya hai aur store par pack kiya ja raha hai.`
+        },
+        packed: {
+          title: `Order Packed! (#${(orderId || orderData.id).slice(-6).toUpperCase()})`,
+          message: `Aapka order pack ho chuka hai aur delivery ke liye ready hai.`
+        },
+        out_for_delivery: {
+          title: `Order Out for Delivery! 🚚 (#${(orderId || orderData.id).slice(-6).toUpperCase()})`,
+          message: `Aapka order delivery person ke sath nikal chuka hai. Jaldi hi aapke paas pahuchega!`
+        },
+        delivered: {
+          title: `Order Delivered! 🎉 (#${(orderId || orderData.id).slice(-6).toUpperCase()})`,
+          message: `Aapka order successfully deliver ho gaya hai. Lumaro Mart se shopping karne ke liye dhanyawad!`
+        },
+        canceled: {
+          title: `Order Canceled (#${(orderId || orderData.id).slice(-6).toUpperCase()})`,
+          message: `Aapka order store dwara cancel kar diya gaya hai.`
+        }
+      };
+
+      const notifInfo = statusTitles[newStatus] || {
+        title: `Order Update: ${newStatus}`,
+        message: `Aapke order ka status ab ${newStatus} hai.`
+      };
+
+      if (orderData.userId) {
+        addDoc(collection(db, 'notifications'), {
+          title: notifInfo.title,
+          message: notifInfo.message,
+          type: 'order_update',
+          orderId: orderId || orderData.id,
+          userId: orderData.userId,
+          createdAt: serverTimestamp()
+        }).catch(err => console.warn('Order status notification write error:', err));
+      }
+
       // Send Telegram cancel alert if canceled by admin
       if (newStatus === 'canceled' && oldStatus !== 'canceled') {
         let cancelCust: User | null = null;
@@ -728,17 +783,37 @@ export const AdminDashboard = () => {
     }
   };
 
+  const handleDeleteNotification = async (notifId: string) => {
+    if (!window.confirm('Kya aap is broadcast notification ko delete karna chahte hain?')) return;
+    try {
+      await deleteDoc(doc(db, 'notifications', notifId));
+      setSuccessMessage('Notification delete ho gaya!');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `notifications/${notifId}`);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#F8FBF9] pb-32">
       <div className="bg-white px-6 pt-12 pb-6 rounded-b-[40px] shadow-sm mb-6">
-        <div className="flex items-center gap-4 mb-6">
-          <button 
-            onClick={() => navigate(-1)}
-            className="w-10 h-10 bg-[#F0F7F4] rounded-xl flex items-center justify-center text-gray-600"
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => navigate(-1)}
+              className="w-10 h-10 bg-[#F0F7F4] rounded-xl flex items-center justify-center text-gray-600"
+            >
+              <ChevronLeft size={20} />
+            </button>
+            <h1 className="text-xl font-bold text-[#1A1A1A]">Admin Backend</h1>
+          </div>
+
+          <button
+            onClick={() => setIsBroadcastingOffer(true)}
+            className="bg-gradient-to-r from-amber-500 via-rose-500 to-pink-500 hover:from-amber-600 hover:to-pink-600 active:scale-95 text-white text-xs font-bold px-3.5 py-2.5 rounded-2xl shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
           >
-            <ChevronLeft size={20} />
+            <Megaphone size={14} className="animate-bounce" />
+            <span>📢 Send Offer</span>
           </button>
-          <h1 className="text-xl font-bold text-[#1A1A1A]">Admin Backend</h1>
         </div>
 
         <div className="grid grid-cols-4 gap-2">
@@ -756,6 +831,7 @@ export const AdminDashboard = () => {
           <TabButton active={activeTab === 'products'} onClick={() => setActiveTab('products')} label="Products" />
           <TabButton active={activeTab === 'categories'} onClick={() => setActiveTab('categories')} label="Categories" />
           <TabButton active={activeTab === 'banners'} onClick={() => setActiveTab('banners')} label="Banners" />
+          <TabButton active={activeTab === 'broadcast'} onClick={() => setActiveTab('broadcast')} label="📢 Broadcast" />
           <TabButton active={activeTab === 'users'} onClick={() => setActiveTab('users')} label="Users" />
           <TabButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Settings" />
         </div>
@@ -839,6 +915,13 @@ export const AdminDashboard = () => {
               onEdit={setEditingBanner} 
               onDelete={handleDeleteBanner}
               onAdd={() => setIsAddingBanner(true)}
+            />
+          )}
+          {activeTab === 'broadcast' && (
+            <BroadcastTab 
+              notifications={broadcastNotifications}
+              onOpenModal={() => setIsBroadcastingOffer(true)}
+              onDeleteNotification={handleDeleteNotification}
             />
           )}
           {activeTab === 'settings' && (
@@ -952,6 +1035,14 @@ export const AdminDashboard = () => {
             onCancel={() => setDeleteConfirmation(null)}
           />
         )}
+        {isBroadcastingOffer && (
+          <BroadcastNotificationModal
+            isOpen={isBroadcastingOffer}
+            onClose={() => setIsBroadcastingOffer(false)}
+            products={products}
+            onSuccess={() => setSuccessMessage('Offer Broadcast sabhi customers ko chala gaya! 🎉')}
+          />
+        )}
       </AnimatePresence>
     </div>
   );
@@ -971,13 +1062,120 @@ const TabButton = ({ active, onClick, label }: any) => (
   <button 
     onClick={onClick}
     className={cn(
-      "px-6 py-3 rounded-2xl font-bold transition-all whitespace-nowrap",
-      active ? "bg-[#66D2A4] text-white shadow-md shadow-[#66D2A4]/20" : "bg-white text-gray-400 border border-gray-100"
+      "px-6 py-3 rounded-2xl font-bold transition-all whitespace-nowrap cursor-pointer",
+      active ? "bg-[#66D2A4] text-white shadow-md shadow-[#66D2A4]/20" : "bg-white text-gray-400 border border-gray-100 hover:bg-gray-50"
     )}
   >
     {label}
   </button>
 );
+
+const BroadcastTab = ({
+  notifications,
+  onOpenModal,
+  onDeleteNotification
+}: {
+  notifications: Notification[];
+  onOpenModal: () => void;
+  onDeleteNotification: (id: string) => void;
+}) => {
+  return (
+    <div className="space-y-6">
+      {/* Hero Banner */}
+      <div className="bg-gradient-to-r from-amber-500 via-rose-500 to-pink-500 rounded-[32px] p-6 text-white shadow-lg relative overflow-hidden flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="space-y-1 text-center sm:text-left z-10">
+          <div className="flex items-center justify-center sm:justify-start gap-2">
+            <Megaphone size={22} className="animate-bounce" />
+            <h3 className="text-lg font-bold">Broadcast Offers & Notifications</h3>
+          </div>
+          <p className="text-xs text-white/90 max-w-md leading-relaxed">
+            Apne sabhi customers ke mobile par ek click me Flash Sale, Discount aur Naye Offers broadcast karein.
+          </p>
+        </div>
+        <button
+          onClick={onOpenModal}
+          className="bg-white text-rose-600 hover:bg-rose-50 active:scale-95 px-5 py-3 rounded-2xl font-bold text-xs shadow-md transition-all flex items-center gap-2 cursor-pointer shrink-0 z-10"
+        >
+          <Sparkles size={16} />
+          <span>+ Create New Broadcast</span>
+        </button>
+      </div>
+
+      {/* Notifications List */}
+      <div>
+        <div className="flex items-center justify-between mb-3 px-1">
+          <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+            Sent Broadcasts ({notifications.length})
+          </h4>
+          <span className="text-[10px] text-gray-400">Live in Updates & Offers</span>
+        </div>
+
+        {notifications.length === 0 ? (
+          <div className="text-center py-16 bg-gray-50/70 rounded-3xl border border-dashed border-gray-200">
+            <Bell size={36} className="mx-auto text-gray-300 mb-2" />
+            <p className="text-sm font-bold text-gray-600">Abhi tak koi broadcast nahi bheja gaya</p>
+            <p className="text-xs text-gray-400 mt-1">Upar diye gaye button se pehla offer broadcast karein.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {notifications.map((notif) => (
+              <div
+                key={notif.id}
+                className="bg-white rounded-2xl p-4 border border-gray-100 shadow-xs flex items-start justify-between gap-3 hover:border-gray-200 transition-all"
+              >
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                  <div className={cn(
+                    "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
+                    notif.type === 'flash_sale' ? "bg-amber-100 text-amber-600" :
+                    notif.type === 'offer' || notif.type === 'discount' ? "bg-rose-100 text-rose-600" :
+                    notif.type === 'announcement' ? "bg-purple-100 text-purple-600" :
+                    notif.type === 'new_product' ? "bg-emerald-100 text-emerald-600" :
+                    "bg-blue-100 text-blue-600"
+                  )}>
+                    {notif.type === 'flash_sale' ? <Zap size={18} /> :
+                     notif.type === 'announcement' ? <Megaphone size={18} /> :
+                     notif.type === 'new_product' ? <Package size={18} /> :
+                     <Tag size={18} />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className={cn(
+                        "text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded",
+                        notif.type === 'flash_sale' ? "bg-amber-100 text-amber-700" :
+                        notif.type === 'offer' || notif.type === 'discount' ? "bg-rose-100 text-rose-700" :
+                        notif.type === 'announcement' ? "bg-purple-100 text-purple-700" :
+                        "bg-emerald-100 text-emerald-700"
+                      )}>
+                        {notif.type === 'flash_sale' ? '⚡ Flash Sale' :
+                         notif.type === 'offer' ? '🏷️ Special Offer' :
+                         notif.type === 'discount' ? '🎁 Discount' :
+                         notif.type === 'announcement' ? '📢 Notice' :
+                         '📦 New Arrival'}
+                      </span>
+                      <h5 className="text-xs font-bold text-gray-900 truncate">{notif.title}</h5>
+                    </div>
+                    <p className="text-[11px] text-gray-500 leading-relaxed line-clamp-2">{notif.message}</p>
+                    <span className="text-[9px] text-gray-400 mt-1 block">
+                      {notif.createdAt?.toDate ? notif.createdAt.toDate().toLocaleString() : 'Just now'}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => onDeleteNotification(notif.id)}
+                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors cursor-pointer shrink-0"
+                  title="Delete Broadcast"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 type UserSortOption = 'all' | 'orders_desc' | 'points_earned_desc' | 'points_redeemed_desc' | 'points_balance_desc' | 'spending_desc';
 
