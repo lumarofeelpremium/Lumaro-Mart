@@ -19,6 +19,8 @@ import { BottomNav } from './components/BottomNav';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import ScrollToTop from './components/ScrollToTop';
 import { MobileBackButtonSync } from './components/MobileBackButtonSync';
+import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
+import { setupForegroundPushListener } from './lib/fcm-utils';
 import { User, CartItem, Product, Category, Banner, DeliveryLocation, ProductVariant } from './types';
 import { getStoredDeliveryLocation, setStoredDeliveryLocation, getStateFromPincode } from './lib/location-utils';
 import { cacheUtils } from './lib/cache-utils';
@@ -80,6 +82,16 @@ export default function App() {
       setIsQuotaExhausted(exhausted);
     });
     return () => unsub();
+  }, []);
+
+  // Listen for FCM Push messages received in foreground
+  useEffect(() => {
+    const unsubPush = setupForegroundPushListener((payload) => {
+      console.log('[App] Foreground push message received:', payload);
+    });
+    return () => {
+      if (unsubPush) unsubPush();
+    };
   }, []);
 
   // Centralized real-time listener for ALL products without artificial limits
@@ -435,6 +447,7 @@ export default function App() {
             <Route path="/admin" element={user?.role === 'admin' ? <AdminDashboard /> : <Navigate to="/profile" />} />
           </Routes>
           
+          <NotificationPermissionBanner user={user} />
           <ConditionalBottomNav cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)} />
         </div>
       </Router>

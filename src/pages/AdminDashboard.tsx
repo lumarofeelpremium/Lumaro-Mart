@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle, QrCode, ArrowUpDown, Award, Sparkles, Gift, Wallet, Globe, MapPin, Building2, Zap, Share2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle, QrCode, ArrowUpDown, Award, Sparkles, Gift, Wallet, Globe, MapPin, Building2, Zap, Share2, Copy, Key } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner, ProductVariant } from '../types';
@@ -14,6 +14,7 @@ import * as XLSX from 'xlsx';
 import { downloadReceiptPdf, sendWhatsAppBill, sendOrderStatusWhatsAppAlert, calculateEarnedPoints, printIsolatedElement, shareReceiptPdf } from '../lib/receipt-utils';
 import { downloadSalesExcel, shareSalesExcel } from '../lib/excel-utils';
 import { sendTelegramOrderCancelAlert } from '../lib/telegram-utils';
+import { isFcmSupported, getFcmPermissionStatus, requestFcmToken, requestFcmTokenDetailed, saveFcmToken } from '../lib/fcm-utils';
 import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
 import { WhatsAppStatusAlertModal } from '../components/WhatsAppStatusAlertModal';
@@ -3652,6 +3653,13 @@ const SettingsTab = ({
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
+  const [fcmEnabled, setFcmEnabled] = useState(settings.fcmEnabled ?? true);
+  const [fcmVapidKey, setFcmVapidKey] = useState(settings.fcmVapidKey || 'BH5pHZc7Wf0ASibIMFNVtrRi-5Waime9pc9RYCnOh4XqHW3xbwAP8yBWofnR2tc3rbqQ4FnMd15liNgznCN5P08');
+  const [adminFcmToken, setAdminFcmToken] = useState<string | null>(() => {
+    return typeof localStorage !== 'undefined' ? localStorage.getItem('lumaro_fcm_token') : null;
+  });
+  const [isGeneratingFcmToken, setIsGeneratingFcmToken] = useState(false);
+  const [fcmTokenCopied, setFcmTokenCopied] = useState(false);
 
   useEffect(() => {
     if ("Notification" in window) {
@@ -3683,6 +3691,8 @@ const SettingsTab = ({
     setLoyaltyPointsEarned(settings.loyaltyPointsEarned ?? (settings.loyaltyPointsPerHundred ?? 5));
     setLoyaltyPointsPerHundred(settings.loyaltyPointsEarned ?? (settings.loyaltyPointsPerHundred ?? 5));
     setLoyaltyPointValue(settings.loyaltyPointValue ?? 1);
+    setFcmEnabled(settings.fcmEnabled ?? true);
+    setFcmVapidKey(settings.fcmVapidKey || 'BH5pHZc7Wf0ASibIMFNVtrRi-5Waime9pc9RYCnOh4XqHW3xbwAP8yBWofnR2tc3rbqQ4FnMd15liNgznCN5P08');
   }, [settings]);
 
   const handleRequestPermission = () => {
@@ -3698,6 +3708,49 @@ const SettingsTab = ({
     } else {
       alert("This browser does not support notifications.");
     }
+  };
+
+  const handleGenerateAdminFcmToken = async () => {
+    setIsGeneratingFcmToken(true);
+    try {
+      const activeKey = (fcmVapidKey || 'BH5pHZc7Wf0ASibIMFNVtrRi-5Waime9pc9RYCnOh4XqHW3xbwAP8yBWofnR2tc3rbqQ4FnMd15liNgznCN5P08').trim();
+      const result = await requestFcmTokenDetailed(activeKey);
+      if (result.token) {
+        setAdminFcmToken(result.token);
+        if (auth.currentUser?.uid) {
+          await saveFcmToken(auth.currentUser.uid, result.token, 'admin');
+        }
+        setNotifPermission('granted');
+        // Auto-save key to global settings if not yet saved
+        if (!settings.fcmVapidKey) {
+          onSave({
+            ...settings,
+            fcmEnabled: true,
+            fcmVapidKey: activeKey
+          }).catch(() => {});
+        }
+        alert('✅ FCM Token successfully generate ho gaya aur is device par connect ho gaya!');
+      } else {
+        const errorDetails = [
+          result.error ? `Error: ${result.error}` : null,
+          result.errorCode ? `Code: ${result.errorCode}` : null,
+          result.hint ? `\nKaran & Samadhan:\n${result.hint}` : null
+        ].filter(Boolean).join('\n');
+
+        alert(`❌ FCM Connect Nahi Hua:\n\n${errorDetails || 'Kripya check karein ki notification permission allowed hai aur VAPID Key sahi hai.'}`);
+      }
+    } catch (e: any) {
+      alert('Error generating token: ' + (e?.message || e));
+    } finally {
+      setIsGeneratingFcmToken(false);
+    }
+  };
+
+  const handleCopyFcmToken = () => {
+    if (!adminFcmToken) return;
+    navigator.clipboard.writeText(adminFcmToken);
+    setFcmTokenCopied(true);
+    setTimeout(() => setFcmTokenCopied(false), 2000);
   };
 
   const handleSave = async () => {
@@ -3727,7 +3780,9 @@ const SettingsTab = ({
       loyaltySpendBase: validSpendBase,
       loyaltyPointsEarned: validPointsEarned,
       loyaltyPointsPerHundred: validPointsEarned,
-      loyaltyPointValue: Number(loyaltyPointValue) || 1
+      loyaltyPointValue: Number(loyaltyPointValue) || 1,
+      fcmEnabled,
+      fcmVapidKey: fcmVapidKey.trim()
     });
     setIsSaving(false);
     
@@ -3899,40 +3954,151 @@ const SettingsTab = ({
 
           <div className="h-px bg-blue-100 my-4" />
 
-          {/* Browser Notifications Switch */}
-          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-blue-100">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-500 flex items-center justify-center">
-                <Bell size={20} />
+          {/* Browser & FCM Web Push Notifications Card */}
+          <div className="p-4 bg-white rounded-2xl border border-blue-100 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                  fcmEnabled ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-400"
+                )}>
+                  <Bell size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-sm font-bold text-[#1A1A1A]">FCM Web Push & Browser Alerts</p>
+                    <span className="text-[9px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.2 rounded">
+                      Firebase
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-gray-400">
+                    Status: <span className={cn(
+                      "capitalize font-bold",
+                      notifPermission === 'granted' ? "text-green-500" : 
+                      notifPermission === 'denied' ? "text-red-500" : "text-gray-400"
+                    )}>{notifPermission}</span>
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-bold text-[#1A1A1A]">Browser Alerts</p>
-                <p className="text-[10px] text-gray-400">Status: <span className={cn(
-                  "capitalize font-bold",
-                  notifPermission === 'granted' ? "text-green-500" : 
-                  notifPermission === 'denied' ? "text-red-500" : "text-gray-400"
-                )}>{notifPermission}</span></p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              {notifPermission === 'granted' && (
-                <button 
-                  onClick={onTestNotification}
-                  className="text-[10px] font-bold text-blue-500 bg-blue-50 px-3 py-2 rounded-xl hover:bg-blue-100 transition-colors"
-                >
-                  Test
-                </button>
-              )}
-              <button 
-                onClick={handleRequestPermission}
-                className={cn(
-                  "text-[10px] font-bold px-3 py-2 rounded-xl transition-colors",
-                  notifPermission === 'granted' ? "bg-green-50 text-green-500" : "bg-orange-50 text-orange-500 hover:bg-orange-100"
+              <div className="flex items-center gap-2">
+                {notifPermission === 'granted' && (
+                  <button 
+                    onClick={onTestNotification}
+                    className="text-[10px] font-bold text-blue-500 bg-blue-50 px-2.5 py-1.5 rounded-xl hover:bg-blue-100 transition-colors"
+                  >
+                    Test Alert
+                  </button>
                 )}
-              >
-                {notifPermission === 'granted' ? 'Enabled' : 'Enable'}
-              </button>
+                <button 
+                  onClick={() => setFcmEnabled(!fcmEnabled)}
+                  className={cn(
+                    "w-12 h-6 rounded-full transition-all relative",
+                    fcmEnabled ? "bg-amber-500" : "bg-gray-200"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                    fcmEnabled ? "right-1" : "left-1"
+                  )} />
+                </button>
+              </div>
             </div>
+
+            {fcmEnabled && (
+              <div className="space-y-3 pt-3 border-t border-gray-100 text-xs">
+                {/* VAPID Key Input */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1">
+                      <Key size={11} className="text-amber-500" />
+                      <span>Web Push Certificate / Key Pair (VAPID Key)</span>
+                    </label>
+                  </div>
+                  <Input 
+                    value={fcmVapidKey}
+                    onChange={(e) => setFcmVapidKey(e.target.value.trim())}
+                    placeholder="Firebase Console ➔ Project Settings ➔ Cloud Messaging ➔ Web Push certificates (Key pair)"
+                    className="bg-gray-50 text-[11px] font-mono"
+                  />
+                  <p className="text-[9px] text-gray-400 mt-1 leading-relaxed">
+                    Firebase Console me jakar <strong>Generate key pair</strong> par click karein aur waha se Public Key yahan paste karein.
+                  </p>
+                </div>
+
+                {/* Device FCM Token Generator / Connect Button */}
+                <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-amber-900">Admin Device FCM Connection</span>
+                    <button
+                      onClick={handleGenerateAdminFcmToken}
+                      disabled={isGeneratingFcmToken}
+                      className="bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-xs flex items-center gap-1 disabled:opacity-50 transition-all cursor-pointer"
+                    >
+                      {isGeneratingFcmToken ? (
+                        <>
+                          <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          <span>Connecting...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap size={11} />
+                          <span>{adminFcmToken ? 'Re-Sync Token' : 'Connect This Device'}</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {adminFcmToken ? (
+                    <div className="bg-emerald-50/80 rounded-xl p-3 border border-emerald-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-emerald-800 font-bold text-[11px]">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                          <span>🟢 Device Connected (FCM Active)</span>
+                        </div>
+                        <button
+                          onClick={onTestNotification}
+                          className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center gap-1"
+                        >
+                          <Bell size={11} />
+                          <span>Send Test Push</span>
+                        </button>
+                      </div>
+
+                      <div className="bg-white rounded-lg p-2 border border-emerald-200/60 flex items-center justify-between gap-2">
+                        <div className="overflow-hidden">
+                          <p className="text-[9px] font-bold text-gray-400 uppercase">Device Token (Live in Firebase):</p>
+                          <p className="text-[10px] font-mono text-emerald-900 truncate">{adminFcmToken}</p>
+                        </div>
+                        <button
+                          onClick={handleCopyFcmToken}
+                          className="p-1.5 hover:bg-emerald-50 rounded-lg text-emerald-600 transition-colors shrink-0 flex items-center gap-1 text-[10px] font-bold"
+                          title="Copy Token"
+                        >
+                          {fcmTokenCopied ? (
+                            <>
+                              <CheckCircle size={14} className="text-emerald-500" />
+                              <span className="text-emerald-600">Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy size={14} />
+                              <span>Copy</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-white/80 rounded-xl p-2.5 border border-amber-200/60 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                      <p className="text-[11px] text-amber-900/90 leading-tight">
+                        Device abhi connect nahi hai. Upar diye gaye <strong>Connect This Device</strong> button par click karke browser permission allow karein.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="h-px bg-blue-100 my-4" />

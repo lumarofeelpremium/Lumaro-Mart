@@ -1,17 +1,38 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, BellOff, Bell, Package } from 'lucide-react';
+import { ChevronLeft, BellOff, Bell, Package, CheckCircle2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, limit } from 'firebase/firestore';
 import { Notification } from '../types';
 import { motion } from 'motion/react';
 import { cacheUtils } from '../lib/cache-utils';
+import { isFcmSupported, getFcmPermissionStatus, requestFcmToken } from '../lib/fcm-utils';
 
 export const Notifications = () => {
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [readIds, setReadIds] = useState<string[]>([]);
+  const [pushStatus, setPushStatus] = useState<string>('default');
+  const [pushLoading, setPushLoading] = useState(false);
+
+  useEffect(() => {
+    setPushStatus(getFcmPermissionStatus());
+  }, []);
+
+  const handleEnablePush = async () => {
+    setPushLoading(true);
+    try {
+      const token = await requestFcmToken();
+      if (token) {
+        setPushStatus('granted');
+      } else {
+        setPushStatus(getFcmPermissionStatus());
+      }
+    } finally {
+      setPushLoading(false);
+    }
+  };
 
   const unreadNotifCount = notifications.filter(n => !readIds.includes(n.id)).length;
 
@@ -90,6 +111,34 @@ export const Notifications = () => {
       </div>
 
       <div className="px-6 py-6">
+        {isFcmSupported() && pushStatus !== 'granted' && (
+          <div className="mb-4 bg-emerald-50 border border-emerald-200/80 rounded-2xl p-3.5 flex items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
+                <Bell size={16} />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-emerald-950">Push Notifications Off</p>
+                <p className="text-[10px] text-emerald-700">Phone screen par alerts pane ke liye on karein</p>
+              </div>
+            </div>
+            <button
+              onClick={handleEnablePush}
+              disabled={pushLoading}
+              className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl shadow-xs transition-all disabled:opacity-50"
+            >
+              {pushLoading ? '...' : 'Turn On'}
+            </button>
+          </div>
+        )}
+
+        {isFcmSupported() && pushStatus === 'granted' && (
+          <div className="mb-4 bg-white border border-gray-100 rounded-2xl p-3 flex items-center gap-2 text-emerald-600 shadow-xs">
+            <CheckCircle2 size={16} />
+            <span className="text-[11px] font-bold">Device Push Notifications Active</span>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex justify-center py-20">
             <div className="w-8 h-8 border-4 border-[#66D2A4] border-t-transparent rounded-full animate-spin" />

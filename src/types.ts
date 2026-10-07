@@ -66,6 +66,8 @@ export interface User {
   referredBy?: string;
   createdAt?: any;
   password?: string;
+  fcmToken?: string;
+  fcmTokens?: string[];
 }
 
 export interface CartItem extends Product {
@@ -145,6 +147,8 @@ export interface AppSettings {
   loyaltyPointsEarned?: number; // e.g. gives 5 points, 1 point, 10 points
   loyaltyPointsPerHundred?: number; // backwards compatibility
   loyaltyPointValue?: number; // e.g. 1 point = ₹1 discount
+  fcmEnabled?: boolean;
+  fcmVapidKey?: string;
 }
 
 export interface Banner {
