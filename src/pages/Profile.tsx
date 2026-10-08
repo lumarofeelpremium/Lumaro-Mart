@@ -1,8 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, User as UserIcon, Settings, LogOut, ShieldCheck, Package, Users, ChevronRight, Clock, MapPin, X, Camera, Mail, Phone, Home, Hash, Loader2, Star, Heart, Bell, MessageCircle, Headset, LifeBuoy, Gift, Copy, Check, Crown } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { 
+  ChevronLeft, User as UserIcon, Settings, LogOut, ShieldCheck, Package, Users, 
+  ChevronRight, Clock, MapPin, X, Camera, Mail, Phone, Home, Hash, Loader2, 
+  Star, Heart, Bell, MessageCircle, Headset, LifeBuoy, Gift, Copy, Check, 
+  Crown, Send, Instagram, Globe, Sparkles, Zap, ShoppingBag, Plus, ArrowRight, Truck 
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
-import { User, Order, AppSettings } from '../types';
+import { User, Order, AppSettings, Product, ProductVariant } from '../types';
 import { db } from '../firebase';
 import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, getDoc, limit } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
@@ -12,7 +17,21 @@ import { cacheUtils } from '../lib/cache-utils';
 import { SubscriptionModal } from '../components/SubscriptionModal';
 import { isSubscriptionActive, getSubscriptionSummary } from '../lib/subscription-utils';
 
-export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUser: (u: User | null) => void, onLogout: () => void }) => {
+export const Profile = ({ 
+  user, 
+  setUser, 
+  onLogout,
+  allProducts = [],
+  onAddToCart,
+  onBatchAddToCart
+}: { 
+  user: User | null; 
+  setUser: (u: User | null) => void; 
+  onLogout: () => void;
+  allProducts?: Product[];
+  onAddToCart?: (p: Product, quantity?: number, variant?: ProductVariant) => void;
+  onBatchAddToCart?: (items: { product: Product; quantity?: number; variant?: ProductVariant }[]) => void;
+}) => {
   const navigate = useNavigate();
   const [orders, setOrders] = useState<Order[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -22,7 +41,100 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [reorderSuccessToast, setReorderSuccessToast] = useState(false);
+  const [addedItemMap, setAddedItemMap] = useState<Record<string, boolean>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isVipActive = isSubscriptionActive(user);
+
+  // Aggregate daily essential items from user's past orders or popular grocery essentials
+  const dailyEssentialItems = useMemo(() => {
+    const itemCountMap: Record<string, { product: Product; count: number; lastVariant?: any }> = {};
+
+    orders.forEach(order => {
+      if (order.items && Array.isArray(order.items)) {
+        order.items.forEach(item => {
+          const key = item.productId || item.id;
+          if (!key) return;
+          if (!itemCountMap[key]) {
+            itemCountMap[key] = {
+              product: item,
+              count: item.quantity || 1,
+              lastVariant: item.selectedVariant
+            };
+          } else {
+            itemCountMap[key].count += item.quantity || 1;
+          }
+        });
+      }
+    });
+
+    const pastItems = Object.values(itemCountMap)
+      .sort((a, b) => b.count - a.count)
+      .map(entry => ({
+        ...entry.product,
+        orderCount: entry.count,
+        selectedVariant: entry.lastVariant
+      }));
+
+    if (pastItems.length >= 3) {
+      return pastItems.slice(0, 8);
+    }
+
+    // Complement with daily grocery essentials from store
+    const essentialKeywords = ['milk', 'bread', 'doodh', 'chai', 'tea', 'sugar', 'atta', 'oil', 'butter', 'ghee', 'paneer', 'egg', 'potato', 'onion', 'tomato', 'biscuit', 'salt', 'rice', 'dal'];
+    const storeEssentials = (allProducts || []).filter(p => {
+      const name = (p.name || '').toLowerCase();
+      const cat = (p.category || '').toLowerCase();
+      return essentialKeywords.some(kw => name.includes(kw) || cat.includes(kw)) || p.isPopular;
+    });
+
+    const existingIds = new Set(pastItems.map(p => p.id));
+    const merged = [...pastItems];
+    for (const p of storeEssentials) {
+      if (!existingIds.has(p.id)) {
+        merged.push({
+          ...p,
+          orderCount: 1
+        } as any);
+        existingIds.add(p.id);
+      }
+      if (merged.length >= 8) break;
+    }
+
+    return merged.length > 0 ? merged : (allProducts || []).slice(0, 6);
+  }, [orders, allProducts]);
+
+  const handleOneClickReorderAll = () => {
+    if (!dailyEssentialItems || dailyEssentialItems.length === 0) return;
+    const itemsToAdd = dailyEssentialItems.map(p => ({
+      product: p,
+      quantity: 1,
+      variant: (p as any).selectedVariant
+    }));
+
+    if (onBatchAddToCart) {
+      onBatchAddToCart(itemsToAdd);
+    } else if (onAddToCart) {
+      itemsToAdd.forEach(item => onAddToCart(item.product, item.quantity, item.variant));
+    }
+
+    setReorderSuccessToast(true);
+    setTimeout(() => {
+      setReorderSuccessToast(false);
+      navigate('/cart');
+    }, 1000);
+  };
+
+  const handleReorderSingleItem = (product: Product, variant?: ProductVariant) => {
+    if (onAddToCart) {
+      onAddToCart(product, 1, variant);
+      setAddedItemMap(prev => ({ ...prev, [product.id]: true }));
+      setTimeout(() => {
+        setAddedItemMap(prev => ({ ...prev, [product.id]: false }));
+      }, 1500);
+    }
+  };
 
   // Auto-generate & save a user's referral code if missing (for legacy or existing users)
   useEffect(() => {
@@ -220,17 +332,57 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
     <div className="min-h-screen bg-[#F8FBF9] pb-32">
       <div className="bg-white px-6 pt-12 pb-8 rounded-b-[40px] shadow-sm mb-6">
         <div className="flex items-center gap-4 mb-6">
-          <div className="w-20 h-20 rounded-3xl bg-[#66D2A4]/10 flex items-center justify-center text-[#66D2A4] overflow-hidden">
-            {user.photoURL ? (
-              <img src={user.photoURL} alt={user.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-            ) : (
-              <UserIcon size={40} />
+          {/* Avatar Outer Wrapper (visible overflow so crown floats outside profile picture) */}
+          <div className="relative shrink-0">
+            {/* Inner avatar container with rounded border and clipping */}
+            <div className={cn(
+              "w-20 h-20 rounded-3xl flex items-center justify-center overflow-hidden transition-all",
+              isVipActive 
+                ? "ring-3 ring-amber-400 ring-offset-2 ring-offset-white bg-gradient-to-tr from-amber-100 to-yellow-50 shadow-lg shadow-amber-500/25" 
+                : "bg-[#66D2A4]/10 text-[#66D2A4]"
+            )}>
+              {user.photoURL ? (
+                <img src={user.photoURL} alt={user.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              ) : (
+                <UserIcon size={40} className={isVipActive ? "text-amber-700" : "text-[#66D2A4]"} />
+              )}
+            </div>
+            
+            {/* Royal Crown Badge floating clearly outside the avatar with unrestricted smooth float animation */}
+            {isVipActive && (
+              <div 
+                className="absolute -top-3 -right-2.5 z-20 pointer-events-none"
+                title="Active Royal VIP Member"
+              >
+                <motion.div
+                  animate={{ 
+                    y: [0, -4, 0],
+                    rotate: [-3, 3, -3]
+                  }}
+                  transition={{ 
+                    duration: 2.2,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  }}
+                  className="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-500 via-yellow-400 to-amber-600 flex items-center justify-center text-stone-950 shadow-xl shadow-amber-500/40 border-2 border-white ring-2 ring-amber-300 pointer-events-auto"
+                >
+                  <Crown size={16} className="fill-stone-950 text-stone-950 drop-shadow-xs" />
+                </motion.div>
+              </div>
             )}
           </div>
-          <div>
-            <h2 className="text-2xl font-bold text-[#1A1A1A]">{user.displayName}</h2>
-            <p className="text-gray-400 text-sm">{user.email}</p>
-            <div className="flex gap-2 mt-1">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-2xl font-bold text-[#1A1A1A] truncate">{user.displayName}</h2>
+              {isVipActive && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-stone-950 rounded-full text-[10px] font-black uppercase tracking-wider shadow-xs border border-yellow-200 shrink-0">
+                  <Crown size={11} className="fill-stone-950" />
+                  Royal VIP
+                </span>
+              )}
+            </div>
+            <p className="text-gray-400 text-sm truncate">{user.email}</p>
+            <div className="flex gap-2 mt-1 flex-wrap">
               {user.role === 'admin' && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-600 rounded-full text-[10px] font-bold uppercase tracking-wider">
                   <ShieldCheck size={10} /> Admin
@@ -329,7 +481,7 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
           );
         })()}
 
-        {/* VIP Subscription Card */}
+        {/* VIP Subscription Card - Royal Golden VIP Theme */}
         {appSettings?.subscriptionEnabled !== false && (() => {
           const subSummary = getSubscriptionSummary(user);
           const planName = appSettings?.subscriptionPlanName || 'Lumaro VIP Club';
@@ -340,27 +492,28 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
 
           if (user?.subscriptionPendingVerification) {
             return (
-              <div className="mt-4 p-5 rounded-3xl bg-amber-50 border border-amber-300 text-amber-950 shadow-xs relative overflow-hidden">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
-                      <Clock size={20} className="text-white animate-pulse" />
+              <div className="mt-4 p-5 rounded-3xl bg-gradient-to-br from-[#1c1917] via-[#292524] to-[#0c0a09] border-2 border-amber-400/60 text-white shadow-xl relative overflow-hidden">
+                <div className="absolute -top-10 -right-10 w-36 h-36 bg-amber-400/20 rounded-full blur-2xl pointer-events-none" />
+                <div className="flex items-center justify-between mb-3 relative z-10">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-amber-500/20 border border-amber-400/40 text-amber-300 flex items-center justify-center shadow-xs">
+                      <Clock size={22} className="text-amber-300 animate-pulse" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-black text-amber-950">{user.subscriptionPendingPlanName || planName}</span>
-                        <span className="bg-amber-200 text-amber-900 text-[9px] font-black px-1.5 py-0.2 rounded-md">
+                        <span className="text-sm font-black text-amber-200">{user.subscriptionPendingPlanName || planName}</span>
+                        <span className="bg-amber-400 text-stone-950 text-[9px] font-black px-2 py-0.5 rounded-full shadow-xs">
                           ⏳ VERIFICATION PENDING
                         </span>
                       </div>
-                      <p className="text-[10px] text-amber-800 mt-0.5">
-                        UTR: <span className="font-mono font-bold">{user.subscriptionPendingUtr}</span> • Admin jald hi verify karega
+                      <p className="text-[11px] text-amber-300/80 mt-0.5 font-mono">
+                        UTR: <span className="font-bold text-amber-100">{user.subscriptionPendingUtr}</span>
                       </p>
                     </div>
                   </div>
                 </div>
-                <div className="bg-white/80 p-2.5 rounded-xl border border-amber-200 text-[10px] text-amber-900 mt-2">
-                  Aapka ₹{user.subscriptionPendingFee || fee} ka payment verification under process hai. Admin dwara confirm hote hi VIP perks chalu ho jayenge!
+                <div className="bg-white/10 backdrop-blur-md p-3 rounded-2xl border border-white/15 text-xs text-amber-100/90 relative z-10">
+                  Aapka <strong>₹{user.subscriptionPendingFee || fee}</strong> ka VIP payment review ho raha hai. Admin verification confirm hote hi aapka Royal VIP status activate ho jayega!
                 </div>
               </div>
             );
@@ -368,82 +521,289 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
 
           if (subSummary.isActive) {
             return (
-              <div className="mt-4 p-5 rounded-3xl bg-gradient-to-br from-amber-500 via-amber-600 to-yellow-600 text-white shadow-lg relative overflow-hidden border border-yellow-300/40">
-                <div className="flex items-center justify-between mb-3 relative z-10">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center border border-white/30">
-                      <Crown size={22} className="text-yellow-200 fill-yellow-300" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-black tracking-tight">{subSummary.planName}</span>
-                        <span className="bg-yellow-300 text-amber-950 text-[9px] font-black px-1.5 py-0.2 rounded-md">
-                          ACTIVE VIP
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-yellow-100">
-                        Delivery Rate: {subDeliveryFee === 0 ? 'FREE Delivery (₹0)' : `₹${subDeliveryFee} / order`}
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowSubscriptionModal(true)}
-                    className="px-3 py-1 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold rounded-xl border border-white/30 transition-colors cursor-pointer"
-                  >
-                    Extend
-                  </button>
+              <div className="mt-4 rounded-[32px] p-5 sm:p-6 bg-gradient-to-br from-[#141210] via-[#1f1b16] to-[#0a0908] text-white shadow-2xl shadow-amber-950/40 relative overflow-hidden border-2 border-amber-400/60">
+                {/* Ambient Royal Gold Lighting */}
+                <div className="absolute -right-10 -top-10 w-48 h-48 bg-gradient-to-br from-amber-400/30 to-yellow-500/15 rounded-full blur-3xl pointer-events-none" />
+                <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-amber-500/15 rounded-full blur-2xl pointer-events-none" />
+                
+                {/* Holographic Watermark Crown in Background */}
+                <div className="absolute right-2 bottom-0 opacity-5 pointer-events-none">
+                  <Crown size={150} />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2.5 relative z-10 pt-2 border-t border-white/20">
-                  <div className="bg-black/10 backdrop-blur-sm p-2.5 rounded-xl border border-white/10">
-                    <p className="text-[9px] font-bold text-yellow-200 uppercase">Orders Covered</p>
-                    <p className="text-sm font-extrabold text-white mt-0.5">
-                      {subSummary.isUnlimitedOrders ? 'Unlimited Orders' : `${subSummary.ordersRemaining} Orders Left`}
+                {/* Card Top Strip */}
+                <div className="flex justify-between items-start relative z-10 mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 via-yellow-400 to-amber-600 p-0.5 shadow-lg shadow-amber-500/30">
+                      <div className="w-full h-full bg-[#1c1917] rounded-[14px] flex items-center justify-center">
+                        <Crown size={24} className="fill-amber-300 text-amber-300 drop-shadow-md" />
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-extrabold uppercase tracking-widest text-amber-300/90 block">
+                        ROYAL VIP PRIVILEGE PASS
+                      </span>
+                      <h3 className="text-base font-black tracking-tight text-white flex items-center gap-1.5">
+                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-amber-300 to-yellow-100">
+                          {subSummary.planName}
+                        </span>
+                        <Sparkles size={14} className="text-amber-300 shrink-0" />
+                      </h3>
+                    </div>
+                  </div>
+
+                  {/* Active VIP Status Tag */}
+                  <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-400 text-stone-950 rounded-full text-[10px] font-black uppercase tracking-wider shadow-sm border border-yellow-200">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-ping" />
+                    <span>ACTIVE VIP</span>
+                  </div>
+                </div>
+
+                {/* Cardholder info */}
+                <div className="relative z-10 mb-4 bg-white/5 backdrop-blur-md p-3 rounded-2xl border border-white/10 flex items-center justify-between">
+                  <div>
+                    <p className="text-[9px] font-bold text-amber-200/70 uppercase tracking-widest">VIP Cardholder</p>
+                    <p className="text-sm font-bold text-white tracking-wide truncate max-w-[180px]">
+                      {user.displayName || 'VIP Member'}
                     </p>
                   </div>
-                  <div className="bg-black/10 backdrop-blur-sm p-2.5 rounded-xl border border-white/10">
-                    <p className="text-[9px] font-bold text-yellow-200 uppercase">Valid Till</p>
-                    <p className="text-sm font-extrabold text-white mt-0.5 truncate">
+                  <div className="text-right">
+                    <p className="text-[9px] font-bold text-amber-200/70 uppercase tracking-widest">Member ID</p>
+                    <p className="text-xs font-mono font-bold text-amber-300">
+                      VIP-★{user.uid.slice(0, 6).toUpperCase()}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Perks Matrix */}
+                <div className="grid grid-cols-3 gap-2 relative z-10 mb-4">
+                  {/* Delivery Perk */}
+                  <div className="bg-black/40 backdrop-blur-md p-2.5 rounded-2xl border border-amber-400/20 text-center">
+                    <p className="text-[9px] font-bold text-amber-200 uppercase tracking-wider">Delivery</p>
+                    <p className="text-xs font-black text-white mt-1">
+                      {subDeliveryFee === 0 ? 'FREE (₹0)' : `₹${subDeliveryFee}`}
+                    </p>
+                  </div>
+
+                  {/* Orders Covered */}
+                  <div className="bg-black/40 backdrop-blur-md p-2.5 rounded-2xl border border-amber-400/20 text-center">
+                    <p className="text-[9px] font-bold text-amber-200 uppercase tracking-wider">Orders</p>
+                    <p className="text-xs font-black text-amber-300 mt-1">
+                      {subSummary.isUnlimitedOrders ? 'Unlimited' : `${subSummary.ordersRemaining} Left`}
+                    </p>
+                  </div>
+
+                  {/* Validity */}
+                  <div className="bg-black/40 backdrop-blur-md p-2.5 rounded-2xl border border-amber-400/20 text-center">
+                    <p className="text-[9px] font-bold text-amber-200 uppercase tracking-wider">Valid Till</p>
+                    <p className="text-xs font-black text-white mt-1 truncate">
                       {subSummary.expiryDateFormatted || `${duration} Days`}
                     </p>
                   </div>
+                </div>
+
+                {/* Bottom Strip: VIP Benefits & Extend button */}
+                <div className="pt-3 border-t border-amber-400/20 flex items-center justify-between relative z-10 flex-wrap gap-2">
+                  <div className="flex items-center gap-2 text-[10px] text-amber-200/90">
+                    <span className="flex items-center gap-1 font-semibold">
+                      <Zap size={11} className="text-amber-400" />
+                      1-Click Reorder
+                    </span>
+                    <span>•</span>
+                    <span className="flex items-center gap-1 font-semibold">
+                      <Truck size={11} className="text-amber-400" />
+                      Zero Surge
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowSubscriptionModal(true)}
+                    className="px-3.5 py-1.5 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-500 hover:to-yellow-500 text-stone-950 text-xs font-black rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1 active:scale-95"
+                  >
+                    <span>Extend Plan</span>
+                    <ChevronRight size={13} />
+                  </button>
                 </div>
               </div>
             );
           }
 
           return (
-            <div className="mt-4 p-5 rounded-3xl bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 text-amber-950 shadow-xs relative overflow-hidden">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
-                    <Crown size={22} className="text-yellow-200 fill-yellow-200" />
+            <div className="mt-4 p-5 rounded-3xl bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 border-2 border-amber-300/80 text-amber-950 shadow-md relative overflow-hidden">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-400 to-yellow-500 text-stone-950 flex items-center justify-center shadow-md">
+                    <Crown size={24} className="fill-stone-950 text-stone-950" />
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-black text-amber-950">{planName}</span>
-                      <span className="bg-amber-100 text-amber-900 text-[10px] font-extrabold px-1.5 py-0.2 rounded border border-amber-300">
+                      <span className="bg-amber-200 text-stone-950 text-[10px] font-black px-2 py-0.5 rounded-md border border-amber-400">
                         ₹{fee} / {duration} Days
                       </span>
                     </div>
-                    <p className="text-[10px] text-amber-800 mt-0.5">
+                    <p className="text-[11px] text-amber-900 mt-0.5">
                       Enjoy {subDeliveryFee === 0 ? 'FREE Delivery (₹0)' : `₹${subDeliveryFee} Delivery`} on next {maxOrders > 0 ? `${maxOrders} orders` : 'unlimited orders'}!
                     </p>
                   </div>
                 </div>
               </div>
+
               <button
                 type="button"
                 onClick={() => setShowSubscriptionModal(true)}
-                className="w-full mt-2 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                className="w-full mt-1 py-3 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-600 hover:to-yellow-600 text-stone-950 font-black text-xs rounded-2xl shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.98]"
               >
-                <Crown size={14} />
-                <span>Join VIP Membership • Only ₹{fee}</span>
+                <Crown size={16} className="fill-stone-950" />
+                <span>Join Royal VIP Membership • Only ₹{fee}</span>
               </button>
             </div>
           );
         })()}
+
+        {/* ========================================================================= */}
+        {/* VIP 1-CLICK "DAILY ESSENTIALS" RE-ORDER SECTION */}
+        {/* ========================================================================= */}
+        {isVipActive && dailyEssentialItems.length > 0 && (
+          <div className="mt-4 bg-gradient-to-br from-amber-50/90 via-white to-amber-50/50 rounded-[32px] p-5 shadow-sm border border-amber-200/80 relative overflow-hidden space-y-3.5">
+            {/* Header */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-yellow-500 text-stone-950 flex items-center justify-center shadow-xs">
+                  <ShoppingBag size={18} className="fill-stone-950" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-xs font-black text-stone-950">VIP 1-Click Daily Essentials</h3>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-400 text-stone-950 text-[8px] font-black uppercase tracking-wider">
+                      ⚡ 1-CLICK REORDER
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-stone-600 mt-0.5">
+                    Aapke rozana ke grocery saaman — bina search kiye 1-Click me cart me daalein!
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Reorder Success Alert Banner */}
+            <AnimatePresence>
+              {reorderSuccessToast && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="p-3 bg-emerald-600 text-white rounded-2xl text-xs font-bold flex items-center gap-2 shadow-lg"
+                >
+                  <Check size={18} />
+                  <span>🎉 Sabhi daily essentials Cart me add ho gaye! VIP Free Delivery apply ho chuki hai. Cart khul raha hai...</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Master 1-Click Button */}
+            <button
+              type="button"
+              onClick={handleOneClickReorderAll}
+              className="w-full py-3 px-4 bg-gradient-to-r from-stone-900 via-amber-950 to-stone-900 hover:from-black hover:to-black text-amber-200 rounded-2xl font-black text-xs shadow-xl shadow-stone-900/15 flex items-center justify-between border border-amber-400/40 cursor-pointer active:scale-[0.98] transition-all"
+            >
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-amber-400 text-stone-950">
+                  <Zap size={14} className="fill-stone-950" />
+                </div>
+                <div className="text-left">
+                  <p className="font-black text-white text-xs">
+                    ⚡ 1-Click Re-Order All Essentials
+                  </p>
+                  <p className="text-[10px] text-amber-300/80 font-normal">
+                    {dailyEssentialItems.length} Essentials • Direct to VIP Free Delivery Cart
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-amber-400 text-stone-950 font-black text-xs">
+                <span>Re-Order All</span>
+                <ArrowRight size={14} />
+              </div>
+            </button>
+
+            {/* Horizontal Scroll of Individual Essentials */}
+            <div>
+              <p className="text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-2 ml-1">
+                Frequently Ordered Items ({dailyEssentialItems.length})
+              </p>
+              <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1">
+                {dailyEssentialItems.map((item) => {
+                  const itemPrice = item.discountPrice || item.price;
+                  const isAdded = !!addedItemMap[item.id];
+                  return (
+                    <div
+                      key={item.id}
+                      className="w-32 shrink-0 bg-white p-2.5 rounded-2xl border border-amber-200/60 shadow-2xs flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="w-full h-20 rounded-xl bg-gray-50 overflow-hidden mb-1.5 relative">
+                          <img
+                            src={item.image}
+                            alt={item.name}
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                          {(item as any).orderCount && (item as any).orderCount > 1 ? (
+                            <span className="absolute top-1 left-1 bg-amber-400 text-stone-950 text-[8px] font-black px-1.5 py-0.2 rounded-md shadow-xs">
+                              {(item as any).orderCount}x
+                            </span>
+                          ) : (
+                            <span className="absolute top-1 left-1 bg-emerald-500 text-white text-[8px] font-black px-1.5 py-0.2 rounded-md shadow-xs">
+                              Daily
+                            </span>
+                          )}
+                        </div>
+                        <h4 className="font-bold text-xs text-gray-900 line-clamp-1">{item.name}</h4>
+                        <p className="text-[10px] text-gray-400 truncate">
+                          {item.weight || item.unit || 'Standard'}
+                        </p>
+                      </div>
+
+                      <div className="mt-2 pt-1.5 border-t border-gray-100 flex items-center justify-between">
+                        <div>
+                          <span className="text-xs font-black text-gray-900">₹{itemPrice}</span>
+                          {item.discountPrice && item.discountPrice < item.price && (
+                            <span className="text-[9px] text-gray-400 line-through block">₹{item.price}</span>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleReorderSingleItem(item, (item as any).selectedVariant)}
+                          className={cn(
+                            "px-2 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center gap-0.5",
+                            isAdded
+                              ? "bg-emerald-600 text-white"
+                              : "bg-amber-100 hover:bg-amber-200 text-stone-950 border border-amber-300"
+                          )}
+                        >
+                          {isAdded ? (
+                            <>
+                              <Check size={10} />
+                              <span>Added</span>
+                            </>
+                          ) : (
+                            <>
+                              <Plus size={10} />
+                              <span>Add</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="px-6 space-y-4">
@@ -559,13 +919,14 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
           <button
             onClick={() => {
               const code = user.referralCode || 'LUMXXXXXX';
+              const downloadUrl = appSettings?.appDownloadLink?.trim() || 'https://drive.google.com/file/d/1cSUiVqrIqBK4C12I4qRhxmON2PtDZgSV/view?usp=drive_link';
               const messageText = 
                 `🛒 *Lumaro Mart* - Daily Groceries!\n\n` +
                 `अब घर बैठे पाएं रोजाना का किराना सामान, वो भी सबसे बेहतरीन और किफ़ायती दामों पर! 🚀\n\n` +
                 `🎁 *Exclusive Referral Offer:*\n` +
                 `निचे दिए गए लिंक से हमारा App डाउनलोड करें और साइनअप के समय मेरा रेफरल कोड इस्तेमाल करें:\n\n` +
                 `📌 *Referral Code:* *${code}*\n` +
-                `🌐 *App Download Link:* https://drive.google.com/file/d/1cSUiVqrIqBK4C12I4qRhxmON2PtDZgSV/view?usp=drive_link\n\n` +
+                `🌐 *App Download Link:* ${downloadUrl}\n\n` +
                 `👉 अभी अपना पहला ऑर्डर करें और पाएँ *FREE DELIVERY* का स्पेशल ऑफ़र! 🎉`;
               
               window.open(`https://wa.me/?text=${encodeURIComponent(messageText)}`, '_blank');
@@ -578,6 +939,124 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
           
           {/* Subtle background circle decoration */}
           <div className="absolute -bottom-10 -right-10 w-28 h-28 bg-green-50/40 rounded-full pointer-events-none" />
+        </div>
+
+        {/* ========================================================================= */}
+        {/* SOCIAL MEDIA & COMMUNITY CHANNELS (ADMIN SETTINGS CONTROLLED) */}
+        {/* ========================================================================= */}
+        <div className="bg-white rounded-[32px] p-6 shadow-sm border border-gray-50 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-500 via-teal-500 to-cyan-500 text-white flex items-center justify-center shadow-xs">
+                <Globe size={20} />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 text-base">Connect With Our Community 🌐</h3>
+                <p className="text-xs text-gray-400 font-medium">Daily updates, flash deals & VIP privileges</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2.5">
+            {/* WhatsApp Community / Group */}
+            {appSettings?.whatsappCommunityEnabled !== false && (
+              <div
+                onClick={() => {
+                  const targetUrl = appSettings?.whatsappCommunityLink?.trim() || 
+                    (appSettings?.whatsappNumber 
+                      ? `https://wa.me/${appSettings.whatsappNumber}?text=${encodeURIComponent('Hi Lumaro Mart, I want to join your WhatsApp community!')}` 
+                      : 'https://chat.whatsapp.com');
+                  window.open(targetUrl, '_blank');
+                }}
+                className="p-3.5 bg-gradient-to-r from-emerald-50/80 via-white to-white rounded-2xl border border-emerald-100 flex items-center justify-between group hover:border-emerald-300 transition-all cursor-pointer active:scale-[0.98]"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#25D366] text-white flex items-center justify-center shadow-sm shadow-[#25D366]/30 group-hover:scale-105 transition-transform">
+                    <MessageCircle size={20} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <h4 className="text-xs font-black text-gray-900">WhatsApp Community</h4>
+                      <span className="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.2 rounded-full">
+                        ACTIVE
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-0.5">
+                      Daily fresh stock alerts, coupons & group perks
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 text-emerald-600 font-bold text-xs pl-2 shrink-0">
+                  <span>Join</span>
+                  <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+            )}
+
+            {/* Telegram Channel / VIP Group */}
+            {appSettings?.telegramCommunityEnabled !== false && (
+              <div
+                onClick={() => {
+                  const targetUrl = appSettings?.telegramCommunityLink?.trim() || 'https://t.me/lumaro_mart';
+                  window.open(targetUrl, '_blank');
+                }}
+                className="p-3.5 bg-gradient-to-r from-sky-50/80 via-white to-white rounded-2xl border border-sky-100 flex items-center justify-between group hover:border-sky-300 transition-all cursor-pointer active:scale-[0.98]"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#229ED9] text-white flex items-center justify-center shadow-sm shadow-[#229ED9]/30 group-hover:scale-105 transition-transform">
+                    <Send size={18} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <h4 className="text-xs font-black text-gray-900">Telegram VIP Channel</h4>
+                      <span className="text-[9px] bg-sky-100 text-sky-800 font-extrabold px-1.5 py-0.2 rounded-full">
+                        OFFERS
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-0.5">
+                      Instant flash discounts & exclusive VIP updates
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 text-sky-600 font-bold text-xs pl-2 shrink-0">
+                  <span>Join</span>
+                  <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+            )}
+
+            {/* Instagram Official Page */}
+            {appSettings?.instagramEnabled !== false && (
+              <div
+                onClick={() => {
+                  const targetUrl = appSettings?.instagramLink?.trim() || 'https://instagram.com/lumaro_mart';
+                  window.open(targetUrl, '_blank');
+                }}
+                className="p-3.5 bg-gradient-to-r from-rose-50/80 via-white to-white rounded-2xl border border-rose-100 flex items-center justify-between group hover:border-rose-300 transition-all cursor-pointer active:scale-[0.98]"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center shadow-sm shadow-rose-500/30 group-hover:scale-105 transition-transform">
+                    <Instagram size={20} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <h4 className="text-xs font-black text-gray-900">Instagram Community</h4>
+                      <span className="text-[9px] bg-rose-100 text-rose-800 font-extrabold px-1.5 py-0.2 rounded-full">
+                        FOLLOW
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-0.5">
+                      Recipe reels, customer stories & giveaways
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 text-rose-600 font-bold text-xs pl-2 shrink-0">
+                  <span>Follow</span>
+                  <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

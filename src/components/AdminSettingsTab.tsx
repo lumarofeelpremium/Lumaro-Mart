@@ -4,7 +4,7 @@ import {
   Settings, CheckCircle, ShoppingBag, Send, Phone, Clock, Bell, Share2, 
   Copy, Key, Sparkles, DollarSign, HelpCircle, QrCode, Crown, Truck, 
   Loader2, Check, ExternalLink, ShieldCheck, Tag, Gift, Smartphone, 
-  Megaphone, ArrowRight, Layers
+  Megaphone, ArrowRight, Layers, MessageCircle, Instagram, Globe
 } from 'lucide-react';
 import { Button, Input } from './ui/Base';
 import { AppSettings, DayDeliveryRule } from '../types';
@@ -29,7 +29,7 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
 }) => {
   // Navigation Category Filter
   const [selectedCategory, setSelectedCategory] = useState<
-    'all' | 'store' | 'delivery' | 'subscription' | 'upi' | 'loyalty' | 'notifications' | 'admob' | 'telegram'
+    'all' | 'store' | 'delivery' | 'subscription' | 'upi' | 'loyalty' | 'notifications' | 'admob' | 'telegram' | 'social'
   >('all');
 
   // Section 1: Store & Timings
@@ -112,6 +112,17 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
   const [telegramBotToken, setTelegramBotToken] = useState(settings.telegramBotToken || '');
   const [telegramChatId, setTelegramChatId] = useState(settings.telegramChatId || '');
 
+  // Section 10: Social Communities (WhatsApp, Telegram, Instagram for Profile)
+  const [whatsappCommunityEnabled, setWhatsappCommunityEnabled] = useState(settings.whatsappCommunityEnabled ?? true);
+  const [whatsappCommunityLink, setWhatsappCommunityLink] = useState(settings.whatsappCommunityLink || '');
+  const [telegramCommunityEnabled, setTelegramCommunityEnabled] = useState(settings.telegramCommunityEnabled ?? true);
+  const [telegramCommunityLink, setTelegramCommunityLink] = useState(settings.telegramCommunityLink || '');
+  const [instagramEnabled, setInstagramEnabled] = useState(settings.instagramEnabled ?? true);
+  const [instagramLink, setInstagramLink] = useState(settings.instagramLink || '');
+  const [appDownloadLink, setAppDownloadLink] = useState(
+    settings.appDownloadLink || 'https://drive.google.com/file/d/1cSUiVqrIqBK4C12I4qRhxmON2PtDZgSV/view?usp=drive_link'
+  );
+
   // Save & UI States
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -183,6 +194,14 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
     setTelegramEnabled(settings.telegramEnabled ?? false);
     setTelegramBotToken(settings.telegramBotToken || '');
     setTelegramChatId(settings.telegramChatId || '');
+
+    setWhatsappCommunityEnabled(settings.whatsappCommunityEnabled ?? true);
+    setWhatsappCommunityLink(settings.whatsappCommunityLink || '');
+    setTelegramCommunityEnabled(settings.telegramCommunityEnabled ?? true);
+    setTelegramCommunityLink(settings.telegramCommunityLink || '');
+    setInstagramEnabled(settings.instagramEnabled ?? true);
+    setInstagramLink(settings.instagramLink || '');
+    setAppDownloadLink(settings.appDownloadLink || 'https://drive.google.com/file/d/1cSUiVqrIqBK4C12I4qRhxmON2PtDZgSV/view?usp=drive_link');
   }, [settings]);
 
   const handleGenerateAdminFcmToken = async () => {
@@ -267,7 +286,16 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
       // Telegram
       telegramEnabled,
       telegramBotToken: telegramBotToken.trim(),
-      telegramChatId: telegramChatId.trim()
+      telegramChatId: telegramChatId.trim(),
+      // Social Media & Community Links (Profile Page)
+      whatsappCommunityEnabled,
+      whatsappCommunityLink: whatsappCommunityLink.trim(),
+      telegramCommunityEnabled,
+      telegramCommunityLink: telegramCommunityLink.trim(),
+      instagramEnabled,
+      instagramLink: instagramLink.trim(),
+      // App Download Link for WhatsApp Invite
+      appDownloadLink: appDownloadLink.trim()
     });
 
     setIsSaving(false);
@@ -429,6 +457,18 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
             )}
           >
             🤖 8. Telegram
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedCategory('social')}
+            className={cn(
+              "px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer border",
+              selectedCategory === 'social'
+                ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-white"
+            )}
+          >
+            🌐 9. Social Communities
           </button>
         </div>
       </div>
@@ -1332,6 +1372,256 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
                 onChange={(e) => setTelegramChatId(e.target.value)}
                 className="bg-white font-mono text-xs"
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SECTION 9: SOCIAL MEDIA & COMMUNITY CHANNELS (PROFILE PAGE LINKS) */}
+      {/* ========================================================================= */}
+      {(selectedCategory === 'all' || selectedCategory === 'social') && (
+        <div className="bg-white rounded-3xl p-5 border border-emerald-200 shadow-2xs space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-gray-100 flex-wrap gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                <Globe size={18} />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-gray-900">9. Social Media & Communities (प्रोफाइल पेज लिंक)</h3>
+                <p className="text-[11px] text-gray-400">Profile page par users ke judne ke liye WhatsApp, Telegram aur Instagram links control karein</p>
+              </div>
+            </div>
+            <span className="text-[10px] bg-emerald-50 text-emerald-800 font-bold px-2.5 py-1 rounded-full border border-emerald-200">
+              ⚡ No Code Change Needed
+            </span>
+          </div>
+
+          <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-2xl text-xs text-emerald-950 flex items-start gap-2.5">
+            <Share2 size={18} className="text-emerald-700 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">Admin Direct Control Guarantee:</p>
+              <p className="text-[11px] text-emerald-800 mt-0.5">
+                Kahi bhi code badalne ki jarurat nahi hai! Agar aapka WhatsApp group full ho jaye ya Telegram channel ya Instagram handle badal jaye, to bas yahan naya link daal kar <strong>Save Settings</strong> kar dijiye. Profile page par sabhi users ko naya link turant mil jayega!
+              </p>
+            </div>
+          </div>
+
+          {/* Platform 1: WhatsApp Group / Community */}
+          <div className="p-4 bg-gray-50/80 rounded-2xl border border-gray-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-[#25D366] text-white flex items-center justify-center shadow-xs">
+                  <MessageCircle size={18} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-gray-900">WhatsApp Community / Group Link</h4>
+                  <p className="text-[10px] text-gray-400">Group invite link ya Channel link (e.g. chat.whatsapp.com/...)</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWhatsappCommunityEnabled(!whatsappCommunityEnabled)}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative cursor-pointer",
+                  whatsappCommunityEnabled ? "bg-[#25D366]" : "bg-gray-300"
+                )}
+              >
+                <div className={cn(
+                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-xs",
+                  whatsappCommunityEnabled ? "right-1" : "left-1"
+                )} />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-gray-700 block">WhatsApp Group / Community URL</label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="https://chat.whatsapp.com/YourInviteCode"
+                  value={whatsappCommunityLink}
+                  onChange={(e) => setWhatsappCommunityLink(e.target.value)}
+                  className="bg-white text-xs font-mono flex-1"
+                />
+                {whatsappCommunityLink && (
+                  <a
+                    href={whatsappCommunityLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-1 shrink-0"
+                    title="Test Open Link"
+                  >
+                    <ExternalLink size={14} />
+                    <span>Test</span>
+                  </a>
+                )}
+              </div>
+              <p className="text-[10px] text-gray-400">
+                Agar khali rakhenge to store ke Support WhatsApp Number ({whatsappNumber || 'Support number'}) par direct chat link ban jayega.
+              </p>
+            </div>
+          </div>
+
+          {/* Platform 2: Telegram Channel / Group */}
+          <div className="p-4 bg-gray-50/80 rounded-2xl border border-gray-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-[#229ED9] text-white flex items-center justify-center shadow-xs">
+                  <Send size={16} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-gray-900">Telegram Channel / VIP Group Link</h4>
+                  <p className="text-[10px] text-gray-400">Telegram channel ya VIP broadcast link (e.g. t.me/...)</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTelegramCommunityEnabled(!telegramCommunityEnabled)}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative cursor-pointer",
+                  telegramCommunityEnabled ? "bg-[#229ED9]" : "bg-gray-300"
+                )}
+              >
+                <div className={cn(
+                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-xs",
+                  telegramCommunityEnabled ? "right-1" : "left-1"
+                )} />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-gray-700 block">Telegram Channel / Invite URL</label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="https://t.me/YourChannelName"
+                  value={telegramCommunityLink}
+                  onChange={(e) => setTelegramCommunityLink(e.target.value)}
+                  className="bg-white text-xs font-mono flex-1"
+                />
+                {telegramCommunityLink && (
+                  <a
+                    href={telegramCommunityLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-2 bg-sky-100 hover:bg-sky-200 text-sky-800 text-xs font-bold rounded-xl flex items-center gap-1 shrink-0"
+                    title="Test Open Link"
+                  >
+                    <ExternalLink size={14} />
+                    <span>Test</span>
+                  </a>
+                )}
+              </div>
+              <p className="text-[10px] text-gray-400">
+                User is link par tap karke instant aapke Telegram Channel me join ho jayenge.
+              </p>
+            </div>
+          </div>
+
+          {/* Platform 3: Instagram Official Page */}
+          <div className="p-4 bg-gray-50/80 rounded-2xl border border-gray-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center shadow-xs">
+                  <Instagram size={18} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-gray-900">Instagram Official Page Link</h4>
+                  <p className="text-[10px] text-gray-400">Instagram profile / page URL (e.g. instagram.com/lumaro_mart)</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInstagramEnabled(!instagramEnabled)}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative cursor-pointer",
+                  instagramEnabled ? "bg-rose-500" : "bg-gray-300"
+                )}
+              >
+                <div className={cn(
+                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-xs",
+                  instagramEnabled ? "right-1" : "left-1"
+                )} />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-gray-700 block">Instagram Profile URL</label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="https://instagram.com/your_store_handle"
+                  value={instagramLink}
+                  onChange={(e) => setInstagramLink(e.target.value)}
+                  className="bg-white text-xs font-mono flex-1"
+                />
+                {instagramLink && (
+                  <a
+                    href={instagramLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-2 bg-rose-100 hover:bg-rose-200 text-rose-800 text-xs font-bold rounded-xl flex items-center gap-1 shrink-0"
+                    title="Test Open Link"
+                  >
+                    <ExternalLink size={14} />
+                    <span>Test</span>
+                  </a>
+                )}
+              </div>
+              <p className="text-[10px] text-gray-400">
+                User Profile page se 1 tap me aapke Instagram page ko follow kar sakega.
+              </p>
+            </div>
+          </div>
+
+          {/* Platform 4: App Download Link for WhatsApp Referral & Invite */}
+          <div className="p-4 bg-blue-50/60 rounded-2xl border border-blue-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
+                  <Smartphone size={18} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black text-gray-900">App Download Link (WhatsApp Invite Message Link)</h4>
+                  <p className="text-[10px] text-gray-500">Google Drive / APK / Play Store download link jo WhatsApp invite message me jata hai</p>
+                </div>
+              </div>
+              <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2.5 py-0.5 rounded-full border border-blue-200">
+                📲 Invite Message Link
+              </span>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-gray-700 block">App Download URL (APK / Drive / Store)</label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="https://drive.google.com/file/... ya Play Store URL"
+                  value={appDownloadLink}
+                  onChange={(e) => setAppDownloadLink(e.target.value)}
+                  className="bg-white text-xs font-mono flex-1"
+                />
+                {appDownloadLink && (
+                  <a
+                    href={appDownloadLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-2 bg-blue-100 hover:bg-blue-200 text-blue-800 text-xs font-bold rounded-xl flex items-center gap-1 shrink-0"
+                    title="Test Open Download Link"
+                  >
+                    <ExternalLink size={14} />
+                    <span>Test</span>
+                  </a>
+                )}
+              </div>
+              <div className="p-2.5 bg-white/80 rounded-xl border border-blue-100 text-[10px] text-blue-900 space-y-1">
+                <p>
+                  ✅ <strong>Direct Update Guarantee:</strong> Profile page par jab bhi koi user <em>"Invite on WhatsApp"</em> par click karega, to invite message me yehi download link automatically lag kar jayega:
+                </p>
+                <p className="font-mono text-gray-600 truncate bg-blue-50/50 p-1 rounded border border-blue-100">
+                  🌐 App Download Link: {appDownloadLink || 'Default Link'}
+                </p>
+                <p className="text-gray-500">
+                  Kabhi bhi naya APK upload karne ya Drive link badalne par bas yahan naya link paste karein aur neeche <strong>"Save Settings"</strong> dabayein!
+                </p>
+              </div>
             </div>
           </div>
         </div>

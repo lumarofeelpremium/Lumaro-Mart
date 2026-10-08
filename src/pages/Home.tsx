@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Bell, Heart, Plus, X, ShoppingBag, ChevronLeft, ChevronRight, MapPin, Globe } from 'lucide-react';
+import { Search, Bell, Heart, Plus, X, ShoppingBag, ChevronLeft, ChevronRight, MapPin, Globe, Crown, Zap } from 'lucide-react';
 import { Button, Input, Skeleton } from '../components/ui/Base';
 import { motion, AnimatePresence } from 'motion/react';
 import { Product, Category, Banner, User, DeliveryLocation, ProductVariant } from '../types';
@@ -13,6 +13,7 @@ import { LocationSelectorModal } from '../components/LocationSelectorModal';
 import { filterProductsByLocation } from '../lib/location-utils';
 import { cn, sortVariantsByWeight } from '../lib/utils';
 import { cacheUtils } from '../lib/cache-utils';
+import { isSubscriptionActive } from '../lib/subscription-utils';
 
 export const Home = ({ 
   user, 
@@ -232,21 +233,77 @@ export const Home = ({
       {/* Header */}
       <div className="flex justify-between items-center mb-4">
         <div>
-          <h1 className="text-2xl font-bold text-[#1A1A1A]">
-            Lumaro <span className="text-[#66D2A4]">Mart</span>
-          </h1>
-          <p className="text-gray-400 text-sm">Freshness at your doorstep</p>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-[#1A1A1A]">
+              Lumaro <span className="text-[#66D2A4]">Mart</span>
+            </h1>
+            {isSubscriptionActive(user) && (
+              <motion.button 
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => navigate('/profile')}
+                className="flex items-center gap-1.5 px-2.5 py-0.5 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-stone-950 font-black text-[10px] rounded-full shadow-sm shadow-amber-500/25 border border-yellow-200 cursor-pointer"
+                title="Active Royal VIP Pass"
+              >
+                <Crown size={12} className="fill-stone-950 text-stone-950" />
+                <span>ROYAL VIP</span>
+              </motion.button>
+            )}
+          </div>
+          <p className="text-gray-400 text-sm">
+            {user?.displayName ? `Namaste, ${user.displayName.split(' ')[0]}!` : 'Freshness at your doorstep'}
+          </p>
         </div>
-        <button 
-          onClick={() => navigate('/notifications')}
-          className="bg-white p-3 rounded-full shadow-sm relative"
-        >
-          <Bell size={20} className="text-gray-600" />
-          {hasUnreadNotifs && (
-            <div className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white" />
+        <div className="flex items-center gap-2">
+          {isSubscriptionActive(user) && (
+            <button
+              onClick={() => navigate('/profile')}
+              className="bg-gradient-to-tr from-amber-100 to-yellow-50 p-2.5 rounded-full border border-amber-300/80 shadow-xs text-amber-800 hover:scale-105 transition-transform cursor-pointer"
+              title="View VIP Pass & Daily Essentials"
+            >
+              <Crown size={18} className="fill-amber-500 text-amber-600" />
+            </button>
           )}
-        </button>
+          <button 
+            onClick={() => navigate('/notifications')}
+            className="bg-white p-3 rounded-full shadow-sm relative hover:bg-gray-50 transition-colors"
+          >
+            <Bell size={20} className="text-gray-600" />
+            {hasUnreadNotifs && (
+              <div className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white" />
+            )}
+          </button>
+        </div>
       </div>
+
+      {/* VIP 1-Click Essentials Quick Bar on Home */}
+      {isSubscriptionActive(user) && (
+        <div 
+          onClick={() => navigate('/profile')}
+          className="mb-4 p-3 bg-gradient-to-r from-[#1c1917] via-[#292524] to-[#0c0a09] rounded-2xl border border-amber-400/50 shadow-md text-white flex items-center justify-between cursor-pointer group hover:border-amber-300 transition-all active:scale-[0.99]"
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-amber-400 text-stone-950 flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
+              <Zap size={16} className="fill-stone-950" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-black text-amber-300 truncate">VIP 1-Click Essentials Re-Order</span>
+                <span className="text-[9px] bg-amber-400/20 text-amber-300 font-bold px-1.5 py-0.2 rounded border border-amber-400/30 shrink-0">
+                  FREE DELIVERY
+                </span>
+              </div>
+              <p className="text-[10px] text-gray-300 truncate mt-0.5">
+                Rozana ke zaroori grocery items bina khoje 1-click me order karein
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 text-amber-300 font-black text-[11px] shrink-0 pl-2">
+            <span>Re-Order</span>
+            <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+          </div>
+        </div>
+      )}
 
       {/* Delivery Location Selector Bar */}
       <div className="flex items-center justify-between mb-4 bg-emerald-50/90 border border-emerald-100 rounded-2xl px-3.5 py-2.5 shadow-2xs">

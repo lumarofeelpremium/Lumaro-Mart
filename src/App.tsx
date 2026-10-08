@@ -397,6 +397,46 @@ export default function App() {
     });
   };
 
+  const handleBatchAddToCart = (itemsToAdd: { product: Product; quantity?: number; variant?: ProductVariant }[]) => {
+    if (!itemsToAdd || itemsToAdd.length === 0) return;
+
+    setCart(prev => {
+      let updatedCart = [...prev];
+      itemsToAdd.forEach(({ product, quantity = 1, variant }) => {
+        const selectedVariant = variant || (product.hasVariants && product.variants && product.variants.length > 0 ? sortVariantsByWeight(product.variants)[0] : undefined);
+        const effectiveStock = selectedVariant?.stock !== undefined ? selectedVariant.stock : product.stock;
+        if (effectiveStock <= 0 || quantity <= 0) return;
+
+        const cartItemId = selectedVariant ? `${product.id}_${selectedVariant.id || selectedVariant.weight}` : product.id;
+        const effectivePrice = selectedVariant ? selectedVariant.price : product.price;
+        const effectiveDiscountPrice = selectedVariant ? selectedVariant.discountPrice : product.discountPrice;
+
+        const existingIndex = updatedCart.findIndex(item => (item.cartItemId || item.id) === cartItemId);
+        if (existingIndex > -1) {
+          updatedCart[existingIndex] = {
+            ...updatedCart[existingIndex],
+            quantity: updatedCart[existingIndex].quantity + quantity
+          };
+        } else {
+          updatedCart.push({
+            ...product,
+            id: cartItemId,
+            cartItemId: cartItemId,
+            productId: product.id,
+            price: effectivePrice,
+            discountPrice: effectiveDiscountPrice,
+            stock: effectiveStock,
+            selectedVariant: selectedVariant,
+            quantity: quantity
+          });
+        }
+      });
+
+      if (user) syncCartToFirestore(updatedCart);
+      return updatedCart;
+    });
+  };
+
   const handleUpdateQuantity = (id: string, quantity: number) => {
     if (quantity <= 0) {
       handleRemoveFromCart(id);
@@ -524,7 +564,14 @@ export default function App() {
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/my-orders" element={<MyOrders user={user} />} />
             <Route path="/wishlist" element={<Wishlist user={user} onAddToCart={handleAddToCart} />} />
-            <Route path="/profile" element={<Profile user={user} setUser={setUser} onLogout={handleLogout} />} />
+            <Route path="/profile" element={<Profile 
+              user={user} 
+              setUser={setUser} 
+              onLogout={handleLogout} 
+              allProducts={visibleProducts}
+              onAddToCart={handleAddToCart}
+              onBatchAddToCart={handleBatchAddToCart}
+            />} />
             <Route path="/admin" element={user?.role === 'admin' ? <AdminDashboard /> : <Navigate to="/profile" />} />
           </Routes>
           

@@ -186,6 +186,15 @@ export interface AppSettings {
   subscriptionMaxOrders?: number; // Orders covered under plan e.g. 10, 20 or 0 for Unlimited
   subscriberMinOrderAmount?: number; // Minimum cart value for subscriber rate (e.g. ₹0)
   subscriptionDescription?: string; // Marketing description for subscription
+  // Social Media & Community Links (Profile Page)
+  whatsappCommunityEnabled?: boolean;
+  whatsappCommunityLink?: string; // e.g. "https://chat.whatsapp.com/..." or group/channel link
+  telegramCommunityEnabled?: boolean;
+  telegramCommunityLink?: string; // e.g. "https://t.me/..."
+  instagramEnabled?: boolean;
+  instagramLink?: string; // e.g. "https://instagram.com/..."
+  // App Download & Referral Share Links
+  appDownloadLink?: string; // APK / Drive / Play Store download link used in WhatsApp invite messages
 }
 
 export interface DayDeliveryRule {
