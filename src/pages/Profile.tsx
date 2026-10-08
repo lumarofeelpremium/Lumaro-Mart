@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, User as UserIcon, Settings, LogOut, ShieldCheck, Package, Users, ChevronRight, Clock, MapPin, X, Camera, Mail, Phone, Home, Hash, Loader2, Star, Heart, Bell, MessageCircle, Headset, LifeBuoy, Gift, Copy, Check } from 'lucide-react';
+import { ChevronLeft, User as UserIcon, Settings, LogOut, ShieldCheck, Package, Users, ChevronRight, Clock, MapPin, X, Camera, Mail, Phone, Home, Hash, Loader2, Star, Heart, Bell, MessageCircle, Headset, LifeBuoy, Gift, Copy, Check, Crown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Order, AppSettings } from '../types';
@@ -9,6 +9,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { compressImage } from '../lib/utils';
 import { cacheUtils } from '../lib/cache-utils';
+import { SubscriptionModal } from '../components/SubscriptionModal';
+import { isSubscriptionActive, getSubscriptionSummary } from '../lib/subscription-utils';
 
 export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUser: (u: User | null) => void, onLogout: () => void }) => {
   const navigate = useNavigate();
@@ -18,6 +20,7 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
   const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -325,6 +328,122 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
             </div>
           );
         })()}
+
+        {/* VIP Subscription Card */}
+        {appSettings?.subscriptionEnabled !== false && (() => {
+          const subSummary = getSubscriptionSummary(user);
+          const planName = appSettings?.subscriptionPlanName || 'Lumaro VIP Club';
+          const fee = appSettings?.subscriptionFee || 99;
+          const duration = appSettings?.subscriptionDurationDays || 30;
+          const subDeliveryFee = appSettings?.subscriberDeliveryFee ?? 0;
+          const maxOrders = appSettings?.subscriptionMaxOrders || 0;
+
+          if (user?.subscriptionPendingVerification) {
+            return (
+              <div className="mt-4 p-5 rounded-3xl bg-amber-50 border border-amber-300 text-amber-950 shadow-xs relative overflow-hidden">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
+                      <Clock size={20} className="text-white animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-amber-950">{user.subscriptionPendingPlanName || planName}</span>
+                        <span className="bg-amber-200 text-amber-900 text-[9px] font-black px-1.5 py-0.2 rounded-md">
+                          ⏳ VERIFICATION PENDING
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-amber-800 mt-0.5">
+                        UTR: <span className="font-mono font-bold">{user.subscriptionPendingUtr}</span> • Admin jald hi verify karega
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-white/80 p-2.5 rounded-xl border border-amber-200 text-[10px] text-amber-900 mt-2">
+                  Aapka ₹{user.subscriptionPendingFee || fee} ka payment verification under process hai. Admin dwara confirm hote hi VIP perks chalu ho jayenge!
+                </div>
+              </div>
+            );
+          }
+
+          if (subSummary.isActive) {
+            return (
+              <div className="mt-4 p-5 rounded-3xl bg-gradient-to-br from-amber-500 via-amber-600 to-yellow-600 text-white shadow-lg relative overflow-hidden border border-yellow-300/40">
+                <div className="flex items-center justify-between mb-3 relative z-10">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center border border-white/30">
+                      <Crown size={22} className="text-yellow-200 fill-yellow-300" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black tracking-tight">{subSummary.planName}</span>
+                        <span className="bg-yellow-300 text-amber-950 text-[9px] font-black px-1.5 py-0.2 rounded-md">
+                          ACTIVE VIP
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-yellow-100">
+                        Delivery Rate: {subDeliveryFee === 0 ? 'FREE Delivery (₹0)' : `₹${subDeliveryFee} / order`}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowSubscriptionModal(true)}
+                    className="px-3 py-1 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold rounded-xl border border-white/30 transition-colors cursor-pointer"
+                  >
+                    Extend
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5 relative z-10 pt-2 border-t border-white/20">
+                  <div className="bg-black/10 backdrop-blur-sm p-2.5 rounded-xl border border-white/10">
+                    <p className="text-[9px] font-bold text-yellow-200 uppercase">Orders Covered</p>
+                    <p className="text-sm font-extrabold text-white mt-0.5">
+                      {subSummary.isUnlimitedOrders ? 'Unlimited Orders' : `${subSummary.ordersRemaining} Orders Left`}
+                    </p>
+                  </div>
+                  <div className="bg-black/10 backdrop-blur-sm p-2.5 rounded-xl border border-white/10">
+                    <p className="text-[9px] font-bold text-yellow-200 uppercase">Valid Till</p>
+                    <p className="text-sm font-extrabold text-white mt-0.5 truncate">
+                      {subSummary.expiryDateFormatted || `${duration} Days`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div className="mt-4 p-5 rounded-3xl bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 text-amber-950 shadow-xs relative overflow-hidden">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
+                    <Crown size={22} className="text-yellow-200 fill-yellow-200" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-black text-amber-950">{planName}</span>
+                      <span className="bg-amber-100 text-amber-900 text-[10px] font-extrabold px-1.5 py-0.2 rounded border border-amber-300">
+                        ₹{fee} / {duration} Days
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-amber-800 mt-0.5">
+                      Enjoy {subDeliveryFee === 0 ? 'FREE Delivery (₹0)' : `₹${subDeliveryFee} Delivery`} on next {maxOrders > 0 ? `${maxOrders} orders` : 'unlimited orders'}!
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSubscriptionModal(true)}
+                className="w-full mt-2 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Crown size={14} />
+                <span>Join VIP Membership • Only ₹{fee}</span>
+              </button>
+            </div>
+          );
+        })()}
       </div>
 
       <div className="px-6 space-y-4">
@@ -446,7 +565,7 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
                 `🎁 *Exclusive Referral Offer:*\n` +
                 `निचे दिए गए लिंक से हमारा App डाउनलोड करें और साइनअप के समय मेरा रेफरल कोड इस्तेमाल करें:\n\n` +
                 `📌 *Referral Code:* *${code}*\n` +
-                `🌐 *App Download Link:* https://drive.google.com/file/d/1mORupZ6SVr5yckvLOpDw1LhvKwsAYGDc/view?usp=drive_link\n\n` +
+                `🌐 *App Download Link:* https://drive.google.com/file/d/1cSUiVqrIqBK4C12I4qRhxmON2PtDZgSV/view?usp=drive_link\n\n` +
                 `👉 अभी अपना पहला ऑर्डर करें और पाएँ *FREE DELIVERY* का स्पेशल ऑफ़र! 🎉`;
               
               window.open(`https://wa.me/?text=${encodeURIComponent(messageText)}`, '_blank');
@@ -584,6 +703,14 @@ export const Profile = ({ user, setUser, onLogout }: { user: User | null, setUse
           </motion.div>
         )}
       </AnimatePresence>
+
+      <SubscriptionModal
+        isOpen={showSubscriptionModal}
+        onClose={() => setShowSubscriptionModal(false)}
+        user={user}
+        setUser={setUser}
+        appSettings={appSettings}
+      />
     </div>
   );
 };

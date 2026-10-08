@@ -68,6 +68,21 @@ export interface User {
   password?: string;
   fcmToken?: string;
   fcmTokens?: string[];
+  // VIP Subscription Details
+  isSubscribed?: boolean;
+  subscriptionPlanName?: string;
+  subscriptionStartDate?: any;
+  subscriptionExpiresAt?: any; // timestamp in ms or ISO
+  subscriptionOrdersRemaining?: number; // e.g. 10 or -1 for unlimited
+  subscriptionOrdersTotal?: number; // initial quota (e.g. 10 or -1)
+  subscriptionOrdersUsed?: number; // count of orders placed
+  subscriptionFeePaid?: number;
+  subscriptionPendingVerification?: boolean;
+  subscriptionPendingUtr?: string;
+  subscriptionPendingPlanName?: string;
+  subscriptionPendingFee?: number;
+  subscriptionStatus?: 'active' | 'expired' | 'canceled' | 'pending_verification';
+  subscriptionCanceledAt?: number;
 }
 
 export interface CartItem extends Product {
@@ -100,6 +115,9 @@ export interface Order {
   adDiscount?: number;
   canceledBy?: 'user' | 'admin';
   cancelReason?: string;
+  isSubscriberOrder?: boolean;
+  subscriberDeliveryFee?: number;
+  deliverySavings?: number;
 }
 
 export interface Review {
@@ -135,6 +153,9 @@ export interface AppSettings {
   supportNumber?: string;
   supportEnabled?: boolean;
   orderTimingEnabled?: boolean;
+  orderTimingStart?: string; // "HH:MM" e.g. "06:00"
+  orderTimingEnd?: string; // "HH:MM" e.g. "22:00"
+  orderTimingClosedMessage?: string; // Custom message when ordering is closed
   admobEnabled?: boolean;
   admobTesting?: boolean;
   admobAppId?: string;
@@ -151,6 +172,56 @@ export interface AppSettings {
   loyaltyPointValue?: number; // e.g. 1 point = ₹1 discount
   fcmEnabled?: boolean;
   fcmVapidKey?: string;
+  // Delivery Charge Settings
+  standardDeliveryFee?: number; // Standard delivery charge (e.g. ₹20 or ₹40)
+  freeDeliveryMinAmount?: number; // Free delivery for orders >= this amount (e.g. ₹499 or ₹100)
+  dayWiseDeliveryEnabled?: boolean; // Enable day-of-week custom delivery charges & threshold
+  dayWiseDeliveryRules?: Record<string, DayDeliveryRule>; // Map of day '0'..'6' (0=Sunday..6=Saturday)
+  // VIP Subscription Plan Settings
+  subscriptionEnabled?: boolean; // Enable/disable subscription plan
+  subscriptionPlanName?: string; // e.g. "Lumaro VIP Club"
+  subscriptionFee?: number; // Subscription price set by admin e.g. ₹99 or ₹149
+  subscriptionDurationDays?: number; // Validity duration in days e.g. 30
+  subscriberDeliveryFee?: number; // Delivery fee per order for subscribers e.g. ₹0 (free) or custom
+  subscriptionMaxOrders?: number; // Orders covered under plan e.g. 10, 20 or 0 for Unlimited
+  subscriberMinOrderAmount?: number; // Minimum cart value for subscriber rate (e.g. ₹0)
+  subscriptionDescription?: string; // Marketing description for subscription
+}
+
+export interface DayDeliveryRule {
+  dayIndex: number; // 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday
+  dayName: string; // e.g. "Sunday", "Monday"
+  dayNameHindi: string; // e.g. "रविवार", "सोमवार"
+  enabled?: boolean; // whether custom rule is active for this day
+  standardFee: number; // delivery fee for this day
+  freeDeliveryMinAmount: number; // free delivery threshold for this day
+}
+
+export interface UserSubscription {
+  id?: string;
+  userId: string;
+  userName?: string;
+  userEmail?: string;
+  userPhone?: string;
+  planName: string;
+  fee: number;
+  durationDays: number;
+  subscriberDeliveryFee: number;
+  maxOrders: number; // 0 or -1 for unlimited
+  ordersRemaining: number;
+  ordersUsed: number;
+  startDate: any;
+  expiresAt: any;
+  status: 'active' | 'expired' | 'canceled' | 'pending_verification' | 'rejected';
+  paymentMethod?: string;
+  upiTransactionId?: string;
+  submittedAt?: any;
+  verifiedAt?: any;
+  verifiedBy?: string;
+  canceledAt?: any;
+  canceledBy?: string;
+  rejectionReason?: string;
+  createdAt?: any;
 }
 
 export interface Banner {

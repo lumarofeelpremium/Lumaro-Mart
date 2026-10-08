@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Minus, Plus, Trash2, Loader2, MapPin, X, Star, CheckCircle2, ShoppingCart, User as UserIcon, Clock, Sparkles, Zap, Smartphone, Truck, QrCode, AlertTriangle } from 'lucide-react';
+import { ChevronLeft, Minus, Plus, Trash2, Loader2, MapPin, X, Star, CheckCircle2, ShoppingCart, User as UserIcon, Clock, Sparkles, Zap, Smartphone, Truck, QrCode, AlertTriangle, Crown } from 'lucide-react';
 import { Button, Input } from '../components/ui/Base';
 import { useNavigate } from 'react-router-dom';
 import { CartItem, User, AppSettings, DeliveryLocation } from '../types';
@@ -13,6 +13,8 @@ import { showInterstitialAd, showRewardedAd } from '../lib/admob';
 import { sendTelegramNewOrderAlert } from '../lib/telegram-utils';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 import { UpiPaymentModal } from '../components/UpiPaymentModal';
+import { SubscriptionModal } from '../components/SubscriptionModal';
+import { calculateDeliveryFee, decrementSubscriberOrderQuota, isSubscriptionActive, getSubscriptionSummary } from '../lib/subscription-utils';
 import { isProductDeliverable, getStateFromPincode, setStoredDeliveryLocation } from '../lib/location-utils';
 import { useModalBackHandler } from '../lib/back-button-handler';
 
@@ -62,11 +64,14 @@ export const Cart = ({
   const [loyaltyPointsPerHundred, setLoyaltyPointsPerHundred] = useState(5);
   const [loyaltyPointValue, setLoyaltyPointValue] = useState(1);
   const [showUpiModal, setShowUpiModal] = useState(false);
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
 
   // Sync mobile back button with open modals in Cart
   useModalBackHandler(showAddressModal, () => setShowAddressModal(false), 'cart_address_modal');
   useModalBackHandler(showLoginPrompt, () => setShowLoginPrompt(false), 'cart_login_modal');
   useModalBackHandler(showUpiModal, () => setShowUpiModal(false), 'cart_upi_modal');
+  useModalBackHandler(showSubscriptionModal, () => setShowSubscriptionModal(false), 'cart_subscription_modal');
 
   const activeDeliveryLoc = React.useMemo<DeliveryLocation | null>(() => {
     const activePincode = (pincode || deliveryLocation?.pincode || user?.pincode || '').replace(/\D/g, '').trim();
@@ -121,8 +126,15 @@ export const Cart = ({
     }
     return acc;
   }, 0);
-  const baseDelivery = subtotal > 0 && subtotal <= 100 ? 20 : 0;
-  const delivery = isFirstOrder ? 0 : baseDelivery;
+  
+  // Calculate delivery fee dynamically based on Admin Threshold and VIP Subscription plan
+  const deliveryCalc = calculateDeliveryFee({
+    subtotal,
+    user,
+    settings: appSettings,
+    isFirstOrder
+  });
+  const delivery = deliveryCalc.deliveryFee;
   
   const pointsAvailable = user?.loyaltyPoints || 0;
   const maxDiscountAllowed = Math.floor(subtotal);
@@ -158,6 +170,7 @@ export const Cart = ({
     if (cachedSettings) {
       try {
         const data = JSON.parse(cachedSettings);
+        setAppSettings(data as AppSettings);
         if (data.whatsappNumber) setWhatsappNumber(data.whatsappNumber);
         if (data.whatsappEnabled !== undefined) setWhatsappEnabled(data.whatsappEnabled);
         if (data.orderTimingEnabled !== undefined) setOrderTimingEnabled(data.orderTimingEnabled);
@@ -179,8 +192,9 @@ export const Cart = ({
 
     const unsubscribe = onSnapshot(doc(db, 'settings', 'global'), (settingsDoc) => {
       if (settingsDoc.exists()) {
-        const data = settingsDoc.data();
+        const data = settingsDoc.data() as AppSettings;
         cacheUtils.setItem('app_settings_global', data);
+        setAppSettings(data);
         setWhatsappNumber(data.whatsappNumber);
         setWhatsappEnabled(data.whatsappEnabled ?? true);
         setOrderTimingEnabled(data.orderTimingEnabled ?? true);
@@ -207,17 +221,31 @@ export const Cart = ({
     return () => unsubscribe();
   }, []);
 
+  const formatTime12h = (timeStr: string = '06:00'): string => {
+    if (!timeStr) return '';
+    const [hStr, mStr] = timeStr.split(':');
+    let h = parseInt(hStr) || 0;
+    const m = parseInt(mStr) || 0;
+    const period = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${h}:${m < 10 ? '0' : ''}${m} ${period}`;
+  };
+
   const checkIsOrderingOpen = () => {
     if (!orderTimingEnabled) return true;
 
+    const startStr = appSettings?.orderTimingStart || '06:00';
+    const endStr = appSettings?.orderTimingEnd || '22:00';
+
+    const [startH, startM] = startStr.split(':').map(v => parseInt(v) || 0);
+    const [endH, endM] = endStr.split(':').map(v => parseInt(v) || 0);
+
     const now = new Date();
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
-    const totalMinutes = hours * 60 + minutes;
-    const startMinutes = 6 * 60; // 6:00 AM
-    const endMinutes = 22 * 60; // 10:00 PM
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const startMinutes = startH * 60 + (startM || 0);
+    const endMinutes = endH * 60 + (endM || 0);
     
-    return totalMinutes >= startMinutes && totalMinutes <= endMinutes;
+    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
   };
 
   const isOrderingOpen = checkIsOrderingOpen();
@@ -262,11 +290,28 @@ export const Cart = ({
         paymentMethod: chosenPaymentMethod,
         paymentStatus: chosenPaymentMethod === 'upi' ? 'completed' : 'pending',
         upiTransactionId: utr || '',
+        isSubscriberOrder: deliveryCalc.isSubscriberBenefitApplied,
+        subscriberDeliveryFee: deliveryCalc.subscriberDeliveryFee,
+        deliverySavings: deliveryCalc.savings,
         status: 'pending',
         createdAt: serverTimestamp()
       };
 
       const orderRef = await addDoc(collection(db, 'orders'), orderPayload);
+
+      // Consume subscriber order quota if subscriber benefit applied
+      if (deliveryCalc.isSubscriberBenefitApplied && user) {
+        decrementSubscriberOrderQuota(user).catch(e => console.warn('Subscriber order quota update error:', e));
+        if (user.subscriptionOrdersRemaining !== undefined && user.subscriptionOrdersRemaining > 0) {
+          const nextRemaining = user.subscriptionOrdersRemaining - 1;
+          setUser({
+            ...user,
+            subscriptionOrdersRemaining: nextRemaining,
+            subscriptionOrdersUsed: (user.subscriptionOrdersUsed || 0) + 1,
+            ...(nextRemaining === 0 ? { isSubscribed: false } : {})
+          });
+        }
+      }
 
       // Update user loyalty points - Only subtract redeemed points
       // pointsEarned will be added when order is DELIVERED
@@ -423,7 +468,9 @@ export const Cart = ({
           <div>
             <p className="font-bold text-amber-950">ऑर्डर बंद है (Ordering Closed)</p>
             <p className="text-xs text-amber-700 leading-relaxed mt-0.5">
-              आप केवल सुबह <strong>6:00 AM से रात 10:00 PM</strong> के बीच ही ऑर्डर कर सकते हैं।
+              {appSettings?.orderTimingClosedMessage || (
+                <>आप केवल <strong>{formatTime12h(appSettings?.orderTimingStart || '06:00')} से {formatTime12h(appSettings?.orderTimingEnd || '22:00')}</strong> के बीच ही ऑर्डर कर सकते हैं।</>
+              )}
             </p>
           </div>
         </div>
@@ -593,6 +640,45 @@ export const Cart = ({
               </motion.div>
             )}
 
+            {/* VIP Subscription Promo Box in Cart */}
+            {appSettings?.subscriptionEnabled !== false && !isSubscriptionActive(user) && subtotal > 0 && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-600 p-4 rounded-3xl text-white shadow-md flex items-center justify-between gap-3 border border-yellow-300/40"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shrink-0 border border-white/30 shadow-inner">
+                    <Crown size={22} className="text-yellow-200 fill-yellow-300" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-black tracking-tight">{appSettings?.subscriptionPlanName || 'Lumaro VIP Club'}</span>
+                      <span className="bg-yellow-300 text-amber-950 font-black text-[9px] px-1.5 py-0.2 rounded-md">
+                        ₹{appSettings?.subscriptionFee ?? 99}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-yellow-100 truncate mt-0.5">
+                      Get {Number(appSettings?.subscriberDeliveryFee) === 0 ? 'FREE Delivery (₹0)' : `₹${appSettings?.subscriberDeliveryFee || 0} Delivery`} on next {appSettings?.subscriptionMaxOrders || 'unlimited'} orders!
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!user) {
+                      setShowLoginPrompt(true);
+                    } else {
+                      setShowSubscriptionModal(true);
+                    }
+                  }}
+                  className="bg-white hover:bg-yellow-50 text-amber-950 font-extrabold text-[11px] px-3.5 py-2 rounded-xl shadow-xs transition-colors shrink-0 cursor-pointer"
+                >
+                  Join VIP
+                </button>
+              </motion.div>
+            )}
+
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -613,11 +699,80 @@ export const Cart = ({
                   </div>
                 )}
                 <div className="flex justify-between text-gray-500">
-                  <span>Delivery</span>
+                  <span className="flex items-center gap-1.5">
+                    <span>Delivery</span>
+                    {deliveryCalc.isSubscriberBenefitApplied && (
+                      <span className="bg-amber-100 text-amber-900 text-[9px] font-black px-1.5 py-0.2 rounded border border-amber-300">
+                        👑 VIP Rate
+                      </span>
+                    )}
+                  </span>
                   <span className={cn("font-bold", delivery === 0 ? "text-[#66D2A4]" : "text-[#1A1A1A]")}>
                     {delivery === 0 ? 'FREE' : `₹${delivery}`}
                   </span>
                 </div>
+
+                {/* VIP Applied Delivery Alert */}
+                {deliveryCalc.isSubscriberBenefitApplied && (
+                  <div className="flex items-center justify-between text-[11px] text-amber-900 bg-amber-50 p-2.5 rounded-2xl border border-amber-200 -mt-2">
+                    <span className="flex items-center gap-1.5 font-bold">
+                      <Crown size={14} className="text-amber-600 shrink-0" />
+                      <span>VIP Member Delivery Applied (₹{delivery})</span>
+                    </span>
+                    {deliveryCalc.savings > 0 && (
+                      <span className="font-extrabold text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded text-[10px]">
+                        Saved ₹{deliveryCalc.savings}!
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Free Delivery Threshold Progress Bar for regular users */}
+                {!deliveryCalc.isSubscriberBenefitApplied && deliveryCalc.remainingForFreeDelivery > 0 && !isFirstOrder && (
+                  <div className="bg-orange-50/80 p-2.5 rounded-2xl border border-orange-200/80 -mt-2 space-y-1.5">
+                    <div className="flex justify-between items-center text-[10px] font-bold text-orange-900 flex-wrap gap-1">
+                      <span className="flex items-center gap-1">
+                        <Truck size={12} className="text-orange-600" />
+                        <span>Free Delivery Threshold</span>
+                        {deliveryCalc.isDayWiseActive && (
+                          <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black px-1.5 py-0.2 rounded-full border border-emerald-300">
+                            📅 {deliveryCalc.dayHindi} Rate
+                          </span>
+                        )}
+                      </span>
+                      <span>Add ₹{deliveryCalc.remainingForFreeDelivery} more for FREE Delivery!</span>
+                    </div>
+                    <div className="w-full bg-orange-100 rounded-full h-1.5 overflow-hidden">
+                      <div 
+                        className="bg-orange-500 h-full rounded-full transition-all duration-300"
+                        style={{ width: `${Math.min(100, Math.round((subtotal / (deliveryCalc.freeDeliveryMinAmount || 1)) * 100))}%` }}
+                      />
+                    </div>
+                    {deliveryCalc.isDayWiseActive && (
+                      <p className="text-[9px] text-gray-500 italic">
+                        *Aaj ({deliveryCalc.dayHindi}) ke niyam anusar: ₹{deliveryCalc.freeDeliveryMinAmount} se kam order par ₹{deliveryCalc.standardFee} delivery charge.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {!deliveryCalc.isSubscriberBenefitApplied && deliveryCalc.remainingForFreeDelivery === 0 && subtotal > 0 && !isFirstOrder && (
+                  <p className="text-[10px] text-[#66D2A4] font-bold text-right -mt-2">
+                    🎉 Free Delivery unlocked! (Order ₹{deliveryCalc.freeDeliveryMinAmount} se zyada hai{deliveryCalc.isDayWiseActive ? ` - ${deliveryCalc.dayHindi} Offer` : ''})
+                  </p>
+                )}
+
+                {isFirstOrder && user && !deliveryCalc.isSubscriberBenefitApplied && (
+                  <p className="text-[10px] text-[#66D2A4] font-bold text-right -mt-2">
+                    🎉 First Order Special: FREE Delivery applied!
+                  </p>
+                )}
+                {!user && subtotal > 0 && (
+                  <p className="text-[10px] text-[#66D2A4] font-semibold text-right -mt-2">
+                    🎁 Register/Login to get FREE Delivery on your first order!
+                  </p>
+                )}
+
                 {useLoyaltyPoints && pointsDiscountAmount > 0 && (
                   <div className="flex justify-between text-[#66D2A4]">
                     <span>Points Discount ({pointsToRedeem} pts)</span>
@@ -632,21 +787,6 @@ export const Cart = ({
                     </span>
                     <span className="font-bold">-₹{adDiscount}</span>
                   </div>
-                )}
-                {subtotal <= 100 && subtotal > 0 && !isFirstOrder && user && (
-                  <p className="text-[10px] text-orange-500 font-medium text-right -mt-2">
-                    Add ₹{101 - subtotal} more for FREE delivery
-                  </p>
-                )}
-                {isFirstOrder && user && (
-                  <p className="text-[10px] text-[#66D2A4] font-bold text-right -mt-2">
-                    🎉 First Order Special: FREE Delivery applied!
-                  </p>
-                )}
-                {!user && subtotal > 0 && (
-                  <p className="text-[10px] text-[#66D2A4] font-semibold text-right -mt-2">
-                    🎁 Register/Login to get FREE Delivery on your first order!
-                  </p>
                 )}
 
                 {/* AdMob Rewarded Video Savings (Only shown if enabled in Admin Settings) */}
@@ -803,7 +943,7 @@ export const Cart = ({
                     <Loader2 className="animate-spin" size={20} /> Processing...
                   </>
                 ) : !isOrderingOpen ? (
-                  'Ordering Closed (6 AM - 10 PM)'
+                  `Ordering Closed (${formatTime12h(appSettings?.orderTimingStart || '06:00')} - ${formatTime12h(appSettings?.orderTimingEnd || '22:00')})`
                 ) : hasOutOfStockItems ? (
                   'Items Out of Stock'
                 ) : hasInsufficientStock ? (
@@ -939,6 +1079,14 @@ export const Cart = ({
           await executeOrderPlacement('upi', utrNumber);
           setShowUpiModal(false);
         }}
+      />
+
+      <SubscriptionModal
+        isOpen={showSubscriptionModal}
+        onClose={() => setShowSubscriptionModal(false)}
+        user={user}
+        setUser={setUser}
+        appSettings={appSettings}
       />
     </div>
   );

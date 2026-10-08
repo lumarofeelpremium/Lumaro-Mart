@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle, QrCode, ArrowUpDown, Award, Sparkles, Gift, Wallet, Globe, MapPin, Building2, Zap, Share2, Copy, Key, Megaphone, Tag } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle, QrCode, ArrowUpDown, Award, Sparkles, Gift, Wallet, Globe, MapPin, Building2, Zap, Share2, Copy, Key, Megaphone, Tag, Crown, Truck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
-import { User, Product, Category, Order, AppSettings, Banner, ProductVariant } from '../types';
+import { User, Product, Category, Order, AppSettings, Banner, ProductVariant, DayDeliveryRule, UserSubscription } from '../types';
+import { DAYS_OF_WEEK, getTodayDeliveryRule, cancelUserSubscription, verifyAndActivateSubscription } from '../lib/subscription-utils';
 import type { Notification } from '../types';
 import { auth, db } from '../firebase';
 import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, where, getDoc, getDocs, increment, writeBatch, deleteField, limit } from 'firebase/firestore';
@@ -22,13 +23,15 @@ import { WhatsAppStatusAlertModal } from '../components/WhatsAppStatusAlertModal
 import { OrderStatusTracker } from '../components/OrderStatusTracker';
 import { MultiSavingsBadge } from '../components/MultiSavingsBadge';
 import { BroadcastNotificationModal } from '../components/BroadcastNotificationModal';
+import { SubscriptionsTab } from '../components/SubscriptionsTab';
+import { AdminSettingsTab } from '../components/AdminSettingsTab';
 import { showBannerAd, showInterstitialAd, showRewardedAd, ADMOB_TEST_IDS } from '../lib/admob';
 import { QRCodeSVG } from 'qrcode.react';
 import { useModalBackHandler } from '../lib/back-button-handler';
 
 export const AdminDashboard = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'users' | 'products' | 'orders' | 'categories' | 'settings' | 'banners' | 'reports' | 'broadcast'>('orders');
+  const [activeTab, setActiveTab] = useState<'users' | 'products' | 'orders' | 'categories' | 'settings' | 'banners' | 'reports' | 'broadcast' | 'subscriptions'>('orders');
   const [users, setUsers] = useState<User[]>([]);
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userCurrentPage, setUserCurrentPage] = useState(1);
@@ -73,6 +76,7 @@ export const AdminDashboard = () => {
     }
   });
   const [banners, setBanners] = useState<Banner[]>([]);
+  const [userSubscriptions, setUserSubscriptions] = useState<UserSubscription[]>([]);
   const [appSettings, setAppSettings] = useState<AppSettings>({ whatsappNumber: '', whatsappEnabled: true });
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
   const [orderCurrentPage, setOrderCurrentPage] = useState(1);
@@ -259,6 +263,11 @@ export const AdminDashboard = () => {
       setBroadcastNotifications(sortedNotifs);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'notifications'));
 
+    const unsubSubscriptions = onSnapshot(query(collection(db, 'user_subscriptions'), limit(100)), (snapshot) => {
+      const subs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserSubscription));
+      setUserSubscriptions(subs);
+    }, (error) => console.warn('user_subscriptions listener error:', error));
+
     return () => {
       unsubUsers();
       unsubProducts();
@@ -267,6 +276,7 @@ export const AdminDashboard = () => {
       unsubSettings();
       unsubBanners();
       unsubNotifications();
+      unsubSubscriptions();
     };
   }, [auth.currentUser?.uid, ordersLimit, usersLimit]);
 
@@ -833,6 +843,15 @@ export const AdminDashboard = () => {
           <TabButton active={activeTab === 'banners'} onClick={() => setActiveTab('banners')} label="Banners" />
           <TabButton active={activeTab === 'broadcast'} onClick={() => setActiveTab('broadcast')} label="📢 Broadcast" />
           <TabButton active={activeTab === 'users'} onClick={() => setActiveTab('users')} label="Users" />
+          <TabButton 
+            active={activeTab === 'subscriptions'} 
+            onClick={() => setActiveTab('subscriptions')} 
+            label={
+              userSubscriptions.filter(s => s.status === 'pending_verification').length > 0 
+                ? `👑 VIP (${userSubscriptions.filter(s => s.status === 'pending_verification').length} New)` 
+                : `👑 VIP Club (${users.filter(u => u.isSubscribed).length})`
+            } 
+          />
           <TabButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Settings" />
         </div>
 
@@ -943,6 +962,15 @@ export const AdminDashboard = () => {
                     .catch(e => console.error("Audio test failed:", e));
                 }
               }}
+              onNavigateToSubscriptions={() => setActiveTab('subscriptions')}
+            />
+          )}
+          {activeTab === 'subscriptions' && (
+            <SubscriptionsTab 
+              subscriptions={userSubscriptions}
+              users={users}
+              settings={appSettings}
+              onOpenSettings={() => setActiveTab('settings')}
             />
           )}
         </div>
@@ -1608,6 +1636,11 @@ const UserList = ({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <h4 className="font-bold text-xs sm:text-sm text-[#1A1A1A] truncate max-w-[140px] sm:max-w-xs">{u.displayName || 'No Name'}</h4>
+                        {u.isSubscribed && (
+                          <span className="inline-flex items-center gap-0.5 bg-amber-100 text-amber-900 border border-amber-300 text-[8px] sm:text-[9px] font-extrabold px-1.5 py-0.2 rounded-md shadow-2xs shrink-0">
+                            👑 VIP
+                          </span>
+                        )}
                         <span className={cn(
                           "text-[8px] sm:text-[9px] rounded-md px-1.5 py-0.2 uppercase tracking-wider font-extrabold shrink-0",
                           u.role === 'admin' ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-500"
@@ -3811,1017 +3844,24 @@ const OrderDetailsModal = ({
   );
 };
 
-const SettingsTab = ({ 
-  settings, 
+const SettingsTab = ({
+  settings,
   onSave,
-  onTestNotification 
-}: { 
-  settings: AppSettings, 
-  onSave: (s: AppSettings) => Promise<boolean>,
-  onTestNotification: () => void 
-}) => {
-  const [whatsappNumber, setWhatsappNumber] = useState(settings.whatsappNumber);
-  const [whatsappEnabled, setWhatsappEnabled] = useState(settings.whatsappEnabled ?? true);
-  const [autoCustomerWhatsAppAlerts, setAutoCustomerWhatsAppAlerts] = useState(settings.autoCustomerWhatsAppAlerts ?? true);
-  const [supportNumber, setSupportNumber] = useState(settings.supportNumber || '');
-  const [supportEnabled, setSupportEnabled] = useState(settings.supportEnabled ?? true);
-  const [telegramBotToken, setTelegramBotToken] = useState(settings.telegramBotToken || '');
-  const [telegramChatId, setTelegramChatId] = useState(settings.telegramChatId || '');
-  const [telegramEnabled, setTelegramEnabled] = useState(settings.telegramEnabled ?? false);
-  const [orderTimingEnabled, setOrderTimingEnabled] = useState(settings.orderTimingEnabled ?? true);
-  const [admobEnabled, setAdmobEnabled] = useState(settings.admobEnabled ?? false);
-  const [admobTesting, setAdmobTesting] = useState(settings.admobTesting ?? true);
-  const [admobAppId, setAdmobAppId] = useState(settings.admobAppId || '');
-  const [admobBannerId, setAdmobBannerId] = useState(settings.admobBannerId || '');
-  const [admobInterstitialId, setAdmobInterstitialId] = useState(settings.admobInterstitialId || '');
-  const [admobRewardedId, setAdmobRewardedId] = useState(settings.admobRewardedId || '');
-  const [upiEnabled, setUpiEnabled] = useState(settings.upiEnabled ?? true);
-  const [upiId, setUpiId] = useState(settings.upiId || 'shiva1520980@okhdfcbank');
-  const [upiPayeeName, setUpiPayeeName] = useState(settings.upiPayeeName || 'Lumaro Mart');
-  const [loyaltyProgramEnabled, setLoyaltyProgramEnabled] = useState(settings.loyaltyProgramEnabled ?? true);
-  const [loyaltySpendBase, setLoyaltySpendBase] = useState(settings.loyaltySpendBase || 100);
-  const [loyaltyPointsEarned, setLoyaltyPointsEarned] = useState(
-    settings.loyaltyPointsEarned ?? (settings.loyaltyPointsPerHundred ?? 5)
-  );
-  const [loyaltyPointsPerHundred, setLoyaltyPointsPerHundred] = useState(settings.loyaltyPointsPerHundred ?? 5);
-  const [loyaltyPointValue, setLoyaltyPointValue] = useState(settings.loyaltyPointValue ?? 1);
-  const [testAmount, setTestAmount] = useState('10');
-  const [adTestStatus, setAdTestStatus] = useState<string | null>(null);
-  const [showPlayStoreGuide, setShowPlayStoreGuide] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
-  const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
-  const [fcmEnabled, setFcmEnabled] = useState(settings.fcmEnabled ?? true);
-  const [fcmVapidKey, setFcmVapidKey] = useState(settings.fcmVapidKey || 'BH5pHZc7Wf0ASibIMFNVtrRi-5Waime9pc9RYCnOh4XqHW3xbwAP8yBWofnR2tc3rbqQ4FnMd15liNgznCN5P08');
-  const [adminFcmToken, setAdminFcmToken] = useState<string | null>(() => {
-    return typeof localStorage !== 'undefined' ? localStorage.getItem('lumaro_fcm_token') : null;
-  });
-  const [isGeneratingFcmToken, setIsGeneratingFcmToken] = useState(false);
-  const [fcmTokenCopied, setFcmTokenCopied] = useState(false);
-
-  useEffect(() => {
-    if ("Notification" in window) {
-      setNotifPermission(Notification.permission);
-    }
-  }, []);
-
-  useEffect(() => {
-    setWhatsappNumber(settings.whatsappNumber);
-    setWhatsappEnabled(settings.whatsappEnabled ?? true);
-    setAutoCustomerWhatsAppAlerts(settings.autoCustomerWhatsAppAlerts ?? true);
-    setSupportNumber(settings.supportNumber || '');
-    setSupportEnabled(settings.supportEnabled ?? true);
-    setTelegramBotToken(settings.telegramBotToken || '');
-    setTelegramChatId(settings.telegramChatId || '');
-    setTelegramEnabled(settings.telegramEnabled ?? false);
-    setOrderTimingEnabled(settings.orderTimingEnabled ?? true);
-    setAdmobEnabled(settings.admobEnabled ?? false);
-    setAdmobTesting(settings.admobTesting ?? true);
-    setAdmobAppId(settings.admobAppId || '');
-    setAdmobBannerId(settings.admobBannerId || '');
-    setAdmobInterstitialId(settings.admobInterstitialId || '');
-    setAdmobRewardedId(settings.admobRewardedId || '');
-    setUpiEnabled(settings.upiEnabled ?? true);
-    setUpiId(settings.upiId || 'shiva1520980@okhdfcbank');
-    setUpiPayeeName(settings.upiPayeeName || 'Lumaro Mart');
-    setLoyaltyProgramEnabled(settings.loyaltyProgramEnabled ?? true);
-    setLoyaltySpendBase(settings.loyaltySpendBase || 100);
-    setLoyaltyPointsEarned(settings.loyaltyPointsEarned ?? (settings.loyaltyPointsPerHundred ?? 5));
-    setLoyaltyPointsPerHundred(settings.loyaltyPointsEarned ?? (settings.loyaltyPointsPerHundred ?? 5));
-    setLoyaltyPointValue(settings.loyaltyPointValue ?? 1);
-    setFcmEnabled(settings.fcmEnabled ?? true);
-    setFcmVapidKey(settings.fcmVapidKey || 'BH5pHZc7Wf0ASibIMFNVtrRi-5Waime9pc9RYCnOh4XqHW3xbwAP8yBWofnR2tc3rbqQ4FnMd15liNgznCN5P08');
-  }, [settings]);
-
-  const handleRequestPermission = () => {
-    if ("Notification" in window) {
-      Notification.requestPermission().then(permission => {
-        setNotifPermission(permission);
-        if (permission === "granted") {
-          onTestNotification();
-        } else if (permission === "denied") {
-          alert("Notification permission denied. Please enable it from browser settings.");
-        }
-      });
-    } else {
-      alert("This browser does not support notifications.");
-    }
-  };
-
-  const handleGenerateAdminFcmToken = async () => {
-    setIsGeneratingFcmToken(true);
-    try {
-      const activeKey = (fcmVapidKey || 'BH5pHZc7Wf0ASibIMFNVtrRi-5Waime9pc9RYCnOh4XqHW3xbwAP8yBWofnR2tc3rbqQ4FnMd15liNgznCN5P08').trim();
-      const result = await requestFcmTokenDetailed(activeKey);
-      if (result.token) {
-        setAdminFcmToken(result.token);
-        if (auth.currentUser?.uid) {
-          await saveFcmToken(auth.currentUser.uid, result.token, 'admin');
-        }
-        setNotifPermission('granted');
-        // Auto-save key to global settings if not yet saved
-        if (!settings.fcmVapidKey) {
-          onSave({
-            ...settings,
-            fcmEnabled: true,
-            fcmVapidKey: activeKey
-          }).catch(() => {});
-        }
-        alert('✅ FCM Token successfully generate ho gaya aur is device par connect ho gaya!');
-      } else {
-        const errorDetails = [
-          result.error ? `Error: ${result.error}` : null,
-          result.errorCode ? `Code: ${result.errorCode}` : null,
-          result.hint ? `\nKaran & Samadhan:\n${result.hint}` : null
-        ].filter(Boolean).join('\n');
-
-        alert(`❌ FCM Connect Nahi Hua:\n\n${errorDetails || 'Kripya check karein ki notification permission allowed hai aur VAPID Key sahi hai.'}`);
-      }
-    } catch (e: any) {
-      alert('Error generating token: ' + (e?.message || e));
-    } finally {
-      setIsGeneratingFcmToken(false);
-    }
-  };
-
-  const handleCopyFcmToken = () => {
-    if (!adminFcmToken) return;
-    navigator.clipboard.writeText(adminFcmToken);
-    setFcmTokenCopied(true);
-    setTimeout(() => setFcmTokenCopied(false), 2000);
-  };
-
-  const handleSave = async () => {
-    setIsSaving(true);
-    const validSpendBase = Math.max(1, Number(loyaltySpendBase) || 100);
-    const validPointsEarned = Math.max(0, Number(loyaltyPointsEarned) || 0);
-    const success = await onSave({ 
-      whatsappNumber, 
-      whatsappEnabled,
-      autoCustomerWhatsAppAlerts,
-      supportNumber,
-      supportEnabled,
-      telegramEnabled,
-      telegramBotToken,
-      telegramChatId,
-      orderTimingEnabled,
-      admobEnabled,
-      admobTesting,
-      admobAppId,
-      admobBannerId,
-      admobInterstitialId,
-      admobRewardedId,
-      upiEnabled,
-      upiId,
-      upiPayeeName,
-      loyaltyProgramEnabled,
-      loyaltySpendBase: validSpendBase,
-      loyaltyPointsEarned: validPointsEarned,
-      loyaltyPointsPerHundred: validPointsEarned,
-      loyaltyPointValue: Number(loyaltyPointValue) || 1,
-      fcmEnabled,
-      fcmVapidKey: fcmVapidKey.trim()
-    });
-    setIsSaving(false);
-    
-    if (success) {
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000);
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-blue-50 rounded-[32px] p-6 border border-blue-100 relative overflow-hidden">
-        <AnimatePresence>
-          {showSuccess && (
-            <motion.div 
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="absolute inset-x-0 top-0 bg-green-500 text-white py-2 px-4 flex items-center justify-center gap-2 z-10"
-            >
-              <CheckCircle size={16} />
-              <span className="text-xs font-bold">Settings saved successfully!</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <div className="flex items-center gap-2 text-blue-600 mb-4">
-          <Settings size={20} />
-          <h3 className="font-bold text-sm">App Settings</h3>
-        </div>
-        
-        <div className="space-y-4">
-          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-blue-100">
-            <div className="flex items-center gap-3">
-              <div className={cn(
-                "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
-                whatsappEnabled ? "bg-[#66D2A4] text-white" : "bg-gray-100 text-gray-400"
-              )}>
-                <ShoppingBag size={20} />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-[#1A1A1A]">WhatsApp Ordering</p>
-                <p className="text-[10px] text-gray-400">Enable/Disable WhatsApp messages</p>
-              </div>
-            </div>
-            <button 
-              onClick={() => setWhatsappEnabled(!whatsappEnabled)}
-              className={cn(
-                "w-12 h-6 rounded-full transition-all relative",
-                whatsappEnabled ? "bg-[#66D2A4]" : "bg-gray-200"
-              )}
-            >
-              <div className={cn(
-                "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                whatsappEnabled ? "right-1" : "left-1"
-              )} />
-            </button>
-          </div>
-
-          {/* Customer Status Alert Toggle */}
-          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-purple-100">
-            <div className="flex items-center gap-3">
-              <div className={cn(
-                "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
-                autoCustomerWhatsAppAlerts ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-400"
-              )}>
-                <Send size={20} />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-[#1A1A1A]">Customer Status WhatsApp Alerts</p>
-                <p className="text-[10px] text-gray-400">Order Packed / Out for Delivery / Delivered hote hi alert prompt</p>
-              </div>
-            </div>
-            <button 
-              onClick={() => setAutoCustomerWhatsAppAlerts(!autoCustomerWhatsAppAlerts)}
-              className={cn(
-                "w-12 h-6 rounded-full transition-all relative",
-                autoCustomerWhatsAppAlerts ? "bg-purple-600" : "bg-gray-200"
-              )}
-            >
-              <div className={cn(
-                "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                autoCustomerWhatsAppAlerts ? "right-1" : "left-1"
-              )} />
-            </button>
-          </div>
-
-          <div className={cn("transition-all", !whatsappEnabled && "opacity-50 pointer-events-none")}>
-            <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">WhatsApp Order Number</label>
-            <Input 
-              placeholder="e.g. 919876543210" 
-              value={whatsappNumber}
-              onChange={(e) => setWhatsappNumber(e.target.value)}
-              className="bg-white"
-            />
-            <p className="text-[9px] text-gray-400 mt-1 italic">Include country code without + (e.g. 91 for India)</p>
-          </div>
-
-          <div className="h-px bg-blue-100 my-4" />
-
-          {/* Support Settings */}
-          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-blue-100">
-            <div className="flex items-center gap-3">
-              <div className={cn(
-                "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
-                supportEnabled ? "bg-[#66D2A4] text-white" : "bg-gray-100 text-gray-400"
-              )}>
-                <Phone size={20} />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-[#1A1A1A]">Customer Support</p>
-                <p className="text-[10px] text-gray-400">Show help options in Profile</p>
-              </div>
-            </div>
-            <button 
-              onClick={() => setSupportEnabled(!supportEnabled)}
-              className={cn(
-                "w-12 h-6 rounded-full transition-all relative",
-                supportEnabled ? "bg-[#66D2A4]" : "bg-gray-200"
-              )}
-            >
-              <div className={cn(
-                "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                supportEnabled ? "right-1" : "left-1"
-              )} />
-            </button>
-          </div>
-
-          <div className={cn("transition-all", !supportEnabled && "opacity-50 pointer-events-none")}>
-            <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Support Mobile Number</label>
-            <Input 
-              placeholder="e.g. 9140094049" 
-              value={supportNumber}
-              onChange={(e) => setSupportNumber(e.target.value)}
-              className="bg-white"
-            />
-            <p className="text-[9px] text-gray-400 mt-1 italic">Users can call or WhatsApp this number from Profile</p>
-          </div>
-
-          <div className="h-px bg-blue-100 my-4" />
-
-          {/* Order Timing Settings */}
-          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-blue-100">
-            <div className="flex items-center gap-3">
-              <div className={cn(
-                "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
-                orderTimingEnabled ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-400"
-              )}>
-                <Clock size={20} />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-[#1A1A1A]">ऑर्डर टाइमिंग लिमिट (6 AM - 10 PM)</p>
-                <p className="text-[10px] text-gray-400">Enable/Disable 6:00 AM to 10:00 PM order limit</p>
-              </div>
-            </div>
-            <button 
-              onClick={() => setOrderTimingEnabled(!orderTimingEnabled)}
-              className={cn(
-                "w-12 h-6 rounded-full transition-all relative",
-                orderTimingEnabled ? "bg-amber-500" : "bg-gray-200"
-              )}
-            >
-              <div className={cn(
-                "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                orderTimingEnabled ? "right-1" : "left-1"
-              )} />
-            </button>
-          </div>
-
-          <div className="h-px bg-blue-100 my-4" />
-
-          {/* Browser & FCM Web Push Notifications Card */}
-          <div className="p-4 bg-white rounded-2xl border border-blue-100 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className={cn(
-                  "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
-                  fcmEnabled ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-400"
-                )}>
-                  <Bell size={20} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-sm font-bold text-[#1A1A1A]">FCM Web Push & Browser Alerts</p>
-                    <span className="text-[9px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.2 rounded">
-                      Firebase
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-gray-400">
-                    Status: <span className={cn(
-                      "capitalize font-bold",
-                      notifPermission === 'granted' ? "text-green-500" : 
-                      notifPermission === 'denied' ? "text-red-500" : "text-gray-400"
-                    )}>{notifPermission}</span>
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {notifPermission === 'granted' && (
-                  <button 
-                    onClick={onTestNotification}
-                    className="text-[10px] font-bold text-blue-500 bg-blue-50 px-2.5 py-1.5 rounded-xl hover:bg-blue-100 transition-colors"
-                  >
-                    Test Alert
-                  </button>
-                )}
-                <button 
-                  onClick={() => setFcmEnabled(!fcmEnabled)}
-                  className={cn(
-                    "w-12 h-6 rounded-full transition-all relative",
-                    fcmEnabled ? "bg-amber-500" : "bg-gray-200"
-                  )}
-                >
-                  <div className={cn(
-                    "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                    fcmEnabled ? "right-1" : "left-1"
-                  )} />
-                </button>
-              </div>
-            </div>
-
-            {fcmEnabled && (
-              <div className="space-y-3 pt-3 border-t border-gray-100 text-xs">
-                {/* VAPID Key Input */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1">
-                      <Key size={11} className="text-amber-500" />
-                      <span>Web Push Certificate / Key Pair (VAPID Key)</span>
-                    </label>
-                  </div>
-                  <Input 
-                    value={fcmVapidKey}
-                    onChange={(e) => setFcmVapidKey(e.target.value.trim())}
-                    placeholder="Firebase Console ➔ Project Settings ➔ Cloud Messaging ➔ Web Push certificates (Key pair)"
-                    className="bg-gray-50 text-[11px] font-mono"
-                  />
-                  <p className="text-[9px] text-gray-400 mt-1 leading-relaxed">
-                    Firebase Console me jakar <strong>Generate key pair</strong> par click karein aur waha se Public Key yahan paste karein.
-                  </p>
-                </div>
-
-                {/* Device FCM Token Generator / Connect Button */}
-                <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-amber-900">Admin Device FCM Connection</span>
-                    <button
-                      onClick={handleGenerateAdminFcmToken}
-                      disabled={isGeneratingFcmToken}
-                      className="bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-xs flex items-center gap-1 disabled:opacity-50 transition-all cursor-pointer"
-                    >
-                      {isGeneratingFcmToken ? (
-                        <>
-                          <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          <span>Connecting...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Zap size={11} />
-                          <span>{adminFcmToken ? 'Re-Sync Token' : 'Connect This Device'}</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-
-                  {adminFcmToken ? (
-                    <div className="bg-emerald-50/80 rounded-xl p-3 border border-emerald-200 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 text-emerald-800 font-bold text-[11px]">
-                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                          <span>🟢 Device Connected (FCM Active)</span>
-                        </div>
-                        <button
-                          onClick={onTestNotification}
-                          className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-all flex items-center gap-1"
-                        >
-                          <Bell size={11} />
-                          <span>Send Test Push</span>
-                        </button>
-                      </div>
-
-                      <div className="bg-white rounded-lg p-2 border border-emerald-200/60 flex items-center justify-between gap-2">
-                        <div className="overflow-hidden">
-                          <p className="text-[9px] font-bold text-gray-400 uppercase">Device Token (Live in Firebase):</p>
-                          <p className="text-[10px] font-mono text-emerald-900 truncate">{adminFcmToken}</p>
-                        </div>
-                        <button
-                          onClick={handleCopyFcmToken}
-                          className="p-1.5 hover:bg-emerald-50 rounded-lg text-emerald-600 transition-colors shrink-0 flex items-center gap-1 text-[10px] font-bold"
-                          title="Copy Token"
-                        >
-                          {fcmTokenCopied ? (
-                            <>
-                              <CheckCircle size={14} className="text-emerald-500" />
-                              <span className="text-emerald-600">Copied!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy size={14} />
-                              <span>Copy</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bg-white/80 rounded-xl p-2.5 border border-amber-200/60 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                      <p className="text-[11px] text-amber-900/90 leading-tight">
-                        Device abhi connect nahi hai. Upar diye gaye <strong>Connect This Device</strong> button par click karke browser permission allow karein.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="h-px bg-blue-100 my-4" />
-
-          {/* Telegram Settings */}
-          <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-blue-100">
-            <div className="flex items-center gap-3">
-              <div className={cn(
-                "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
-                telegramEnabled ? "bg-[#0088cc] text-white" : "bg-gray-100 text-gray-400"
-              )}>
-                <Send size={20} />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-[#1A1A1A]">Telegram Notifications</p>
-                <p className="text-[10px] text-gray-400">Receive Push Notifications to Phone</p>
-              </div>
-            </div>
-            <button 
-              onClick={() => setTelegramEnabled(!telegramEnabled)}
-              className={cn(
-                "w-12 h-6 rounded-full transition-all relative",
-                telegramEnabled ? "bg-[#0088cc]" : "bg-gray-200"
-              )}
-            >
-              <div className={cn(
-                "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                telegramEnabled ? "right-1" : "left-1"
-              )} />
-            </button>
-          </div>
-
-          <div className={cn("space-y-4 transition-all", !telegramEnabled && "opacity-50 pointer-events-none")}>
-            <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Telegram Bot Token</label>
-              <Input 
-                value={telegramBotToken}
-                onChange={(e) => setTelegramBotToken(e.target.value)}
-                placeholder="Paste Bot Token here"
-                className="bg-white"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Your Chat ID</label>
-              <div className="flex gap-2">
-                <Input 
-                  value={telegramChatId}
-                  onChange={(e) => setTelegramChatId(e.target.value)}
-                  placeholder="Paste Chat ID here"
-                  className="bg-white"
-                />
-              </div>
-              <p className="text-[9px] text-gray-400 mt-1 italic">Use @userinfobot on Telegram to get your Chat ID</p>
-            </div>
-          </div>
-
-          <div className="h-px bg-blue-100 my-4" />
-
-          {/* Direct UPI & Dynamic QR Code Payment (100% Free - 0% Fee) */}
-          <div className="p-5 bg-white rounded-3xl border border-emerald-100 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className={cn(
-                  "w-11 h-11 rounded-2xl flex items-center justify-center transition-colors shadow-xs",
-                  upiEnabled ? "bg-emerald-600 text-white" : "bg-gray-100 text-gray-400"
-                )}>
-                  <QrCode size={22} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-bold text-[#1A1A1A]">Direct UPI & Dynamic QR Code</p>
-                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-1.5 py-0.5 rounded">
-                      100% Free
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-gray-400">Direct payment to your Bank Account • 0% Gateway Fee</p>
-                </div>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setUpiEnabled(!upiEnabled)}
-                className={cn(
-                  "w-12 h-6 rounded-full transition-all relative cursor-pointer",
-                  upiEnabled ? "bg-emerald-600" : "bg-gray-200"
-                )}
-              >
-                <div className={cn(
-                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                  upiEnabled ? "right-1" : "left-1"
-                )} />
-              </button>
-            </div>
-
-            {upiEnabled && (
-              <div className="space-y-4 pt-2 border-t border-gray-100">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
-                      Merchant UPI ID (VPA) <span className="text-red-500">*</span>
-                    </label>
-                    <Input 
-                      value={upiId}
-                      onChange={(e) => setUpiId(e.target.value.trim())}
-                      placeholder="e.g. shiva1520980@okhdfcbank"
-                      className="bg-gray-50 text-xs font-mono"
-                    />
-                    <p className="text-[9px] text-gray-400 mt-1">GPay, PhonePe, Paytm, BHIM or Bank UPI ID</p>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
-                      Payee / Store Display Name <span className="text-red-500">*</span>
-                    </label>
-                    <Input 
-                      value={upiPayeeName}
-                      onChange={(e) => setUpiPayeeName(e.target.value)}
-                      placeholder="e.g. Lumaro Mart"
-                      className="bg-gray-50 text-xs font-medium"
-                    />
-                    <p className="text-[9px] text-gray-400 mt-1">Appears in customer's UPI app payment confirmation</p>
-                  </div>
-                </div>
-
-                {/* Live Interactive Test QR Code Box */}
-                <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-2xl p-4 flex flex-col sm:flex-row items-center gap-4">
-                  <div className="bg-white p-2.5 rounded-2xl shadow-xs border border-emerald-100 flex items-center justify-center shrink-0">
-                    {upiId ? (
-                      <QRCodeSVG
-                        value={`upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiPayeeName || 'Lumaro Mart')}&am=${testAmount}&cu=INR&tn=${encodeURIComponent('Test Payment')}`}
-                        size={110}
-                        level="M"
-                      />
-                    ) : (
-                      <div className="w-[110px] h-[110px] flex items-center justify-center text-xs text-gray-400">
-                        Enter UPI ID
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex-1 space-y-2 text-center sm:text-left">
-                    <div className="flex items-center justify-center sm:justify-start gap-2">
-                      <span className="text-xs font-bold text-emerald-950">Live Test QR Code Preview</span>
-                      <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded">
-                        Active
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-gray-600 leading-relaxed">
-                      Aap apne phone ke kisi bhi UPI app (Google Pay, PhonePe, Paytm) se is QR ko scan karke test kar sakte hain ki direct payment aapke bank account me aa rahi hai ya nahi.
-                    </p>
-                    <div className="flex items-center justify-center sm:justify-start gap-2 pt-1">
-                      <span className="text-[10px] font-bold text-gray-500">Test Amount: ₹</span>
-                      <input
-                        type="number"
-                        min="1"
-                        value={testAmount}
-                        onChange={(e) => setTestAmount(e.target.value)}
-                        className="w-16 px-2 py-0.5 text-xs font-bold border border-gray-200 rounded-lg bg-white"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="h-px bg-blue-100 my-4" />
-
-          {/* Loyalty Points Reward Program Configuration */}
-          <div className="p-5 bg-white rounded-3xl border border-blue-100 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className={cn(
-                  "w-11 h-11 rounded-2xl flex items-center justify-center transition-colors shadow-xs",
-                  loyaltyProgramEnabled ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-400"
-                )}>
-                  <Award size={22} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-bold text-[#1A1A1A]">Loyalty Points Reward Program</p>
-                    <span className="bg-amber-100 text-amber-800 text-[10px] font-extrabold px-1.5 py-0.5 rounded">
-                      Rewards
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-gray-400">Order karne par customer ko reward points & discount</p>
-                </div>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setLoyaltyProgramEnabled(!loyaltyProgramEnabled)}
-                className={cn(
-                  "w-12 h-6 rounded-full transition-all relative cursor-pointer",
-                  loyaltyProgramEnabled ? "bg-amber-500" : "bg-gray-200"
-                )}
-              >
-                <div className={cn(
-                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-xs",
-                  loyaltyProgramEnabled ? "right-1" : "left-1"
-                )} />
-              </button>
-            </div>
-
-            {loyaltyProgramEnabled && (
-              <div className="pt-2 border-t border-gray-100 space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {/* Manchahi Price Threshold */}
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wider mb-1 block">
-                      Har Kitne ₹ Kharch Par <span className="text-red-500">*</span>
-                    </label>
-                    <div className="relative">
-                      <Input 
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={loyaltySpendBase}
-                        onChange={(e) => setLoyaltySpendBase(Math.max(1, parseInt(e.target.value) || 1))}
-                        placeholder="100"
-                        className="bg-gray-50 text-xs font-bold"
-                      />
-                      <span className="absolute right-3 top-2.5 text-xs text-gray-400 font-bold">₹ spent</span>
-                    </div>
-                    <p className="text-[9px] text-gray-400 mt-1">
-                      Aapki manchahi price (jaise ₹50, ₹100, ₹200).
-                    </p>
-                  </div>
-
-                  {/* Points Earned */}
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wider mb-1 block">
-                      Kitne Points Milenge <span className="text-red-500">*</span>
-                    </label>
-                    <div className="relative">
-                      <Input 
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={loyaltyPointsEarned}
-                        onChange={(e) => {
-                          const val = Math.max(0, parseInt(e.target.value) || 0);
-                          setLoyaltyPointsEarned(val);
-                          setLoyaltyPointsPerHundred(val);
-                        }}
-                        placeholder="5"
-                        className="bg-gray-50 text-xs font-bold"
-                      />
-                      <span className="absolute right-3 top-2.5 text-xs text-gray-400 font-bold">pts</span>
-                    </div>
-                    <p className="text-[9px] text-gray-400 mt-1">
-                      Upar set kiye gaye ₹ par milne wale points.
-                    </p>
-                  </div>
-
-                  {/* 1 Point Ki Kimat */}
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wider mb-1 block">
-                      1 Point Ki Kimat (₹ Value) <span className="text-red-500">*</span>
-                    </label>
-                    <div className="relative">
-                      <Input 
-                        type="number"
-                        min="0.1"
-                        step="0.1"
-                        value={loyaltyPointValue}
-                        onChange={(e) => setLoyaltyPointValue(Math.max(0.1, parseFloat(e.target.value) || 1))}
-                        placeholder="1"
-                        className="bg-gray-50 text-xs font-bold"
-                      />
-                      <span className="absolute right-3 top-2.5 text-xs text-gray-400 font-bold">₹ / pt</span>
-                    </div>
-                    <p className="text-[9px] text-gray-400 mt-1">
-                      1 point redeem karne par itne ₹ ki chhoot milegi.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Rule Formula Summary Tag */}
-                <div className="p-2.5 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-900 font-semibold flex items-center gap-2">
-                  <span>💡</span>
-                  <span>
-                    Aapka Set Kiya Niyam: <b>Har ₹{loyaltySpendBase} ke order par {loyaltyPointsEarned} Points</b> milenge, aur <b>1 Point = ₹{loyaltyPointValue}</b> ki chhoot!
-                  </span>
-                </div>
-
-                {/* Live Preview Box */}
-                <div className="p-3.5 bg-amber-50/70 border border-amber-200/80 rounded-2xl space-y-1.5">
-                  <div className="flex items-center gap-1.5 text-amber-950 font-bold text-xs">
-                    <Sparkles size={14} className="text-amber-600" />
-                    <span>Live Reward Example (Aapke Settings Ke Mutabik):</span>
-                  </div>
-                  {(() => {
-                    const sampleOrder = 500;
-                    const calculatedPts = Math.floor(sampleOrder / (Number(loyaltySpendBase) || 100)) * (Number(loyaltyPointsEarned) || 0);
-                    const calculatedDiscount = Math.round(calculatedPts * (Number(loyaltyPointValue) || 1));
-                    return (
-                      <div className="text-[11px] text-amber-900 space-y-1">
-                        <p>
-                          • Agar customer <b>₹{sampleOrder}</b> ka order karta hai, toh use <b>{calculatedPts} Loyalty Points</b> milenge.
-                        </p>
-                        <p>
-                          • Customer jab yeh <b>{calculatedPts} Points</b> redeem karega, toh use <b>₹{calculatedDiscount}</b> ka discount milega!
-                        </p>
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="h-px bg-blue-100 my-4" />
-
-          {/* Google AdMob & Android Play Store Monetization */}
-          <div className="p-5 bg-white rounded-3xl border border-blue-100 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className={cn(
-                  "w-11 h-11 rounded-2xl flex items-center justify-center transition-colors shadow-xs",
-                  admobEnabled ? "bg-amber-500 text-white" : "bg-gray-100 text-gray-400"
-                )}>
-                  <Smartphone size={22} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-bold text-[#1A1A1A]">Google AdMob Monetization</p>
-                    <span className="bg-amber-100 text-amber-800 text-[10px] font-extrabold px-1.5 py-0.5 rounded">
-                      Android
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-gray-400">Official Google Mobile Ads for Google Play Store</p>
-                </div>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setAdmobEnabled(!admobEnabled)}
-                className={cn(
-                  "w-12 h-6 rounded-full transition-all relative cursor-pointer",
-                  admobEnabled ? "bg-amber-500" : "bg-gray-200"
-                )}
-              >
-                <div className={cn(
-                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-xs",
-                  admobEnabled ? "right-1" : "left-1"
-                )} />
-              </button>
-            </div>
-
-            {admobEnabled && (
-              <div className="pt-2 border-t border-gray-100 space-y-4">
-                {/* Test Mode Switch */}
-                <div className="flex items-center justify-between p-3 bg-amber-50/70 rounded-2xl border border-amber-200/70">
-                  <div>
-                    <p className="text-xs font-bold text-amber-950">AdMob Test Mode</p>
-                    <p className="text-[10px] text-amber-800">Use official Google Test IDs during development to avoid account strikes</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setAdmobTesting(!admobTesting)}
-                    className={cn(
-                      "text-xs font-bold px-3 py-1.5 rounded-xl transition-colors cursor-pointer",
-                      admobTesting ? "bg-amber-600 text-white" : "bg-white text-gray-700 border border-gray-200"
-                    )}
-                  >
-                    {admobTesting ? 'Test Mode: ON' : 'Production: LIVE'}
-                  </button>
-                </div>
-
-                {/* Ad Unit IDs */}
-                <div className="space-y-3">
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
-                      Google AdMob App ID
-                    </label>
-                    <Input
-                      value={admobAppId}
-                      onChange={(e) => setAdmobAppId(e.target.value)}
-                      placeholder={ADMOB_TEST_IDS.appId}
-                      className="bg-gray-50 text-xs font-mono"
-                    />
-                    <p className="text-[9px] text-gray-400 mt-1">Format: ca-app-pub-xxxxxxxxxxxxxxxx~yyyyyyyyyy</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div>
-                      <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
-                        Banner Ad Unit ID
-                      </label>
-                      <Input
-                        value={admobBannerId}
-                        onChange={(e) => setAdmobBannerId(e.target.value)}
-                        placeholder={ADMOB_TEST_IDS.banner}
-                        className="bg-gray-50 text-xs font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
-                        Interstitial Ad Unit ID
-                      </label>
-                      <Input
-                        value={admobInterstitialId}
-                        onChange={(e) => setAdmobInterstitialId(e.target.value)}
-                        placeholder={ADMOB_TEST_IDS.interstitial}
-                        className="bg-gray-50 text-xs font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
-                        Rewarded Ad Unit ID
-                      </label>
-                      <Input
-                        value={admobRewardedId}
-                        onChange={(e) => setAdmobRewardedId(e.target.value)}
-                        placeholder={ADMOB_TEST_IDS.rewarded}
-                        className="bg-gray-50 text-xs font-mono"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Live Testing Controls */}
-                <div className="p-3 bg-gray-50 rounded-2xl border border-gray-200/80">
-                  <p className="text-[11px] font-bold text-gray-700 mb-2">Test AdMob Ad Formats:</p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setAdTestStatus('Showing bottom banner...');
-                        await showBannerAd(admobBannerId, admobTesting);
-                        setTimeout(() => setAdTestStatus(null), 3000);
-                      }}
-                      className="px-3 py-1.5 bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 rounded-xl text-xs font-semibold cursor-pointer"
-                    >
-                      Show Banner
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setAdTestStatus('Showing interstitial ad...');
-                        await showInterstitialAd(admobInterstitialId, admobTesting);
-                        setTimeout(() => setAdTestStatus(null), 3000);
-                      }}
-                      className="px-3 py-1.5 bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 rounded-xl text-xs font-semibold cursor-pointer"
-                    >
-                      Show Interstitial
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setAdTestStatus('Showing rewarded ad...');
-                        await showRewardedAd((reward) => {
-                          setAdTestStatus(`Reward granted: ${reward.amount} ${reward.type}`);
-                        }, admobRewardedId, admobTesting);
-                      }}
-                      className="px-3 py-1.5 bg-amber-500 text-white hover:bg-amber-600 rounded-xl text-xs font-bold cursor-pointer"
-                    >
-                      Show Rewarded Video
-                    </button>
-                  </div>
-                  {adTestStatus && (
-                    <p className="text-[11px] text-emerald-600 font-semibold mt-2">{adTestStatus}</p>
-                  )}
-                </div>
-
-                {/* Collapsible Play Store Upload & Package Guide */}
-                <div className="border border-emerald-200 bg-emerald-50/50 rounded-2xl p-4">
-                  <button
-                    type="button"
-                    onClick={() => setShowPlayStoreGuide(!showPlayStoreGuide)}
-                    className="w-full flex items-center justify-between text-left cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2">
-                      <ShieldCheck className="text-emerald-600" size={18} />
-                      <span className="text-xs font-bold text-emerald-950">
-                        Google Play Store Upload Instructions (.aab)
-                      </span>
-                    </div>
-                    <span className="text-xs font-semibold text-emerald-700">
-                      {showPlayStoreGuide ? 'Hide Guide ▲' : 'View Guide ▼'}
-                    </span>
-                  </button>
-
-                  {showPlayStoreGuide && (
-                    <div className="mt-3 text-xs text-gray-700 space-y-2.5 pt-3 border-t border-emerald-200/60 font-sans">
-                      <div className="p-2.5 bg-white rounded-xl border border-emerald-100">
-                        <p className="font-bold text-gray-800">1. Package Name / Application ID:</p>
-                        <code className="text-[11px] font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-900 block mt-1">
-                          com.lumaromart.app
-                        </code>
-                      </div>
-                      <div className="p-2.5 bg-white rounded-xl border border-emerald-100">
-                        <p className="font-bold text-gray-800">2. Generate Signed Android App Bundle (.aab):</p>
-                        <p className="text-[11px] text-gray-600 mt-0.5">Run in project root terminal:</p>
-                        <code className="text-[11px] font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-900 block mt-1">
-                          npm run android:bundle
-                        </code>
-                        <p className="text-[10px] text-gray-500 mt-1">
-                          The production bundle is generated at: <span className="font-mono">android/app/build/outputs/bundle/release/app-release.aab</span>
-                        </p>
-                      </div>
-                      <div className="p-2.5 bg-white rounded-xl border border-emerald-100">
-                        <p className="font-bold text-gray-800">3. Google Play Console Upload:</p>
-                        <ul className="list-disc pl-4 text-[11px] text-gray-600 space-y-1 mt-1">
-                          <li>Open Google Play Console and create a new application named <b>Lumaro Mart</b>.</li>
-                          <li>Go to <b>Release &gt; Production</b> (or Internal Testing) and upload the <span className="font-mono font-bold">app-release.aab</span>.</li>
-                          <li>In <b>App Content &gt; Ads</b>, declare "Yes, my app contains ads".</li>
-                          <li>Link your Google AdMob account in Play Console for automated revenue reporting.</li>
-                        </ul>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-          
-          <Button 
-            onClick={handleSave}
-            className="w-full py-3 rounded-2xl flex items-center justify-center gap-2"
-            disabled={isSaving}
-          >
-            {isSaving ? <Loader2 className="animate-spin" size={18} /> : 'Save Settings'}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-};
+  onTestNotification,
+  onNavigateToSubscriptions
+}: {
+  settings: AppSettings;
+  onSave: (s: AppSettings) => Promise<boolean>;
+  onTestNotification: () => void;
+  onNavigateToSubscriptions?: () => void;
+}) => (
+  <AdminSettingsTab
+    settings={settings}
+    onSave={onSave}
+    onTestNotification={onTestNotification}
+    onNavigateToSubscriptions={onNavigateToSubscriptions}
+  />
+);
 
 const ProductFormModal = ({ 
   mode, 
@@ -6456,6 +5496,136 @@ const UserStatsModal = ({ user, orders, onClose, onViewAllOrders }: { user: User
                 <p className="text-[8px] sm:text-[9px] text-rose-700 font-bold uppercase">Redeemed</p>
                 <p className="text-xs sm:text-sm font-extrabold text-rose-950 mt-0.5">-{stats.pointsRedeemed}</p>
               </div>
+            </div>
+          </div>
+
+          {/* VIP Subscription Details & Action Box */}
+          <div className="bg-amber-50/80 p-3 sm:p-3.5 rounded-xl sm:rounded-2xl border border-amber-200/80 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-amber-950 font-bold text-xs">
+                <Crown size={15} className="text-amber-600" />
+                <span>VIP Membership Status</span>
+              </div>
+              <span className={cn(
+                "text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider",
+                user.isSubscribed ? "bg-amber-500 text-white" : "bg-gray-200 text-gray-600"
+              )}>
+                {user.isSubscribed ? "👑 Active VIP" : "Not Subscribed"}
+              </span>
+            </div>
+
+            {user.isSubscribed ? (
+              <div className="text-[11px] text-amber-950 space-y-1 bg-white/80 p-2.5 rounded-xl border border-amber-100">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Plan:</span>
+                  <span className="font-bold">{user.subscriptionPlanName || 'Lumaro VIP Club'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Orders Remaining:</span>
+                  <span className="font-bold text-emerald-700">
+                    {user.subscriptionOrdersRemaining === -1 || user.subscriptionOrdersRemaining === undefined ? 'Unlimited' : user.subscriptionOrdersRemaining}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Orders Placed:</span>
+                  <span className="font-bold">{user.subscriptionOrdersUsed || 0}</span>
+                </div>
+                {user.subscriptionExpiresAt && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Expires:</span>
+                    <span className="font-bold text-gray-700">
+                      {new Date(typeof user.subscriptionExpiresAt === 'number' ? user.subscriptionExpiresAt : user.subscriptionExpiresAt?.toMillis ? user.subscriptionExpiresAt.toMillis() : user.subscriptionExpiresAt).toLocaleDateString('en-IN')}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                Yeh user abhi VIP plan me nahi hai. Aap niche se direct manual VIP grant kar sakte hain.
+              </p>
+            )}
+
+            {user.subscriptionPendingVerification && (
+              <div className="p-2.5 bg-amber-100 border border-amber-300 rounded-xl space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-amber-950">⏳ Payment Verification Pending</span>
+                  <span className="text-[10px] font-mono font-bold bg-white px-1.5 py-0.5 rounded border">
+                    UTR: {user.subscriptionPendingUtr || 'N/A'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const expires = Date.now() + 30 * 24 * 60 * 60 * 1000;
+                      await updateDoc(doc(db, 'users', user.uid), {
+                        isSubscribed: true,
+                        subscriptionPlanName: user.subscriptionPendingPlanName || 'Lumaro VIP Club',
+                        subscriptionExpiresAt: expires,
+                        subscriptionOrdersRemaining: -1,
+                        subscriptionOrdersTotal: -1,
+                        subscriptionOrdersUsed: 0,
+                        subscriptionPendingVerification: false,
+                        subscriptionStatus: 'active'
+                      });
+                      alert('✅ Payment verified! VIP Membership activate kar di gayi.');
+                    } catch (e: any) {
+                      alert('Error: ' + e?.message);
+                    }
+                  }}
+                  className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Approve Payment & Start VIP
+                </button>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const expires = Date.now() + 30 * 24 * 60 * 60 * 1000;
+                    await updateDoc(doc(db, 'users', user.uid), {
+                      isSubscribed: true,
+                      subscriptionPlanName: 'Lumaro VIP Club',
+                      subscriptionExpiresAt: expires,
+                      subscriptionOrdersRemaining: -1,
+                      subscriptionOrdersTotal: -1,
+                      subscriptionOrdersUsed: 0,
+                      subscriptionStatus: 'active'
+                    });
+                    alert('✅ User ko VIP Membership grant/renew kar di gayi!');
+                  } catch (e: any) {
+                    alert('Action failed: ' + e?.message);
+                  }
+                }}
+                className="flex-1 py-2 px-3 bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-bold rounded-xl flex items-center justify-center gap-1 transition-colors cursor-pointer"
+              >
+                <Crown size={13} />
+                <span>{user.isSubscribed ? 'Extend 30 Days' : 'Grant 30-Day VIP'}</span>
+              </button>
+              {user.isSubscribed && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!confirm(`⚠️ Kya aap sach me "${user.displayName || 'User'}" ka VIP Subscription Cancel karna chahte hain?\nInke sabhi VIP perks aur delivery discount turant band ho jayenge.`)) return;
+                    try {
+                      await cancelUserSubscription({
+                        userId: user.uid,
+                        adminId: auth.currentUser?.uid || 'admin',
+                        reason: 'Cancelled by Admin from User Modal'
+                      });
+                      alert('🛑 VIP subscription successfully cancel kar diya gaya.');
+                    } catch (e: any) {
+                      alert('Action failed: ' + e?.message);
+                    }
+                  }}
+                  className="py-2 px-3 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 text-[11px] font-bold rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel VIP (रद्द करें)
+                </button>
+              )}
             </div>
           </div>
 
