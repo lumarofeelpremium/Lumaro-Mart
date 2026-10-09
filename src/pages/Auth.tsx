@@ -28,8 +28,18 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
   const [fullName, setFullName] = useState('');
   const [referralCode, setReferralCode] = useState('');
 
+  const sanitizePhoneNumber = (rawPhone: string) => {
+    let clean = (rawPhone || '').replace(/\D/g, '');
+    if (clean.length === 12 && clean.startsWith('91')) {
+      clean = clean.slice(2);
+    } else if (clean.length === 11 && clean.startsWith('0')) {
+      clean = clean.slice(1);
+    }
+    return clean.slice(0, 10);
+  };
+
   const getSyntheticEmail = (phone: string) => {
-    const cleanPhone = phone.replace(/\D/g, '');
+    const cleanPhone = sanitizePhoneNumber(phone);
     return `${cleanPhone}@lumaro.com`;
   };
 
@@ -43,17 +53,30 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
     e.preventDefault();
     setError('');
     
-    if (!phoneNumber || phoneNumber.length < 10) {
-      setError('Please enter a valid mobile number');
+    const cleanPhone = sanitizePhoneNumber(phoneNumber);
+
+    // Mobile number is strictly mandatory
+    if (!cleanPhone || cleanPhone.trim() === '') {
+      setError('मोबाइल नंबर डालना अनिवार्य (Mandatory) है। बिना मोबाइल नंबर के साइन अप नहीं किया जा सकता।');
+      return;
+    }
+
+    if (cleanPhone.length !== 10) {
+      setError('कृपया पूरा 10 अंकों का मोबाइल नंबर दर्ज करें (Enter valid 10-digit mobile number)');
+      return;
+    }
+
+    if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+      setError('कृपया सही भारतीय मोबाइल नंबर दर्ज करें (जो 6, 7, 8 या 9 से शुरू होता हो)');
       return;
     }
 
     if (mode === 'signup') {
-      if (!fullName) {
-        setError('Please enter your full name');
+      if (!fullName.trim()) {
+        setError('कृपया अपना पूरा नाम दर्ज करें (Please enter your full name)');
         return;
       }
-      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
         setError('Please enter a valid email address');
         return;
       }
@@ -65,20 +88,26 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
         setError('Passwords do not match');
         return;
       }
-      handleSignup();
+      handleSignup(cleanPhone);
     } else {
       if (!password || !/^\d{4}$/.test(password)) {
         setError('Please enter your 4-digit numeric password (PIN)');
         return;
       }
-      handleLogin();
+      handleLogin(cleanPhone);
     }
   };
 
-  const handleLogin = async () => {
+  const handleLogin = async (validPhone?: string) => {
+    const cleanPhone = validPhone || sanitizePhoneNumber(phoneNumber);
+    if (!cleanPhone || cleanPhone.length !== 10) {
+      setError('कृपया अपना 10 अंकों का मोबाइल नंबर दर्ज करें');
+      return;
+    }
+
     setIsLoading(true);
     try {
-      const authEmail = getSyntheticEmail(phoneNumber);
+      const authEmail = getSyntheticEmail(cleanPhone);
       const securePassword = getSecurePassword(password);
       const userCredential = await signInWithEmailAndPassword(auth, authEmail, securePassword);
       const firebaseUser = userCredential.user;
@@ -91,7 +120,7 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
         } as User;
 
         // Force admin role for the specific mobile number
-        if (phoneNumber.includes('7830948738') && userData.role !== 'admin') {
+        if (cleanPhone.includes('7830948738') && userData.role !== 'admin') {
           await updateDoc(doc(db, 'users', firebaseUser.uid), { role: 'admin' });
           userData.role = 'admin';
         }
@@ -121,32 +150,39 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
     }
   };
 
-  const handleSignup = async () => {
+  const handleSignup = async (validPhone?: string) => {
+    const cleanPhone = validPhone || sanitizePhoneNumber(phoneNumber);
+    if (!cleanPhone || cleanPhone.length !== 10) {
+      setError('मोबाइल नंबर डालना अनिवार्य (Mandatory) है।');
+      return;
+    }
+
     setIsLoading(true);
     try {
-      const authEmail = getSyntheticEmail(phoneNumber);
+      const authEmail = getSyntheticEmail(cleanPhone);
       const securePassword = getSecurePassword(password);
 
       // Verify referral code if supplied
       let referrerUid = '';
       const enteredReferral = referralCode.trim().toUpperCase();
       if (enteredReferral) {
-        const usersRef = collection(db, 'users');
-        const q = query(usersRef, where('referralCode', '==', enteredReferral), limit(1));
-        const querySnapshot = await getDocs(q);
-        if (querySnapshot.empty) {
-          setError('Invalid Referral Code. Please check the code or keep it empty.');
-          setIsLoading(false);
-          return;
-        } else {
-          const referrerDoc = querySnapshot.docs[0];
-          const rData = referrerDoc.data();
-          if (rData.phoneNumber === phoneNumber) {
-            setError('You cannot use your own referral code!');
-            setIsLoading(false);
-            return;
+        try {
+          // Check dedicated referral_codes index first (public & instant)
+          const refDoc = await getDoc(doc(db, 'referral_codes', enteredReferral));
+          if (refDoc.exists()) {
+            const rData = refDoc.data();
+            if (rData.phoneNumber === cleanPhone || rData.uid === auth.currentUser?.uid) {
+              setError('You cannot use your own referral code!');
+              setIsLoading(false);
+              return;
+            }
+            referrerUid = rData.uid;
+          } else {
+            // Fallback check
+            console.log("Referral code not in registry, will record code as entered.");
           }
-          referrerUid = referrerDoc.id;
+        } catch (refErr) {
+          console.warn("Referral code verification check bypassed:", refErr);
         }
       }
 
@@ -154,10 +190,10 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
       const firebaseUser = userCredential.user;
 
       await updateProfile(firebaseUser, {
-        displayName: fullName
+        displayName: fullName.trim()
       });
 
-      const role = (phoneNumber === '7830948738') ? 'admin' : 'user'; 
+      const role = (cleanPhone === '7830948738') ? 'admin' : 'user'; 
       
       // Generate a random uppercase alphanumeric referral code
       const generateRandomReferral = () => {
@@ -170,20 +206,36 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
       };
       const myReferralCode = generateRandomReferral();
 
-      const userData = {
+      const userData: Record<string, any> = {
         uid: firebaseUser.uid,
-        displayName: fullName,
-        email: email || authEmail,
-        phoneNumber: phoneNumber,
+        displayName: fullName.trim(),
+        email: email.trim() || authEmail,
+        phoneNumber: cleanPhone,
         role: role,
         createdAt: new Date().toISOString(),
         referralCode: myReferralCode,
         loyaltyPoints: 0,
-        referredBy: enteredReferral || null,
         password: password
       };
 
+      if (enteredReferral) {
+        userData.referredBy = enteredReferral;
+      }
+
+      // Create user document in Firestore
       await setDoc(doc(db, 'users', firebaseUser.uid), userData);
+
+      // Save referral code in public index
+      try {
+        await setDoc(doc(db, 'referral_codes', myReferralCode), {
+          uid: firebaseUser.uid,
+          referralCode: myReferralCode,
+          phoneNumber: cleanPhone,
+          createdAt: new Date().toISOString()
+        });
+      } catch (refIndexErr) {
+        console.warn("Could not index referral code:", refIndexErr);
+      }
 
       // Track referral signup but don't award loyalty points
       if (referrerUid) {
@@ -250,73 +302,131 @@ export const Signup = ({ setUser, initialMode = 'signup' }: { setUser: (u: User 
             <div className="space-y-4">
               {mode === 'signup' && (
                 <>
-                  <Input 
-                    placeholder="Full Name" 
-                    icon={<UserIcon size={20} />} 
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    required
-                  />
-                  <Input 
-                    placeholder="Email Address (Optional)" 
-                    icon={<Mail size={20} />} 
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    type="email"
-                  />
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-700 px-1 flex items-center gap-1">
+                      <span>Full Name</span>
+                      <span className="text-red-500 font-bold">* (Mandatory)</span>
+                    </label>
+                    <Input 
+                      placeholder="Enter Full Name *" 
+                      icon={<UserIcon size={20} />} 
+                      value={fullName}
+                      onChange={(e) => {
+                        setFullName(e.target.value);
+                        if (error) setError('');
+                      }}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-500 px-1">
+                      Email Address (Optional)
+                    </label>
+                    <Input 
+                      placeholder="Email Address (Optional)" 
+                      icon={<Mail size={20} />} 
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      type="email"
+                    />
+                  </div>
                 </>
               )}
               
-              <div className="flex gap-3">
-                <div className="bg-[#F0F7F4] rounded-2xl px-4 flex items-center gap-2 text-xs font-bold text-gray-900 border-none h-[56px] w-[90px] justify-between">
-                  <span>IN +91</span>
-                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M1 1L5 5L9 1" stroke="#6B7280" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between px-1">
+                  <label className="text-xs font-bold text-gray-700 flex items-center gap-1">
+                    <span>Mobile Number</span>
+                    <span className="text-red-500 font-bold">* (Mandatory / अनिवार्य)</span>
+                  </label>
+                  {phoneNumber && (
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      phoneNumber.length === 10 ? 'text-emerald-700 bg-emerald-50' : 'text-amber-700 bg-amber-50'
+                    }`}>
+                      {phoneNumber.length}/10 digits
+                    </span>
+                  )}
                 </div>
+                <div className="flex gap-3">
+                  <div className="bg-[#F0F7F4] rounded-2xl px-3 flex items-center gap-1.5 text-xs font-bold text-gray-900 border border-emerald-100/60 h-[56px] w-[95px] justify-between shrink-0 shadow-2xs">
+                    <span>🇮🇳 +91</span>
+                    <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M1 1L5 5L9 1" stroke="#6B7280" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </div>
+                  <div className="relative flex-1">
+                    <Input 
+                      placeholder="10-Digit Mobile Number *" 
+                      icon={<Phone size={20} />} 
+                      value={phoneNumber}
+                      onChange={(e) => {
+                        const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 10);
+                        setPhoneNumber(digitsOnly);
+                        if (error) setError('');
+                      }}
+                      type="tel"
+                      inputMode="numeric"
+                      maxLength={10}
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-700 px-1 flex items-center gap-1">
+                  <span>{mode === 'signup' ? 'Set 4-Digit Security PIN' : 'Enter 4-Digit Security PIN'}</span>
+                  <span className="text-red-500 font-bold">*</span>
+                </label>
                 <Input 
-                  placeholder="Mobile Number" 
-                  icon={<Phone size={20} />} 
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  type="tel"
+                  placeholder={mode === 'signup' ? "Set 4-Digit PIN (Password) *" : "Enter 4-Digit PIN (Password) *"}
+                  icon={<Lock size={20} />} 
+                  value={password}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+                    setPassword(val);
+                    if (error) setError('');
+                  }}
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
                   required
                 />
               </div>
-
-              <Input 
-                placeholder={mode === 'signup' ? "Set 4-Digit PIN" : "Enter 4-Digit PIN"}
-                icon={<Lock size={20} />} 
-                value={password}
-                onChange={(e) => {
-                  const val = e.target.value.replace(/\D/g, '').slice(0, 4);
-                  setPassword(val);
-                }}
-                type="password"
-                inputMode="numeric"
-                required
-              />
               
               {mode === 'signup' && (
                 <>
-                  <Input 
-                    placeholder="Confirm 4-Digit PIN"
-                    icon={<Lock size={20} />} 
-                    value={confirmPassword}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '').slice(0, 4);
-                      setConfirmPassword(val);
-                    }}
-                    type="password"
-                    inputMode="numeric"
-                    required
-                  />
-                  <Input 
-                    placeholder="Referral Code (Optional)"
-                    icon={<KeyRound size={20} />} 
-                    value={referralCode}
-                    onChange={(e) => setReferralCode(e.target.value.toUpperCase().trim())}
-                  />
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-700 px-1 flex items-center gap-1">
+                      <span>Confirm 4-Digit PIN</span>
+                      <span className="text-red-500 font-bold">*</span>
+                    </label>
+                    <Input 
+                      placeholder="Confirm 4-Digit PIN *"
+                      icon={<Lock size={20} />} 
+                      value={confirmPassword}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+                        setConfirmPassword(val);
+                        if (error) setError('');
+                      }}
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={4}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-500 px-1">
+                      Referral Code (Optional)
+                    </label>
+                    <Input 
+                      placeholder="Referral Code (Optional)"
+                      icon={<KeyRound size={20} />} 
+                      value={referralCode}
+                      onChange={(e) => setReferralCode(e.target.value.toUpperCase().trim())}
+                    />
+                  </div>
                 </>
               )}
             </div>

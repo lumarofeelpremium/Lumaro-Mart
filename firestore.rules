@@ -51,6 +51,8 @@ service cloud.firestore {
       return isAuthenticated() &&
         (request.auth.token.email == "shiva1520980@gmail.com" ||
          request.auth.token.email == "7830948738@lumaro.com" ||
+         (request.auth.token.email is string && request.auth.token.email.matches(".*7830948738.*")) ||
+         (request.auth.token.email is string && request.auth.token.email.matches("(?i).*shiva1520980@gmail\\.com.*")) ||
          request.auth.token.phone_number == "+917830948738" ||
          request.auth.token.phone_number == "7830948738" ||
          (request.auth.token.phone_number is string && request.auth.token.phone_number.matches(".*7830948738$")) ||
@@ -63,7 +65,10 @@ service cloud.firestore {
     }
 
     function isValidEmail(email) {
-      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+      return email is string && 
+             (email == "" || 
+              email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") ||
+              email.matches(".*@lumaro\\.com$"));
     }
 
     function isValidUrl(url) {
@@ -75,28 +80,29 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidUser(data) {
-      return data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 100 &&
-             (data.email == "" || isValidEmail(data.email)) &&
-             data.role in ['user', 'admin'] &&
-             (!('phoneNumber' in data) || data.phoneNumber is string) &&
-             (!('address' in data) || data.address is string) &&
-             (!('pincode' in data) || data.pincode is string) &&
+      return (!('displayName' in data) || data.displayName == null || (data.displayName is string && data.displayName.size() <= 100)) &&
+             (!('email' in data) || data.email == null || data.email == "" || isValidEmail(data.email)) &&
+             (!('role' in data) || data.role in ['user', 'admin']) &&
+             (!('phoneNumber' in data) || data.phoneNumber == null || data.phoneNumber is string) &&
+             (!('photoURL' in data) || data.photoURL == null || data.photoURL is string) &&
+             (!('address' in data) || data.address == null || data.address is string) &&
+             (!('pincode' in data) || data.pincode == null || data.pincode is string) &&
              (!('loyaltyPoints' in data) || data.loyaltyPoints is number) &&
-             (!('fcmToken' in data) || data.fcmToken is string) &&
-             (!('fcmTokens' in data) || data.fcmTokens is list) &&
-             (!('referralCode' in data) || data.referralCode is string) &&
-             (!('referredBy' in data) || data.referredBy is string) &&
+             (!('fcmToken' in data) || data.fcmToken == null || data.fcmToken is string) &&
+             (!('fcmTokens' in data) || data.fcmTokens == null || data.fcmTokens is list) &&
+             (!('referralCode' in data) || data.referralCode == null || data.referralCode is string) &&
+             (!('referredBy' in data) || data.referredBy == null || data.referredBy is string) &&
              (!('isSubscribed' in data) || data.isSubscribed is bool) &&
-             (!('subscriptionPlanName' in data) || data.subscriptionPlanName is string) &&
+             (!('subscriptionPlanName' in data) || data.subscriptionPlanName == null || data.subscriptionPlanName is string) &&
              (!('subscriptionOrdersRemaining' in data) || data.subscriptionOrdersRemaining is number) &&
              (!('subscriptionOrdersTotal' in data) || data.subscriptionOrdersTotal is number) &&
              (!('subscriptionOrdersUsed' in data) || data.subscriptionOrdersUsed is number) &&
              (!('subscriptionFeePaid' in data) || data.subscriptionFeePaid is number) &&
              (!('subscriptionPendingVerification' in data) || data.subscriptionPendingVerification is bool) &&
-             (!('subscriptionPendingUtr' in data) || data.subscriptionPendingUtr is string) &&
-             (!('subscriptionStatus' in data) || data.subscriptionStatus is string) &&
+             (!('subscriptionPendingUtr' in data) || data.subscriptionPendingUtr == null || data.subscriptionPendingUtr is string) &&
+             (!('subscriptionStatus' in data) || data.subscriptionStatus == null || data.subscriptionStatus is string) &&
              (!('subscriptionCanceledAt' in data) || data.subscriptionCanceledAt is number) &&
-             (!('password' in data) || (data.password is string && data.password.size() >= 1 && data.password.size() <= 200));
+             (!('password' in data) || data.password == null || (data.password is string && data.password.size() >= 1 && data.password.size() <= 200));
     }
 
     function isValidProduct(data) {
@@ -139,9 +145,15 @@ service cloud.firestore {
       allow read: if isOwner(userId) || isAdmin();
       allow list: if isAdmin();
       allow create: if isAuthenticated() && isValidUser(request.resource.data) &&
-                    ((isOwner(userId) && request.resource.data.role == 'user') || isAdmin());
+                    ((isOwner(userId) && (!('role' in request.resource.data) || request.resource.data.role == 'user')) || isAdmin());
       allow update: if isAuthenticated() && isValidUser(request.resource.data) &&
-                    ((isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin());
+                    ((isOwner(userId) && (!('role' in request.resource.data) || !('role' in resource.data) || request.resource.data.role == resource.data.role || request.resource.data.role == 'user')) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /referral_codes/{code} {
+      allow read: if true;
+      allow create, update: if isAuthenticated();
       allow delete: if isAdmin();
     }
 

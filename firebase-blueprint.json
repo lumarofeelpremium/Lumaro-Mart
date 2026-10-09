@@ -150,12 +150,27 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["items", "updatedAt"]
+    },
+    "ReferralCode": {
+      "title": "ReferralCode",
+      "description": "Public referral code registry for instant verification and friend tracking.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "referralCode": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "referralCode"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
       "description": "User profiles."
+    },
+    "/referral_codes/{code}": {
+      "schema": "ReferralCode",
+      "description": "Referral code lookup index."
     },
     "/products/{productId}": {
       "schema": "Product",

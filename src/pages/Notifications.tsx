@@ -1,12 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, BellOff, Bell, Package, CheckCircle2, Sparkles, Tag, Zap, Megaphone } from 'lucide-react';
+import { 
+  ChevronLeft, BellOff, Bell, Package, CheckCircle2, Sparkles, Tag, Zap, 
+  Megaphone, AlertCircle, HelpCircle, ShieldCheck, Play, Send 
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, limit } from 'firebase/firestore';
 import { Notification } from '../types';
 import { motion } from 'motion/react';
 import { cacheUtils } from '../lib/cache-utils';
-import { isFcmSupported, getFcmPermissionStatus, requestFcmToken } from '../lib/fcm-utils';
+import { 
+  isFcmSupported, 
+  getFcmPermissionStatus, 
+  requestBrowserNotificationPermission, 
+  requestFcmToken, 
+  sendLocalTestNotification, 
+  getNotificationDiagnostic 
+} from '../lib/fcm-utils';
 
 export const Notifications = () => {
   const navigate = useNavigate();
@@ -15,19 +25,44 @@ export const Notifications = () => {
   const [readIds, setReadIds] = useState<string[]>([]);
   const [pushStatus, setPushStatus] = useState<string>('default');
   const [pushLoading, setPushLoading] = useState(false);
+  const [testSent, setTestSent] = useState(false);
+  const [diagnostic, setDiagnostic] = useState(getNotificationDiagnostic());
 
   useEffect(() => {
     setPushStatus(getFcmPermissionStatus());
+    setDiagnostic(getNotificationDiagnostic());
   }, []);
 
   const handleEnablePush = async () => {
     setPushLoading(true);
     try {
-      const token = await requestFcmToken();
-      if (token) {
-        setPushStatus('granted');
-      } else {
-        setPushStatus(getFcmPermissionStatus());
+      const perm = await requestBrowserNotificationPermission();
+      setPushStatus(perm);
+      setDiagnostic(getNotificationDiagnostic());
+      if (perm === 'granted') {
+        await sendLocalTestNotification(
+          'Lumaro Mart Alerts 🔔',
+          'Aapke mobile par notifications bilkul sahi chalu ho gaye hain! 🎉'
+        );
+        setTestSent(true);
+        setTimeout(() => setTestSent(false), 4000);
+        requestFcmToken().catch(() => {});
+      }
+    } finally {
+      setPushLoading(false);
+    }
+  };
+
+  const handleTestAlert = async () => {
+    setPushLoading(true);
+    try {
+      const success = await sendLocalTestNotification(
+        'Lumaro Mart Live Test 🔔',
+        'Badhai ho! Aapke Android phone par alerts bilkul sahi kaam kar rahe hain. 🎉'
+      );
+      if (success) {
+        setTestSent(true);
+        setTimeout(() => setTestSent(false), 4000);
       }
     } finally {
       setPushLoading(false);
@@ -113,31 +148,92 @@ export const Notifications = () => {
       </div>
 
       <div className="px-6 py-6">
-        {isFcmSupported() && pushStatus !== 'granted' && (
-          <div className="mb-4 bg-emerald-50 border border-emerald-200/80 rounded-2xl p-3.5 flex items-center justify-between gap-3 shadow-xs">
+        {/* Device Push Notification Card */}
+        {pushStatus === 'granted' ? (
+          <div className="mb-5 bg-gradient-to-br from-emerald-50 to-teal-50/60 border border-emerald-200/90 rounded-2xl p-4 shadow-xs space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-emerald-800">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
+                  <CheckCircle2 size={18} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold">Device Push Notifications Active</h4>
+                  <p className="text-[10px] text-emerald-700">Phone lock screen aur notification tray par alerts milenge</p>
+                </div>
+              </div>
+              <button
+                onClick={handleTestAlert}
+                disabled={pushLoading}
+                className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl shadow-xs transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+              >
+                <Send size={12} />
+                <span>{pushLoading ? 'Sending...' : 'Test Alert'}</span>
+              </button>
+            </div>
+            {testSent && (
+              <motion.div 
+                initial={{ opacity: 0, y: -4 }} 
+                animate={{ opacity: 1, y: 0 }} 
+                className="text-[10px] font-bold text-emerald-700 bg-white/80 border border-emerald-200 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5"
+              >
+                <Sparkles size={12} className="text-amber-500" />
+                <span>Test notification bheja gaya! Apne mobile ka notification bar check karein.</span>
+              </motion.div>
+            )}
+          </div>
+        ) : pushStatus === 'denied' ? (
+          <div className="mb-5 bg-amber-50 border border-amber-200 rounded-2xl p-4 shadow-xs space-y-2">
+            <div className="flex items-start gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5">
+                <AlertCircle size={18} />
+              </div>
+              <div className="flex-1">
+                <h4 className="text-xs font-bold text-amber-950">Android Chrome me Notifications Blocked Hain</h4>
+                <p className="text-[11px] text-amber-800 leading-snug mt-0.5">
+                  Browser me notification permission band ho gayi hai. Isse unblock karne ke steps:
+                </p>
+                <div className="mt-2 bg-white/80 p-2.5 rounded-xl border border-amber-200/80 text-[10px] text-amber-900 space-y-1">
+                  <p>1. Chrome ke upar URL ke bagal me 🔒 <b>Lock</b> (ya ⚙️ Tune) icon dabayein.</p>
+                  <p>2. <b>Permissions (अनुमतियाँ)</b> option par tap karein.</p>
+                  <p>3. <b>Notifications</b> ko <b>Allow (चालू)</b> karein.</p>
+                  <p>4. Browser page ko <b>Refresh (पुनः लोड)</b> karein.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : diagnostic.status === 'unsupported_webview' ? (
+          <div className="mb-5 bg-sky-50 border border-sky-200 rounded-2xl p-4 shadow-xs space-y-1.5">
+            <div className="flex items-center gap-2.5 text-sky-900">
+              <div className="w-8 h-8 rounded-xl bg-sky-500 text-white flex items-center justify-center shrink-0">
+                <HelpCircle size={18} />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold">In-App Browser Detected</h4>
+                <p className="text-[10px] text-sky-700">WhatsApp ya Instagram ke browser me web notifications support nahi hote.</p>
+              </div>
+            </div>
+            <p className="text-[10px] text-sky-800 bg-white/70 p-2 rounded-xl border border-sky-200">
+              👉 Screen ke top-right me <b>3 dots (⋮)</b> par click karke <b>"Open in Chrome" (Chrome me kholein)</b> select karein.
+            </p>
+          </div>
+        ) : (
+          <div className="mb-5 bg-emerald-50 border border-emerald-200/80 rounded-2xl p-3.5 flex items-center justify-between gap-3 shadow-xs">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
                 <Bell size={16} />
               </div>
               <div>
                 <p className="text-xs font-bold text-emerald-950">Push Notifications Off</p>
-                <p className="text-[10px] text-emerald-700">Phone screen par alerts pane ke liye on karein</p>
+                <p className="text-[10px] text-emerald-700">Phone screen par alerts pane ke liye chalu karein</p>
               </div>
             </div>
             <button
               onClick={handleEnablePush}
               disabled={pushLoading}
-              className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl shadow-xs transition-all disabled:opacity-50"
+              className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl shadow-xs transition-all disabled:opacity-50 cursor-pointer"
             >
               {pushLoading ? '...' : 'Turn On'}
             </button>
-          </div>
-        )}
-
-        {isFcmSupported() && pushStatus === 'granted' && (
-          <div className="mb-4 bg-white border border-gray-100 rounded-2xl p-3 flex items-center gap-2 text-emerald-600 shadow-xs">
-            <CheckCircle2 size={16} />
-            <span className="text-[11px] font-bold">Device Push Notifications Active</span>
           </div>
         )}
 

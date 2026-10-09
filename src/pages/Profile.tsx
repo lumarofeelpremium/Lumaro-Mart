@@ -9,7 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Input } from '../components/ui/Base';
 import { User, Order, AppSettings, Product, ProductVariant } from '../types';
 import { db } from '../firebase';
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, getDoc, limit } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, setDoc, getDoc, limit } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { compressImage } from '../lib/utils';
@@ -150,9 +150,22 @@ export const Profile = ({
       const code = generateRandomCode();
       const updateRefCode = async () => {
         try {
-          await updateDoc(doc(db, 'users', user.uid), {
-            referralCode: code
-          });
+          await setDoc(doc(db, 'users', user.uid), {
+            referralCode: code,
+            role: user.role || 'user'
+          }, { merge: true });
+
+          try {
+            await setDoc(doc(db, 'referral_codes', code), {
+              uid: user.uid,
+              referralCode: code,
+              phoneNumber: user.phoneNumber || '',
+              createdAt: new Date().toISOString()
+            }, { merge: true });
+          } catch (rErr) {
+            console.warn("Could not save to referral_codes:", rErr);
+          }
+
           setUser({
             ...user,
             referralCode: code
@@ -295,18 +308,49 @@ export const Profile = ({
 
     setIsUpdating(true);
     try {
+      const cleanPhone = (editForm.phoneNumber || '').replace(/\D/g, '').slice(0, 10);
+      if (cleanPhone && cleanPhone.length !== 10) {
+        alert('कृपया 10 अंकों का सही मोबाइल नंबर दर्ज करें (Enter valid 10-digit mobile number)');
+        setIsUpdating(false);
+        return;
+      }
+
+      let cleanEmail = (editForm.email || '').trim();
+      // Remove broken synthetic emails that might fail rule regex
+      if (cleanEmail === '@lumaro.com' || cleanEmail.startsWith('@')) {
+        cleanEmail = cleanPhone ? `${cleanPhone}@lumaro.com` : '';
+      }
+
+      const updatedPayload: any = {
+        displayName: editForm.displayName.trim() || user.displayName || 'Customer',
+        phoneNumber: cleanPhone,
+        address: (editForm.address || '').trim(),
+        pincode: (editForm.pincode || '').trim(),
+        photoURL: editForm.photoURL || ''
+      };
+
+      if (cleanEmail) {
+        updatedPayload.email = cleanEmail;
+      }
+
       const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, editForm);
+      await setDoc(userRef, {
+        ...updatedPayload,
+        role: user.role || 'user'
+      }, { merge: true });
       
       // Update local state in App.tsx
       setUser({
         ...user,
-        ...editForm
+        ...updatedPayload
       });
       
       setShowEditProfile(false);
-    } catch (error) {
+      alert('Profile successfully update ho gayi! 🎉');
+    } catch (error: any) {
+      console.error("Profile update error:", error);
       handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+      alert(`Profile update nahi ho saki: ${error?.message || 'Permission denied'}`);
     } finally {
       setIsUpdating(false);
     }
@@ -388,14 +432,44 @@ export const Profile = ({
                   <ShieldCheck size={10} /> Admin
                 </span>
               )}
-              {user.phoneNumber && (
+              {user.phoneNumber ? (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full text-[10px] font-bold uppercase tracking-wider">
                   <Phone size={10} /> {user.phoneNumber}
                 </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowEditProfile(true)}
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[10px] font-bold border border-amber-300 hover:bg-amber-200 transition-colors cursor-pointer"
+                >
+                  <Phone size={10} /> + Add Mobile No.
+                </button>
               )}
             </div>
           </div>
         </div>
+
+        {/* Missing Phone Number Alert Banner */}
+        {!user.phoneNumber && (
+          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl p-3.5 flex items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 shrink-0">
+                <Phone size={16} />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-xs font-bold text-amber-900 truncate">मोबाइल नंबर जोड़ें (Required)</h4>
+                <p className="text-[10px] text-amber-700 truncate">ऑर्डर डिलीवरी और सिक्योरिटी के लिए 10-अंकों का नंबर दर्ज करें।</p>
+              </div>
+            </div>
+            <button 
+              type="button"
+              onClick={() => setShowEditProfile(true)}
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shrink-0 transition-colors cursor-pointer shadow-xs"
+            >
+              Add Now
+            </button>
+          </div>
+        )}
 
         {/* Loyalty Points Card */}
         {(() => {
@@ -1135,13 +1209,26 @@ export const Profile = ({
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider ml-1">Mobile Number</label>
+                    <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wider ml-1 flex items-center justify-between">
+                      <span>10-Digit Mobile Number</span>
+                      {editForm.phoneNumber && (
+                        <span className={editForm.phoneNumber.length === 10 ? "text-emerald-600 font-bold" : "text-amber-600 font-bold"}>
+                          {editForm.phoneNumber.length}/10 digits
+                        </span>
+                      )}
+                    </label>
                     <Input 
-                      placeholder="Your Phone"
+                      placeholder="Enter 10-Digit Mobile Number"
                       value={editForm.phoneNumber}
-                      onChange={(e) => setEditForm(prev => ({ ...prev, phoneNumber: e.target.value }))}
+                      onChange={(e) => {
+                        const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                        setEditForm(prev => ({ ...prev, phoneNumber: digits }));
+                      }}
                       icon={<Phone size={18} />}
                       className="bg-[#F0F7F4] border-none"
+                      maxLength={10}
+                      type="tel"
+                      inputMode="numeric"
                     />
                   </div>
 

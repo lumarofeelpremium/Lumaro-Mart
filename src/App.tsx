@@ -20,7 +20,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import ScrollToTop from './components/ScrollToTop';
 import { MobileBackButtonSync } from './components/MobileBackButtonSync';
 import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
-import { setupForegroundPushListener } from './lib/fcm-utils';
+import { setupForegroundPushListener, showPlatformNotification } from './lib/fcm-utils';
 import { User, CartItem, Product, Category, Banner, DeliveryLocation, ProductVariant } from './types';
 import { getStoredDeliveryLocation, setStoredDeliveryLocation, getStateFromPincode } from './lib/location-utils';
 import { cacheUtils } from './lib/cache-utils';
@@ -155,13 +155,11 @@ export default function App() {
             } catch (_) {}
 
             if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-              try {
-                new Notification(info.title, {
-                  body: info.message,
-                  icon: '/favicon.ico',
-                  tag: `order-${orderId}`
-                });
-              } catch (_) {}
+              showPlatformNotification(info.title, {
+                body: info.message,
+                icon: '/favicon.ico',
+                tag: `order-${orderId}`
+              });
             }
           }
         } else if (change.type === 'added') {

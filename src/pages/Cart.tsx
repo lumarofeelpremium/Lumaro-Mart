@@ -17,6 +17,7 @@ import { SubscriptionModal } from '../components/SubscriptionModal';
 import { calculateDeliveryFee, decrementSubscriberOrderQuota, isSubscriptionActive, getSubscriptionSummary } from '../lib/subscription-utils';
 import { isProductDeliverable, getStateFromPincode, setStoredDeliveryLocation } from '../lib/location-utils';
 import { useModalBackHandler } from '../lib/back-button-handler';
+import { showPlatformNotification } from '../lib/fcm-utils';
 
 export const Cart = ({ 
   user,
@@ -355,12 +356,10 @@ export const Cart = ({
 
       // Trigger Instant Native Browser Notification on user device
       if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-        try {
-          new Notification(`Order Placed! (#${orderRef.id.slice(-6).toUpperCase()})`, {
-            body: `Aapka order ₹${total} ka successfully place ho gaya hai.`,
-            icon: '/favicon.ico'
-          });
-        } catch (_) {}
+        showPlatformNotification(`Order Placed! (#${orderRef.id.slice(-6).toUpperCase()})`, {
+          body: `Aapka order ₹${total} ka successfully place ho gaya hai.`,
+          icon: '/favicon.ico'
+        });
       }
 
       // 1. Prepare data for confirmation page

@@ -19,15 +19,157 @@ export interface FcmTokenDetailedResult {
 }
 
 /**
+ * Universal browser notification permission request (handles Promise & Callback for mobile compatibility)
+ */
+export const requestBrowserNotificationPermission = async (): Promise<NotificationPermission> => {
+  if (typeof window === 'undefined' || !('Notification' in window)) {
+    return 'denied';
+  }
+  try {
+    const res = Notification.requestPermission();
+    if (res && typeof res.then === 'function') {
+      return await res;
+    }
+    return await new Promise<NotificationPermission>((resolve) => {
+      Notification.requestPermission((p) => resolve(p));
+    });
+  } catch (e) {
+    console.warn('[Notification] requestPermission error:', e);
+    return Notification.permission || 'denied';
+  }
+};
+
+/**
+ * Universal platform notification display.
+ * CRITICAL FOR ANDROID CHROME:
+ * Calling 'new Notification()' on Chrome Android throws TypeError: Illegal constructor.
+ * Web apps on Android mobile MUST use ServiceWorkerRegistration.showNotification().
+ */
+export const showPlatformNotification = async (title: string, options?: NotificationOptions): Promise<boolean> => {
+  if (typeof window === 'undefined' || !('Notification' in window)) return false;
+  if (Notification.permission !== 'granted') return false;
+
+  // Play audio sound if available
+  try {
+    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+    audio.volume = 0.6;
+    audio.play().catch(() => {});
+  } catch (_) {}
+
+  // 1. Mobile/Android Service Worker showNotification (Mandatory for Android lock screen & shade)
+  if ('serviceWorker' in navigator) {
+    try {
+      let reg = await navigator.serviceWorker.getRegistration('/');
+      if (!reg) {
+        reg = await navigator.serviceWorker.ready;
+      }
+      if (reg && reg.showNotification) {
+        await reg.showNotification(title, {
+          icon: '/favicon.ico',
+          badge: '/favicon.ico',
+          vibrate: [200, 100, 200],
+          ...options
+        } as any);
+        return true;
+      }
+    } catch (swErr) {
+      console.warn('[Notification] SW showNotification error:', swErr);
+    }
+  }
+
+  // 2. Desktop fallback (Only works on Desktop browsers)
+  try {
+    new Notification(title, {
+      icon: '/favicon.ico',
+      ...options
+    });
+    return true;
+  } catch (deskErr) {
+    console.warn('[Notification] Desktop Notification constructor error:', deskErr);
+    return false;
+  }
+};
+
+/**
+ * Sends a live test notification to the user's mobile device
+ */
+export const sendLocalTestNotification = async (
+  title: string = 'Lumaro Mart Alert 🔔',
+  body: string = 'Aapke Android phone par alerts bilkul sahi kaam kar rahe hain! 🎉'
+): Promise<boolean> => {
+  const perm = await requestBrowserNotificationPermission();
+  if (perm === 'granted') {
+    return await showPlatformNotification(title, {
+      body,
+      tag: 'test-notification',
+      data: { url: '/notifications' }
+    });
+  }
+  return false;
+};
+
+/**
+ * Full diagnostic for device notifications
+ */
+export const getNotificationDiagnostic = () => {
+  if (typeof window === 'undefined') {
+    return {
+      isSupported: false,
+      isHttps: false,
+      permission: 'unsupported' as const,
+      isAndroid: false,
+      isIframe: false,
+      reason: 'Server side rendering'
+    };
+  }
+
+  const isHttps = window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const hasNotificationApi = 'Notification' in window;
+  const hasServiceWorker = 'serviceWorker' in navigator;
+  const hasPushManager = 'PushManager' in window;
+  const isAndroid = /android/i.test(navigator.userAgent);
+  const isIframe = window.self !== window.top;
+  const permission = hasNotificationApi ? Notification.permission : ('unsupported' as const);
+
+  let status: 'ready' | 'needs_permission' | 'blocked' | 'insecure' | 'unsupported_webview' = 'ready';
+  let message = 'Notifications ready hain!';
+
+  if (!isHttps) {
+    status = 'insecure';
+    message = 'App HTTPS par nahi hai. Android me notifications ke liye HTTPS zaroori hai.';
+  } else if (!hasNotificationApi || !hasServiceWorker || !hasPushManager) {
+    status = 'unsupported_webview';
+    message = 'Yeh browser ya Android WebView Web Push notifications support nahi karta. Google Chrome me open karein.';
+  } else if (permission === 'denied') {
+    status = 'blocked';
+    message = 'Android Chrome me notifications Blocked hain. URL ke bagal me 🔒 lock icon par tap karke Allow karein.';
+  } else if (permission === 'default') {
+    status = 'needs_permission';
+    message = 'Notification permission abhi nahi di gayi hai. "Allow Notifications" par tap karein.';
+  }
+
+  return {
+    isSupported: hasNotificationApi && hasServiceWorker && hasPushManager && isHttps,
+    isHttps,
+    hasNotificationApi,
+    hasServiceWorker,
+    hasPushManager,
+    isAndroid,
+    isIframe,
+    permission,
+    status,
+    message
+  };
+};
+
+/**
  * Checks whether the current browser/device supports Web Push & Service Workers
  */
 export const isFcmSupported = (): boolean => {
   if (typeof window === 'undefined') return false;
   return (
     'Notification' in window &&
-    'serviceWorker' in navigator &&
-    'PushManager' in window &&
-    messaging !== null
+    'serviceWorker' in navigator
   );
 };
 
@@ -35,7 +177,7 @@ export const isFcmSupported = (): boolean => {
  * Get current browser notification permission
  */
 export const getFcmPermissionStatus = (): NotificationPermission | 'unsupported' => {
-  if (!isFcmSupported()) return 'unsupported';
+  if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
   return Notification.permission;
 };
 
@@ -241,7 +383,7 @@ export const setupForegroundPushListener = (
             url: payload.data?.url || '/'
           }
         };
-        new Notification(title, options);
+        showPlatformNotification(title, options);
       }
     });
 

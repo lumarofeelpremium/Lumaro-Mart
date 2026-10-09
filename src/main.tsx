@@ -39,3 +39,17 @@ createRoot(document.getElementById('root')!).render(
     <SpeedInsights />
   </StrictMode>,
 );
+
+// Register Service Worker early for Android Chrome Web Push and instant lock-screen notifications
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/firebase-messaging-sw.js', { scope: '/' })
+      .then((reg) => {
+        console.log('[ServiceWorker] Successfully registered with scope:', reg.scope);
+      })
+      .catch((err) => {
+        console.warn('[ServiceWorker] Registration error:', err);
+      });
+  });
+}

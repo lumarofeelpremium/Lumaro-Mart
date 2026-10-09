@@ -70,7 +70,14 @@ export const verifyFirestoreConnection = async (): Promise<boolean> => {
 };
 
 export const storage = getStorage(app, firebaseConfig.storageBucket);
-export const messaging = typeof window !== 'undefined' ? getMessaging(app) : null;
+export const messaging = typeof window !== 'undefined' ? (() => {
+  try {
+    return getMessaging(app);
+  } catch (err) {
+    console.warn("[Firebase] Messaging initialization error (possibly unsupported browser or WebView):", err);
+    return null;
+  }
+})() : null;
 
 // Firebase Analytics initialization with fallback check
 export let analytics: ReturnType<typeof getAnalytics> | null = null;

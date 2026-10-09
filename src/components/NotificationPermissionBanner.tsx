@@ -1,7 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, X, Check, ShieldCheck, Sparkles } from 'lucide-react';
+import { Bell, X, Check, ShieldCheck, Sparkles, AlertCircle, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { isFcmSupported, getFcmPermissionStatus, requestFcmToken, saveFcmToken } from '../lib/fcm-utils';
+import { 
+  getFcmPermissionStatus, 
+  requestBrowserNotificationPermission, 
+  requestFcmToken, 
+  saveFcmToken,
+  sendLocalTestNotification,
+  getNotificationDiagnostic 
+} from '../lib/fcm-utils';
 import { User } from '../types';
 
 interface NotificationPermissionBannerProps {
@@ -12,14 +19,17 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
   const [isVisible, setIsVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [permissionState, setPermissionState] = useState<NotificationPermission | 'unsupported'>('default');
+  const [showAndroidHelp, setShowAndroidHelp] = useState(false);
 
   useEffect(() => {
-    // Check if browser supports Web Push & Notifications
-    if (!isFcmSupported()) return;
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
 
-    // If permission already granted or denied, don't show prompt
     const currentPermission = getFcmPermissionStatus();
-    if (currentPermission !== 'default') return;
+    setPermissionState(currentPermission);
+
+    // If permission already granted, no need to show banner
+    if (currentPermission === 'granted') return;
 
     // Check if dismissed in this session
     const isDismissed = sessionStorage.getItem('lumaro_notif_dismissed');
@@ -28,25 +38,46 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
     // Delay display slightly so it doesn't block immediate initial render
     const timer = setTimeout(() => {
       setIsVisible(true);
-    }, 2500);
+    }, 2000);
 
     return () => clearTimeout(timer);
   }, [user]);
 
   const handleEnable = async () => {
     setLoading(true);
+    setStatusMessage(null);
     try {
-      const token = await requestFcmToken();
-      if (token) {
-        if (user?.uid) {
-          await saveFcmToken(user.uid, token, user.role);
-        }
-        setStatusMessage('Notifications active ho gaye!');
+      // 1. Direct synchronous user gesture to trigger Android Chrome prompt
+      const permission = await requestBrowserNotificationPermission();
+      setPermissionState(permission);
+
+      if (permission === 'granted') {
+        setStatusMessage('Notifications active ho gaye! 🎉');
+        
+        // Send instant test notification on Android lock screen / notification tray
+        try {
+          await sendLocalTestNotification(
+            'Lumaro Mart Alerts 🔔',
+            'Aapke phone par alerts active ho gaye hain! Order updates ab yahi milenge.'
+          );
+        } catch (_) {}
+
+        // In background, register FCM token
+        try {
+          const token = await requestFcmToken();
+          if (token && user?.uid) {
+            await saveFcmToken(user.uid, token, user.role);
+          }
+        } catch (_) {}
+
         setTimeout(() => {
           setIsVisible(false);
-        }, 1800);
+        }, 2200);
+      } else if (permission === 'denied') {
+        setStatusMessage('Browser me Notifications Blocked hain.');
+        setShowAndroidHelp(true);
       } else {
-        // User may have denied or closed prompt
+        // User closed the prompt without choosing
         setIsVisible(false);
         sessionStorage.setItem('lumaro_notif_dismissed', 'true');
       }
@@ -64,6 +95,8 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
   };
 
   if (!isVisible) return null;
+
+  const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
 
   return (
     <AnimatePresence>
@@ -89,17 +122,34 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
                 Apne order ka real-time status aur discounts ke instant alerts pane ke liye notifications chalu karein.
               </p>
 
-              {statusMessage ? (
-                <div className="mt-2.5 flex items-center gap-1 text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1.5 rounded-lg">
-                  <Check size={14} />
+              {statusMessage && (
+                <div className={`mt-2.5 flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg ${
+                  permissionState === 'granted' 
+                    ? 'text-emerald-700 bg-emerald-50' 
+                    : 'text-amber-800 bg-amber-50'
+                }`}>
+                  {permissionState === 'granted' ? <Check size={14} /> : <AlertCircle size={14} />}
                   <span>{statusMessage}</span>
                 </div>
-              ) : (
+              )}
+
+              {showAndroidHelp && (
+                <div className="mt-2.5 p-2 bg-amber-50 border border-amber-200 rounded-xl text-[10px] text-amber-900 space-y-1">
+                  <p className="font-bold">📱 Android Chrome me Unblock kaise karein:</p>
+                  <ol className="list-decimal list-inside space-y-0.5 text-[10px] text-amber-800">
+                    <li>Chrome ke top me URL ke bagal me 🔒 <b>Lock</b> icon par tap karein</li>
+                    <li><b>Permissions (अनुमतियाँ)</b> par tap karein</li>
+                    <li><b>Notifications</b> ko <b>Allow</b> karein aur page reload karein</li>
+                  </ol>
+                </div>
+              )}
+
+              {!statusMessage && (
                 <div className="flex items-center gap-2 mt-3">
                   <button
                     onClick={handleEnable}
                     disabled={loading}
-                    className="flex-1 bg-[#66D2A4] hover:bg-[#52be90] active:scale-95 text-white text-xs font-bold py-2 px-3 rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-60"
+                    className="flex-1 bg-[#66D2A4] hover:bg-[#52be90] active:scale-95 text-white text-xs font-bold py-2 px-3 rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-60 cursor-pointer"
                   >
                     {loading ? (
                       <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -113,7 +163,7 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
 
                   <button
                     onClick={handleDismiss}
-                    className="px-3 py-2 text-xs font-semibold text-gray-400 hover:text-gray-600 active:scale-95 transition-colors"
+                    className="px-3 py-2 text-xs font-semibold text-gray-400 hover:text-gray-600 active:scale-95 transition-colors cursor-pointer"
                   >
                     Baad Me
                   </button>
@@ -123,7 +173,7 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
 
             <button
               onClick={handleDismiss}
-              className="text-gray-400 hover:text-gray-600 p-1 -mr-1 -mt-1 transition-colors"
+              className="text-gray-400 hover:text-gray-600 p-1 -mr-1 -mt-1 transition-colors cursor-pointer"
               title="Close"
             >
               <X size={16} />

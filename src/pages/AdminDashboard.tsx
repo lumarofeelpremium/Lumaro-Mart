@@ -16,7 +16,7 @@ import * as XLSX from 'xlsx';
 import { downloadReceiptPdf, sendWhatsAppBill, sendOrderStatusWhatsAppAlert, calculateEarnedPoints, printIsolatedElement, shareReceiptPdf } from '../lib/receipt-utils';
 import { downloadSalesExcel, shareSalesExcel } from '../lib/excel-utils';
 import { sendTelegramOrderCancelAlert } from '../lib/telegram-utils';
-import { isFcmSupported, getFcmPermissionStatus, requestFcmToken, requestFcmTokenDetailed, saveFcmToken } from '../lib/fcm-utils';
+import { isFcmSupported, getFcmPermissionStatus, requestFcmToken, requestFcmTokenDetailed, saveFcmToken, showPlatformNotification } from '../lib/fcm-utils';
 import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
 import { WhatsAppStatusAlertModal } from '../components/WhatsAppStatusAlertModal';
@@ -217,7 +217,7 @@ export const AdminDashboard = () => {
               
               // Browser Notification
               if ("Notification" in window && Notification.permission === "granted") {
-                new Notification("New Order Received!", {
+                showPlatformNotification("New Order Received!", {
                   body: `Order from ${orderData.userName || 'Customer'} - ₹${orderData.total}`,
                   icon: '/favicon.ico'
                 });
@@ -604,19 +604,32 @@ export const AdminDashboard = () => {
   const confirmDelete = async () => {
     if (!deleteConfirmation) return;
     const { id, type } = deleteConfirmation;
+    let collectionName = '';
+    switch (type) {
+      case 'product': collectionName = 'products'; break;
+      case 'category': collectionName = 'categories'; break;
+      case 'banner': collectionName = 'banners'; break;
+      case 'user': collectionName = 'users'; break;
+    }
     try {
-      let collectionName = '';
-      switch (type) {
-        case 'product': collectionName = 'products'; break;
-        case 'category': collectionName = 'categories'; break;
-        case 'banner': collectionName = 'banners'; break;
-        case 'user': collectionName = 'users'; break;
+      if (type === 'user') {
+        try {
+          await deleteDoc(doc(db, 'carts', id));
+        } catch {
+          // ignore cart cleanup errors
+        }
       }
       await deleteDoc(doc(db, collectionName, id));
+      if (type === 'user') {
+        setUsers(prev => prev.filter(u => u.uid !== id));
+      }
       setSuccessMessage(`${type.charAt(0).toUpperCase() + type.slice(1)} deleted successfully!`);
       setDeleteConfirmation(null);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `${type}s/${id}`);
+    } catch (error: any) {
+      console.error("Delete operation failed:", error);
+      handleFirestoreError(error, OperationType.DELETE, `${collectionName}/${id}`);
+      setDeleteConfirmation(null);
+      alert(`Delete Error: ${error?.message || 'Permission denied. Could not delete.'}`);
     }
   };
 
@@ -953,7 +966,7 @@ export const AdminDashboard = () => {
                   notificationAudio.current.play()
                     .then(() => {
                       if ("Notification" in window && Notification.permission === "granted") {
-                        new Notification("Lumaro Mart Admin", {
+                        showPlatformNotification("Lumaro Mart Admin", {
                           body: "Testing notifications! They are working correctly.",
                           icon: '/favicon.ico'
                         });
