@@ -147,16 +147,26 @@ service cloud.firestore {
       allow read: if isOwner(userId) || isAdmin();
       allow list: if isAdmin();
       allow create: if isAuthenticated() && isValidUser(request.resource.data) &&
-                    ((isOwner(userId) && (!('role' in request.resource.data) || request.resource.data.role == 'user')) || isAdmin());
+                    ((isOwner(userId) && (!('role' in request.resource.data) || request.resource.data.role == 'user') &&
+                      (!('loyaltyPoints' in request.resource.data) || request.resource.data.loyaltyPoints == 0) &&
+                      (!('isSubscribed' in request.resource.data) || request.resource.data.isSubscribed == false)) || isAdmin());
       allow update: if isAuthenticated() && 
                     (isAdmin() || 
-                     (isValidUser(request.resource.data) && isOwner(userId) && (!('role' in request.resource.data) || !('role' in resource.data) || request.resource.data.role == resource.data.role || request.resource.data.role == 'user')));
+                     (isValidUser(request.resource.data) && isOwner(userId) &&
+                      // Role cannot be escalated
+                      (!('role' in request.resource.data) || !('role' in resource.data) || request.resource.data.role == resource.data.role || request.resource.data.role == 'user') &&
+                      // Loyalty points cannot be increased by user directly (can only stay same or decrease when redeeming in cart)
+                      (!('loyaltyPoints' in request.resource.data) || !('loyaltyPoints' in resource.data) || request.resource.data.loyaltyPoints <= resource.data.loyaltyPoints) &&
+                      // Subscription status cannot be granted by user directly
+                      (!('isSubscribed' in request.resource.data) || !('isSubscribed' in resource.data) || request.resource.data.isSubscribed == resource.data.isSubscribed || request.resource.data.isSubscribed == false)
+                     ));
       allow delete: if isAdmin();
     }
 
     match /referral_codes/{code} {
       allow read: if true;
-      allow create, update: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid;
+      allow update: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
       allow delete: if isAdmin();
     }
 
@@ -165,7 +175,10 @@ service cloud.firestore {
       allow create, delete: if isAdmin();
       allow update: if isAdmin() || (
         isAuthenticated() && 
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'salesCount'])
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'salesCount']) &&
+        // Stock cannot be increased by non-admin and stock reduction cannot exceed remaining stock
+        request.resource.data.stock <= resource.data.stock &&
+        request.resource.data.salesCount >= resource.data.salesCount
       );
     }
 
@@ -176,7 +189,9 @@ service cloud.firestore {
 
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && isValidOrder(request.resource.data);
+      allow create: if isAuthenticated() && isValidOrder(request.resource.data) &&
+                    request.resource.data.userId == request.auth.uid &&
+                    request.resource.data.status == 'pending';
       allow update: if isAdmin() || (
         isAuthenticated() && 
         request.auth.uid == resource.data.userId && (
@@ -207,7 +222,8 @@ service cloud.firestore {
 
     match /notifications/{notificationId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin();
     }
 
     match /reviews/{reviewId} {
