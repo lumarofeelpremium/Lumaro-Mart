@@ -136,6 +136,13 @@ export const AdminDashboard = () => {
     
     setOrders(combined);
     
+    // Keep selectedOrder in sync with live updates
+    setSelectedOrder(prev => {
+      if (!prev) return null;
+      const updated = combined.find(o => o.id === prev.id);
+      return updated || prev;
+    });
+    
     // Cache the merged list so it is displayed instantly on next mount
     try {
       cacheUtils.setItem('admin_orders_cache', combined.slice(0, 100));
@@ -663,6 +670,7 @@ export const AdminDashboard = () => {
           status: 'canceled',
           canceledAt: serverTimestamp()
         });
+        await batch.commit();
       }
       // Case 2: Order was canceled but is now being re-activated (Reduce Stock again & clear canceledAt)
       else if (oldStatus === 'canceled' && newStatus !== 'canceled') {
@@ -676,29 +684,62 @@ export const AdminDashboard = () => {
           status: newStatus,
           canceledAt: deleteField()
         });
+        await batch.commit();
       } else {
-        // Update the order status
-        batch.update(orderRef, { status: newStatus });
+        // Direct order status update for all other states (delivered, confirmed, packed, out_for_delivery, pending)
+        const orderUpdatePayload: Record<string, any> = { 
+          status: newStatus,
+          updatedAt: serverTimestamp()
+        };
+        if (newStatus === 'delivered') {
+          orderUpdatePayload.deliveredAt = serverTimestamp();
+        }
+        await updateDoc(orderRef, orderUpdatePayload);
       }
       
-      // Award Loyalty Points on Delivery
-      if (newStatus === 'delivered' && oldStatus !== 'delivered' && orderData.pointsEarned && orderData.pointsEarned > 0) {
-        const userRef = doc(db, 'users', orderData.userId);
-        batch.update(userRef, {
-          loyaltyPoints: increment(orderData.pointsEarned)
-        });
+      // Immediately reflect status update in local state for instant UI response
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+      setSelectedOrder(prev => prev && prev.id === orderId ? { ...prev, status: newStatus } : prev);
+      setSuccessMessage(`Order #${(orderId || orderData.id).slice(-6).toUpperCase()} marked as ${newStatus}`);
+
+      // Safely award Loyalty Points on Delivery in a separate isolated block
+      if (newStatus === 'delivered' && oldStatus !== 'delivered' && orderData.pointsEarned && orderData.pointsEarned > 0 && orderData.userId) {
+        try {
+          const userRef = doc(db, 'users', orderData.userId);
+          const userSnap = await getDoc(userRef);
+          if (userSnap.exists()) {
+            await updateDoc(userRef, {
+              loyaltyPoints: increment(orderData.pointsEarned)
+            });
+          } else {
+            await setDoc(userRef, {
+              uid: orderData.userId,
+              displayName: orderData.userName || '',
+              phoneNumber: orderData.userPhone || '',
+              loyaltyPoints: orderData.pointsEarned,
+              role: 'user',
+              createdAt: serverTimestamp()
+            }, { merge: true });
+          }
+        } catch (loyaltyErr) {
+          console.warn('Customer loyalty points could not be updated on delivery:', loyaltyErr);
+        }
       }
 
-      // Case 3: Reverting from delivered (Revoke points)
-      if (oldStatus === 'delivered' && newStatus !== 'delivered' && orderData.pointsEarned && orderData.pointsEarned > 0) {
-        const userRef = doc(db, 'users', orderData.userId);
-        batch.update(userRef, {
-          loyaltyPoints: increment(-orderData.pointsEarned)
-        });
+      // Case 3: Reverting from delivered (Revoke points safely)
+      if (oldStatus === 'delivered' && newStatus !== 'delivered' && orderData.pointsEarned && orderData.pointsEarned > 0 && orderData.userId) {
+        try {
+          const userRef = doc(db, 'users', orderData.userId);
+          const userSnap = await getDoc(userRef);
+          if (userSnap.exists()) {
+            await updateDoc(userRef, {
+              loyaltyPoints: increment(-orderData.pointsEarned)
+            });
+          }
+        } catch (revokeErr) {
+          console.warn('Customer loyalty points revoke error:', revokeErr);
+        }
       }
-      
-      await batch.commit();
-      setSuccessMessage(`Order status updated to ${newStatus}`);
 
       // Create Customer Order Update Notification in Firestore
       const statusTitles: Record<string, { title: string; message: string }> = {
