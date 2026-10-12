@@ -10,6 +10,7 @@ import {
   setStoredDeliveryLocation 
 } from '../lib/location-utils';
 import { useModalBackHandler } from '../lib/back-button-handler';
+import { requestAppPermission } from '../lib/permissions-utils';
 
 interface LocationSelectorModalProps {
   isOpen: boolean;
@@ -143,6 +144,45 @@ export const LocationSelectorModal: React.FC<LocationSelectorModalProps> = ({
     onClose();
   };
 
+  const [isLocating, setIsLocating] = useState(false);
+
+  const handleUseGpsLocation = async () => {
+    setIsLocating(true);
+    try {
+      await requestAppPermission('location');
+
+      if (!('geolocation' in navigator)) {
+        alert('Aapke device me GPS Geolocation uplabdh nahi hai.');
+        setIsLocating(false);
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setIsLocating(false);
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const newLocation: DeliveryLocation = {
+            latitude: lat,
+            longitude: lng,
+            label: `GPS Location (${lat.toFixed(3)}, ${lng.toFixed(3)})`
+          };
+          setStoredDeliveryLocation(newLocation);
+          onSelectLocation(newLocation);
+          onClose();
+        },
+        (err) => {
+          setIsLocating(false);
+          console.warn('Geolocation error:', err);
+          alert('GPS location prapt nahi hui. Kripya phone settings me location permission check karein.');
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      );
+    } catch {
+      setIsLocating(false);
+    }
+  };
+
   const handleUseSavedAddress = () => {
     if (user?.pincode) {
       const state = getStateFromPincode(user.pincode) || undefined;
@@ -244,6 +284,27 @@ export const LocationSelectorModal: React.FC<LocationSelectorModalProps> = ({
             <span className="text-xs font-bold text-emerald-700 group-hover:underline">Apply</span>
           </button>
         )}
+
+        {/* Device GPS Live Location */}
+        <button
+          type="button"
+          onClick={handleUseGpsLocation}
+          disabled={isLocating}
+          className="mt-2.5 p-3 rounded-2xl bg-blue-50/80 border border-blue-100 hover:bg-blue-100/60 flex items-center justify-between text-left transition-all cursor-pointer group"
+        >
+          <div className="flex items-center gap-2.5">
+            <MapPin size={16} className={`text-blue-600 ${isLocating ? 'animate-bounce' : ''}`} />
+            <div>
+              <p className="text-xs font-bold text-blue-950">
+                {isLocating ? 'GPS Location khoj rahe hain...' : 'Detect My Location (GPS Se Auto Detect)'}
+              </p>
+              <p className="text-[10px] text-blue-700">Phone ke live GPS se delivery address set karein</p>
+            </div>
+          </div>
+          <span className="text-xs font-bold text-blue-700 group-hover:underline">
+            {isLocating ? 'Locating...' : 'Auto Detect'}
+          </span>
+        </button>
 
         {/* Navigation Tabs */}
         <div className="grid grid-cols-2 gap-2 mt-4 p-1 bg-gray-100/80 rounded-2xl">

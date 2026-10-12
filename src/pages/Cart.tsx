@@ -17,7 +17,7 @@ import { SubscriptionModal } from '../components/SubscriptionModal';
 import { calculateDeliveryFee, decrementSubscriberOrderQuota, isSubscriptionActive, getSubscriptionSummary } from '../lib/subscription-utils';
 import { isProductDeliverable, getStateFromPincode, setStoredDeliveryLocation } from '../lib/location-utils';
 import { useModalBackHandler } from '../lib/back-button-handler';
-import { showPlatformNotification } from '../lib/fcm-utils';
+import { showPlatformNotification, sendAdminFcmOrderAlert } from '../lib/fcm-utils';
 
 export const Cart = ({ 
   user,
@@ -268,10 +268,13 @@ export const Cart = ({
       const finalAddress = address || user!.address || '';
       const finalPincode = pincode || user!.pincode || '';
 
+      const activeFcmToken = (typeof localStorage !== 'undefined' ? localStorage.getItem('lumaro_fcm_token') : null) || user?.fcmToken || '';
+
       const orderPayload: any = {
         userId: user!.uid,
         userName: user!.displayName,
         userPhone: user!.phoneNumber || '',
+        userFcmToken: activeFcmToken,
         address: finalAddress,
         pincode: finalPincode,
         items: items.map(item => ({
@@ -341,6 +344,14 @@ export const Cart = ({
         order: { id: orderRef.id, ...orderPayload },
         customer: user
       }).catch(e => console.warn('Telegram new order notification error:', e));
+
+      // Dispatch Instant Admin Push Notification (FCM, Ringtone, & Pop-up Alert)
+      sendAdminFcmOrderAlert({
+        orderId: orderRef.id,
+        total: total,
+        customerName: user?.displayName || 'Customer',
+        address: orderPayload.shippingAddress?.address || 'Customer Address'
+      }).catch(e => console.warn('Admin FCM push alert error:', e));
 
       // Add Customer Order Placed Notification in Firestore
       if (user?.uid) {

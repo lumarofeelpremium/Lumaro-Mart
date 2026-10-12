@@ -16,6 +16,7 @@ import { compressImage } from '../lib/utils';
 import { cacheUtils } from '../lib/cache-utils';
 import { SubscriptionModal } from '../components/SubscriptionModal';
 import { isSubscriptionActive, getSubscriptionSummary } from '../lib/subscription-utils';
+import { GroceryTrolleyFooter } from '../components/GroceryTrolleyFooter';
 
 export const Profile = ({ 
   user, 
@@ -949,7 +950,7 @@ export const Profile = ({
         </div>
 
         {/* Refer & Earn Feature Card */}
-        <div className="bg-white rounded-[32px] p-6 shadow-sm border border-gray-50 relative overflow-hidden">
+        <div className="bg-white rounded-[32px] p-6 shadow-sm hover:shadow-md transition-shadow border border-emerald-100/70 relative overflow-hidden">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2.5 bg-amber-50 text-amber-500 rounded-2xl">
               <Gift size={24} className="animate-pulse" />
@@ -1018,20 +1019,37 @@ export const Profile = ({
         {/* ========================================================================= */}
         {/* SOCIAL MEDIA & COMMUNITY CHANNELS (ADMIN SETTINGS CONTROLLED) */}
         {/* ========================================================================= */}
-        <div className="bg-white rounded-[32px] p-6 shadow-sm border border-gray-50 space-y-4">
-          <div className="flex items-center justify-between">
+        <div className="relative overflow-hidden rounded-[32px] bg-white p-5 sm:p-6 shadow-sm hover:shadow-md transition-shadow border border-emerald-100/80 space-y-4">
+          {/* Subtle Ambient Decorative Glows */}
+          <div className="absolute -top-12 -right-12 w-40 h-40 bg-emerald-100/30 rounded-full blur-2xl pointer-events-none" />
+          <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-[#66D2A4]/15 rounded-full blur-xl pointer-events-none" />
+
+          {/* Header */}
+          <div className="relative z-10 flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-500 via-teal-500 to-cyan-500 text-white flex items-center justify-center shadow-xs">
-                <Globe size={20} />
+              <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-600 via-[#059669] to-[#66D2A4] text-white flex items-center justify-center shadow-md shadow-emerald-600/20 shrink-0">
+                <Globe size={22} className="stroke-[2.2]" />
               </div>
               <div>
-                <h3 className="font-bold text-gray-900 text-base">Connect With Our Community 🌐</h3>
-                <p className="text-xs text-gray-400 font-medium">Daily updates, flash deals & VIP privileges</p>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <h3 className="font-black text-gray-950 text-base tracking-tight">Join Lumaro Community</h3>
+                  <span className="text-[10px] font-black bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
+                    OFFICIAL
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 font-medium mt-0.5">
+                  Daily deals, secret coupons & fresh arrival alerts
+                </p>
               </div>
+            </div>
+
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200/60 rounded-full text-[10px] font-black shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
+              <span>LIVE ALERTS</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-2.5">
+          <div className="relative z-10 grid grid-cols-1 gap-2.5">
             {/* WhatsApp Community / Group */}
             {appSettings?.whatsappCommunityEnabled !== false && (
               <div
@@ -1042,28 +1060,31 @@ export const Profile = ({
                       : 'https://chat.whatsapp.com');
                   window.open(targetUrl, '_blank');
                 }}
-                className="p-3.5 bg-gradient-to-r from-emerald-50/80 via-white to-white rounded-2xl border border-emerald-100 flex items-center justify-between group hover:border-emerald-300 transition-all cursor-pointer active:scale-[0.98]"
+                className="group relative p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-emerald-50/70 via-white to-white border border-emerald-200/70 hover:border-[#25D366] hover:shadow-md hover:shadow-emerald-500/10 transition-all duration-200 cursor-pointer active:scale-[0.99] flex items-center justify-between gap-3"
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-[#25D366] text-white flex items-center justify-center shadow-sm shadow-[#25D366]/30 group-hover:scale-105 transition-transform">
-                    <MessageCircle size={20} />
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-11 h-11 rounded-2xl bg-[#25D366] text-white flex items-center justify-center shadow-md shadow-[#25D366]/30 group-hover:scale-105 transition-transform shrink-0">
+                    <MessageCircle size={22} className="fill-white" />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <h4 className="text-xs font-black text-gray-900">WhatsApp Community</h4>
-                      <span className="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.2 rounded-full">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-black text-gray-900 truncate">WhatsApp VIP Community</h4>
+                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-800">
                         ACTIVE
                       </span>
                     </div>
-                    <p className="text-[10px] text-gray-500 mt-0.5">
-                      Daily fresh stock alerts, coupons & group perks
+                    <p className="text-[11px] text-gray-500 truncate mt-0.5">
+                      Daily fresh stocks, secret flash coupons & instant alerts
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-1 text-emerald-600 font-bold text-xs pl-2 shrink-0">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-xl bg-[#25D366] hover:bg-[#20be5a] text-white text-xs font-black flex items-center gap-1 shadow-xs shadow-emerald-500/25 shrink-0 transition-transform group-hover:translate-x-0.5"
+                >
                   <span>Join</span>
-                  <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
-                </div>
+                  <ChevronRight size={14} />
+                </button>
               </div>
             )}
 
@@ -1074,28 +1095,31 @@ export const Profile = ({
                   const targetUrl = appSettings?.telegramCommunityLink?.trim() || 'https://t.me/lumaro_mart';
                   window.open(targetUrl, '_blank');
                 }}
-                className="p-3.5 bg-gradient-to-r from-sky-50/80 via-white to-white rounded-2xl border border-sky-100 flex items-center justify-between group hover:border-sky-300 transition-all cursor-pointer active:scale-[0.98]"
+                className="group relative p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-sky-50/70 via-white to-white border border-sky-200/70 hover:border-[#229ED9] hover:shadow-md hover:shadow-sky-500/10 transition-all duration-200 cursor-pointer active:scale-[0.99] flex items-center justify-between gap-3"
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-[#229ED9] text-white flex items-center justify-center shadow-sm shadow-[#229ED9]/30 group-hover:scale-105 transition-transform">
-                    <Send size={18} />
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-11 h-11 rounded-2xl bg-[#229ED9] text-white flex items-center justify-center shadow-md shadow-[#229ED9]/30 group-hover:scale-105 transition-transform shrink-0">
+                    <Send size={20} className="fill-white -ml-0.5 mt-0.5" />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <h4 className="text-xs font-black text-gray-900">Telegram VIP Channel</h4>
-                      <span className="text-[9px] bg-sky-100 text-sky-800 font-extrabold px-1.5 py-0.2 rounded-full">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-black text-gray-900 truncate">Telegram Flash Channel</h4>
+                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-md bg-sky-100 text-sky-800">
                         OFFERS
                       </span>
                     </div>
-                    <p className="text-[10px] text-gray-500 mt-0.5">
-                      Instant flash discounts & exclusive VIP updates
+                    <p className="text-[11px] text-gray-500 truncate mt-0.5">
+                      Fastest price drops, 1-hour flash sales & price-cut alerts
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-1 text-sky-600 font-bold text-xs pl-2 shrink-0">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-xl bg-[#229ED9] hover:bg-[#1f8ec4] text-white text-xs font-black flex items-center gap-1 shadow-xs shadow-sky-500/25 shrink-0 transition-transform group-hover:translate-x-0.5"
+                >
                   <span>Join</span>
-                  <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
-                </div>
+                  <ChevronRight size={14} />
+                </button>
               </div>
             )}
 
@@ -1106,32 +1130,46 @@ export const Profile = ({
                   const targetUrl = appSettings?.instagramLink?.trim() || 'https://instagram.com/lumaro_mart';
                   window.open(targetUrl, '_blank');
                 }}
-                className="p-3.5 bg-gradient-to-r from-rose-50/80 via-white to-white rounded-2xl border border-rose-100 flex items-center justify-between group hover:border-rose-300 transition-all cursor-pointer active:scale-[0.98]"
+                className="group relative p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-rose-50/70 via-white to-white border border-rose-200/70 hover:border-rose-400 hover:shadow-md hover:shadow-rose-500/10 transition-all duration-200 cursor-pointer active:scale-[0.99] flex items-center justify-between gap-3"
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center shadow-sm shadow-rose-500/30 group-hover:scale-105 transition-transform">
-                    <Instagram size={20} />
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center shadow-md shadow-rose-500/30 group-hover:scale-105 transition-transform shrink-0">
+                    <Instagram size={22} />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <h4 className="text-xs font-black text-gray-900">Instagram Community</h4>
-                      <span className="text-[9px] bg-rose-100 text-rose-800 font-extrabold px-1.5 py-0.2 rounded-full">
-                        FOLLOW
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-black text-gray-900 truncate">Instagram @lumaromart</h4>
+                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-md bg-rose-100 text-rose-800">
+                        REELS
                       </span>
                     </div>
-                    <p className="text-[10px] text-gray-500 mt-0.5">
-                      Recipe reels, customer stories & giveaways
+                    <p className="text-[11px] text-gray-500 truncate mt-0.5">
+                      Recipe ideas, healthy living tips, customer unboxings & gifts
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-1 text-rose-600 font-bold text-xs pl-2 shrink-0">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#d6249f] to-[#fd5949] hover:opacity-95 text-white text-xs font-black flex items-center gap-1 shadow-xs shadow-rose-500/25 shrink-0 transition-transform group-hover:translate-x-0.5"
+                >
                   <span>Follow</span>
-                  <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
-                </div>
+                  <ChevronRight size={14} />
+                </button>
               </div>
             )}
           </div>
+
+          {/* Community Perks Footer */}
+          <div className="relative z-10 pt-3 border-t border-gray-100 flex items-center justify-between text-[11px]">
+            <div className="flex items-center gap-1.5 font-bold text-emerald-900">
+              <Sparkles size={14} className="text-amber-500 fill-amber-400 shrink-0" />
+              <span>Community members get secret coupons & festival gifts!</span>
+            </div>
+          </div>
         </div>
+
+        {/* Subtle Grocery Trolley Watermark Footer at the very bottom end */}
+        <GroceryTrolleyFooter />
       </div>
 
       {/* Edit Profile Modal */}

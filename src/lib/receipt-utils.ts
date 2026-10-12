@@ -374,11 +374,17 @@ export const printIsolatedElement = (
 
   window.addEventListener('afterprint', cleanup);
 
-  // Trigger Android Print Spooler / System Print Dialog
+  // Trigger Android Native Print Spooler or Web Browser Print Dialog
   try {
-    window.print();
+    const androidBridge = (window as unknown as { AndroidPrint?: { printDocument: (title: string) => void } }).AndroidPrint;
+    if (androidBridge && typeof androidBridge.printDocument === 'function') {
+      console.log('[Print] Triggering Native Android Print Channel...');
+      androidBridge.printDocument(documentTitle);
+    } else {
+      window.print();
+    }
   } catch (e) {
-    console.warn('Native window.print() failed:', e);
+    console.warn('Native print failed, attempting PDF share fallback:', e);
     // Fallback: Share PDF directly for Bluetooth printer apps
     shareReceiptPdf(element, `${documentTitle}.pdf`, documentTitle).catch(console.error);
   }

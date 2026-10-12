@@ -9,10 +9,11 @@ import {
 import { Button, Input } from './ui/Base';
 import { AppSettings, DayDeliveryRule } from '../types';
 import { DAYS_OF_WEEK } from '../lib/subscription-utils';
-import { requestFcmTokenDetailed, saveFcmToken } from '../lib/fcm-utils';
+import { requestFcmTokenDetailed, saveFcmToken, registerCurrentDeviceAsAdminReceiver, sendBackgroundFcmPushTest } from '../lib/fcm-utils';
 import { auth } from '../firebase';
 import { cn } from '../lib/utils';
 import { QRCodeSVG } from 'qrcode.react';
+import { AndroidPermissionsCard } from './AndroidPermissionsCard';
 
 interface AdminSettingsTabProps {
   settings: AppSettings;
@@ -29,7 +30,7 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
 }) => {
   // Navigation Category Filter
   const [selectedCategory, setSelectedCategory] = useState<
-    'all' | 'store' | 'delivery' | 'subscription' | 'upi' | 'loyalty' | 'notifications' | 'admob' | 'telegram' | 'social'
+    'all' | 'store' | 'delivery' | 'subscription' | 'upi' | 'loyalty' | 'notifications' | 'admob' | 'telegram' | 'social' | 'permissions'
   >('all');
 
   // Section 1: Store & Timings
@@ -86,12 +87,15 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
   // Section 6: FCM Web Push
   const [fcmEnabled, setFcmEnabled] = useState(settings.fcmEnabled ?? true);
   const [fcmVapidKey, setFcmVapidKey] = useState(settings.fcmVapidKey || 'BH5pHZc7Wf0ASibIMFNVtrRi-5Waime9pc9RYCnOh4XqHW3xbwAP8yBWofnR2tc3rbqQ4FnMd15liNgznCN5P08');
+  const [fcmServerKey, setFcmServerKey] = useState(settings.fcmServerKey || '');
+  const [fcmServiceAccountJson, setFcmServiceAccountJson] = useState(settings.fcmServiceAccountJson || '');
   const [adminFcmToken, setAdminFcmToken] = useState<string | null>(() => {
     return typeof localStorage !== 'undefined' ? localStorage.getItem('lumaro_fcm_token') : null;
   });
   const [isGeneratingFcmToken, setIsGeneratingFcmToken] = useState(false);
   const [fcmTokenCopied, setFcmTokenCopied] = useState(false);
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
+  const [fcmStatusMessage, setFcmStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Section 7: WhatsApp
   const [whatsappNumber, setWhatsappNumber] = useState(settings.whatsappNumber || '');
@@ -202,35 +206,73 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
     setInstagramEnabled(settings.instagramEnabled ?? true);
     setInstagramLink(settings.instagramLink || '');
     setAppDownloadLink(settings.appDownloadLink || 'https://drive.google.com/file/d/1cSUiVqrIqBK4C12I4qRhxmON2PtDZgSV/view?usp=drive_link');
+    setFcmServerKey(settings.fcmServerKey || '');
+    setFcmServiceAccountJson(settings.fcmServiceAccountJson || '');
   }, [settings]);
 
   const handleGenerateAdminFcmToken = async () => {
     setIsGeneratingFcmToken(true);
+    setFcmStatusMessage(null);
     try {
-      const activeKey = (fcmVapidKey || 'BH5pHZc7Wf0ASibIMFNVtrRi-5Waime9pc9RYCnOh4XqHW3xbwAP8yBWofnR2tc3rbqQ4FnMd15liNgznCN5P08').trim();
-      const result = await requestFcmTokenDetailed(activeKey);
-      if (result.token) {
-        setAdminFcmToken(result.token);
-        if (auth.currentUser?.uid) {
-          await saveFcmToken(auth.currentUser.uid, result.token, 'admin');
-        }
+      if (!auth.currentUser?.uid) {
+        setFcmStatusMessage({ text: 'Kripya pehle admin account se login karein.', type: 'error' });
+        return;
+      }
+      const res = await registerCurrentDeviceAsAdminReceiver(auth.currentUser.uid);
+      if (res.success && res.token) {
+        setAdminFcmToken(res.token);
         setNotifPermission('granted');
-        alert('✅ FCM Token generate ho gaya aur is device par connect ho gaya!');
+        setFcmStatusMessage({ 
+          text: '✅ Yeh device Admin Order Notifications ke liye successfully connect ho gaya hai! Naya order aane par pop-up alert milega.', 
+          type: 'success' 
+        });
       } else {
-        alert(`❌ FCM Connect Nahi Hua: ${result.error || 'Permission issue'}`);
+        setFcmStatusMessage({ 
+          text: `❌ Connect nahi hua: ${res.error || 'Browser permission issue'}`, 
+          type: 'error' 
+        });
       }
     } catch (e: any) {
-      alert('Error: ' + e?.message);
+      setFcmStatusMessage({ text: 'Error: ' + (e?.message || String(e)), type: 'error' });
     } finally {
       setIsGeneratingFcmToken(false);
     }
   };
+
+  const [isSendingBgTest, setIsSendingBgTest] = useState(false);
 
   const handleCopyFcmToken = () => {
     if (!adminFcmToken) return;
     navigator.clipboard.writeText(adminFcmToken);
     setFcmTokenCopied(true);
     setTimeout(() => setFcmTokenCopied(false), 2000);
+  };
+
+  const handleSendBgPushTest = async () => {
+    if (!adminFcmToken) {
+      setFcmStatusMessage({ text: 'Pehle "Is Device Ko Connect Karein" par tap karke token banayein.', type: 'error' });
+      return;
+    }
+    const cred = fcmServiceAccountJson.trim() || fcmServerKey.trim();
+    if (!cred) {
+      setFcmStatusMessage({ text: 'Kripya Service Account JSON upload karein ya FCM Server Key enter karein.', type: 'error' });
+      return;
+    }
+    setIsSendingBgTest(true);
+    setFcmStatusMessage({ text: '⏳ 5 second me background push aayega! Abhi app minimize karein ya screen lock karein...', type: 'success' });
+
+    try {
+      const res = await sendBackgroundFcmPushTest(adminFcmToken, cred, 5);
+      if (res.success) {
+        setFcmStatusMessage({ text: '🎉 Push successfully bheja gaya! Phone check karein.', type: 'success' });
+      } else {
+        setFcmStatusMessage({ text: `Push error: ${res.error || 'Server error'}`, type: 'error' });
+      }
+    } catch (e: any) {
+      setFcmStatusMessage({ text: `Error: ${e?.message || String(e)}`, type: 'error' });
+    } finally {
+      setIsSendingBgTest(false);
+    }
   };
 
   const handleSave = async () => {
@@ -276,6 +318,8 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
       // Push Notifications
       fcmEnabled,
       fcmVapidKey: fcmVapidKey.trim(),
+      fcmServerKey: fcmServerKey.trim(),
+      fcmServiceAccountJson: fcmServiceAccountJson.trim(),
       // AdMob
       admobEnabled,
       admobTesting,
@@ -469,6 +513,18 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
             )}
           >
             🌐 9. Social Communities
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedCategory('permissions')}
+            className={cn(
+              "px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer border",
+              selectedCategory === 'permissions'
+                ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-white"
+            )}
+          >
+            🛡️ 10. App Permissions
           </button>
         </div>
       </div>
@@ -1118,14 +1174,143 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
               </button>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-gray-700 block">Firebase Cloud Messaging VAPID Public Key</label>
-              <Input
-                value={fcmVapidKey}
-                onChange={(e) => setFcmVapidKey(e.target.value)}
-                placeholder="BH5p..."
-                className="bg-white font-mono text-xs"
-              />
+            <div className="space-y-3">
+              {/* Status Alert Banner */}
+              {fcmStatusMessage && (
+                <div className={cn(
+                  "p-3 rounded-2xl text-xs font-bold flex items-center justify-between gap-2",
+                  fcmStatusMessage.type === 'success' 
+                    ? "bg-emerald-50 text-emerald-800 border border-emerald-200" 
+                    : "bg-rose-50 text-rose-800 border border-rose-200"
+                )}>
+                  <span>{fcmStatusMessage.text}</span>
+                  <button 
+                    type="button" 
+                    onClick={() => setFcmStatusMessage(null)}
+                    className="text-xs font-black cursor-pointer hover:opacity-75"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
+              {/* Explanatory Info Card */}
+              <div className="p-3.5 bg-gradient-to-r from-rose-50 via-pink-50 to-amber-50 rounded-2xl border border-rose-100 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={16} className="text-rose-600" />
+                  <h4 className="text-xs font-bold text-gray-900">Naye Order Par Pop-Up Alert & Ringtone</h4>
+                </div>
+                <p className="text-[11px] text-gray-600 leading-relaxed">
+                  Jab bhi koi grahak order place karega, aapke mobile ya computer par turant <strong>pop-up notification</strong> aur <strong>sound chime</strong> bajega. Neeche <strong>"Connect Device"</strong> par tap karke is device ko order alerts ke liye register karein.
+                </p>
+              </div>
+
+              {/* Modern FCM v1 Service Account (Recommended by Google) */}
+              <div className="p-4 bg-emerald-50/80 rounded-2xl border border-emerald-200/90 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <h4 className="text-xs font-bold text-emerald-950">
+                      Firebase Cloud Messaging (HTTP v1) — Google Official & 100% Active
+                    </h4>
+                  </div>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-md">
+                    Recommended (नो एरर)
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-emerald-900/80 leading-relaxed">
+                  Google ने जून 2024 से पुरानी Legacy API बंद कर दी है। आपके प्रोजेक्ट में <strong>Firebase Cloud Messaging API (V1) पहले से Enabled है</strong>। 
+                  बंद फोन पर 100% ऑटोमैटिक बैकग्राउंड घंटी बजाने के लिए अपनी <strong>Service Account JSON</strong> फ़ाइल अपलोड करें:
+                </p>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <a
+                    href="https://console.firebase.google.com/project/studio-4472007664-90b88/settings/serviceaccounts/adminsdk"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs"
+                  >
+                    <span>1️⃣ "Generate new private key" दबाएँ ↗</span>
+                  </a>
+
+                  <label className="inline-flex items-center gap-1.5 py-2 px-3.5 bg-white hover:bg-emerald-100/70 text-emerald-900 border border-emerald-300 text-xs font-bold rounded-xl cursor-pointer shadow-2xs transition-colors">
+                    <span>📂 2️⃣ Downloaded JSON File चुनें</span>
+                    <input
+                      type="file"
+                      accept=".json,application/json"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                          const content = event.target?.result as string;
+                          try {
+                            const parsed = JSON.parse(content);
+                            if (parsed.private_key && parsed.client_email) {
+                              setFcmServiceAccountJson(content);
+                              setFcmStatusMessage({ 
+                                text: `✅ Service Account JSON सफलतापूर्वक लोड हो गया (${parsed.client_email.split('@')[0]})! नीचे "Save Settings" पर टैप करें।`, 
+                                type: 'success' 
+                              });
+                            } else {
+                              setFcmStatusMessage({ text: 'अमान्य फ़ाइल: इस JSON में private_key नहीं मिली।', type: 'error' });
+                            }
+                          } catch {
+                            setFcmStatusMessage({ text: 'अमान्य JSON फ़ाइल।', type: 'error' });
+                          }
+                        };
+                        reader.readAsText(file);
+                      }}
+                    />
+                  </label>
+                </div>
+
+                {fcmServiceAccountJson ? (
+                  <div className="bg-white/90 p-2.5 rounded-xl border border-emerald-200 text-[11px] font-mono text-emerald-900 flex items-center justify-between">
+                    <span className="truncate">
+                      ✅ Service Account Key Configured ({fcmServiceAccountJson.includes('client_email') ? 'Valid' : 'Set'})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setFcmServiceAccountJson('')}
+                      className="text-xs text-rose-600 hover:underline font-sans font-bold ml-2 cursor-pointer"
+                    >
+                      हटाएँ
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-emerald-700/70">
+                    💡 <em>Firebase Console &gt; Project Settings &gt; Service accounts टैब में जाकर "Generate new private key" बटन दबाने से यह JSON फ़ाइल तुरंत डाउनलोड हो जाती है।</em>
+                  </p>
+                )}
+              </div>
+
+              {/* FCM Server Key Input (Legacy Fallback) */}
+              <div className="space-y-1.5 pt-2 border-t border-gray-100">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-gray-500 block">FCM Legacy Server Key (वैकल्पिक / Optional Fallback)</label>
+                  <span className="text-[10px] text-gray-400">Legacy HTTP</span>
+                </div>
+                <Input
+                  value={fcmServerKey}
+                  onChange={(e) => setFcmServerKey(e.target.value)}
+                  placeholder="AAAA... (अगर आपके पास पुरानी Legacy Server Key उपलब्ध हो)"
+                  className="bg-white font-mono text-xs text-gray-600"
+                />
+              </div>
+
+              {/* FCM VAPID Key Input */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-700 block">Firebase Web Push VAPID Public Key</label>
+                <Input
+                  value={fcmVapidKey}
+                  onChange={(e) => setFcmVapidKey(e.target.value)}
+                  placeholder="BH5p..."
+                  className="bg-white font-mono text-xs"
+                />
+              </div>
             </div>
 
             <div className="flex items-center gap-2 flex-wrap pt-1">
@@ -1133,30 +1318,49 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
                 type="button"
                 onClick={handleGenerateAdminFcmToken}
                 disabled={isGeneratingFcmToken}
-                className="py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl"
+                className="py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs"
               >
                 {isGeneratingFcmToken ? <Loader2 size={14} className="animate-spin" /> : <Key size={14} />}
-                <span>Connect & Generate Token</span>
+                <span>📱 Is Device Ko Connect Karein</span>
               </Button>
 
               {adminFcmToken && (
                 <button
                   type="button"
                   onClick={handleCopyFcmToken}
-                  className="py-2 px-3 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer"
+                  className="py-2.5 px-3 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer"
                 >
                   <Copy size={13} />
-                  <span>{fcmTokenCopied ? 'Copied Token!' : 'Copy Device FCM Token'}</span>
+                  <span>{fcmTokenCopied ? 'Copied Token!' : 'Copy Device Token'}</span>
                 </button>
               )}
 
               <button
                 type="button"
                 onClick={onTestNotification}
-                className="py-2 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-xl border border-emerald-200 cursor-pointer"
+                className="py-2.5 px-4 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-xl border border-emerald-200 flex items-center gap-1.5 cursor-pointer shadow-2xs"
               >
-                🔊 Test Audio / Popup
+                🔊 Foreground Alert Test
               </button>
+
+              <Button
+                type="button"
+                onClick={handleSendBgPushTest}
+                disabled={isSendingBgTest}
+                className="py-2.5 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs"
+              >
+                {isSendingBgTest ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                <span>📲 5s Background Push Test (Screen Lock Karein)</span>
+              </Button>
+            </div>
+
+            <div className="bg-amber-50 rounded-2xl p-3.5 border border-amber-200/80 text-amber-900 text-xs space-y-1.5">
+              <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                <span>💡 100% Automatic Push Delivery Info (App Band Hone Par):</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-amber-950/80">
+                Jab admin order status badalta hai (Confirmed, Packed, Out for Delivery, Delivered), to system grahak ke phone par seedha <strong>Google FCM Push</strong> trigger karta hai. Phone ya app band hone par bhi Service Worker wake-up hokar ghanti bajata hai. Is feature ke liye uper <strong>FCM Server Key</strong> zaroori hai (Firebase Console &gt; Project Settings &gt; Cloud Messaging me milta hai).
+              </p>
             </div>
           </div>
 
@@ -1625,6 +1829,13 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SECTION 10: ANDROID APP PERMISSIONS (MICROPHONE, STORAGE, CAMERA, ETC.) */}
+      {/* ========================================================================= */}
+      {(selectedCategory === 'all' || selectedCategory === 'permissions') && (
+        <AndroidPermissionsCard />
       )}
 
       {/* Save Button at the Bottom */}

@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Bell, Heart, Plus, X, ShoppingBag, ChevronLeft, ChevronRight, MapPin, Globe, Crown, Zap } from 'lucide-react';
+import { 
+  Search, Bell, Heart, Plus, X, ShoppingBag, ChevronLeft, ChevronRight, 
+  MapPin, Globe, Crown, Zap, Mic, MicOff, Clock, Flame, Shuffle, Sparkles, Coffee, Tag, TrendingUp 
+} from 'lucide-react';
 import { Button, Input, Skeleton } from '../components/ui/Base';
 import { motion, AnimatePresence } from 'motion/react';
 import { Product, Category, Banner, User, DeliveryLocation, ProductVariant } from '../types';
@@ -14,6 +17,7 @@ import { filterProductsByLocation } from '../lib/location-utils';
 import { cn, sortVariantsByWeight } from '../lib/utils';
 import { cacheUtils } from '../lib/cache-utils';
 import { isSubscriptionActive } from '../lib/subscription-utils';
+import { requestAppPermission } from '../lib/permissions-utils';
 
 export const Home = ({ 
   user, 
@@ -39,11 +43,70 @@ export const Home = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [hasUnreadNotifs, setHasUnreadNotifs] = useState(false);
   const [showLocationModal, setShowLocationModal] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+
+  const handleVoiceSearch = async () => {
+    if (isListening) {
+      setIsListening(false);
+      return;
+    }
+    
+    // Request microphone permission natively / browser
+    await requestAppPermission('microphone');
+
+    // Use SpeechRecognition API
+    const SpeechRecognitionWindow = (window as unknown as {
+      SpeechRecognition?: any;
+      webkitSpeechRecognition?: any;
+    });
+    const SpeechRecognition = SpeechRecognitionWindow.SpeechRecognition || SpeechRecognitionWindow.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      alert('Aapke browser/phone me voice speech input uplabdh nahi hai. Kripya type karein.');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'hi-IN'; // Recognizes Hindi and Indian English grocery items
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results?.[0]?.[0]?.transcript;
+        if (transcript) {
+          setSearchQuery(transcript.trim());
+        }
+        setIsListening(false);
+      };
+
+      recognition.onerror = () => {
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognition.start();
+    } catch (e) {
+      console.warn('SpeechRecognition error:', e);
+      setIsListening(false);
+    }
+  };
   
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const [jumpPage, setJumpPage] = useState('');
   const itemsPerPage = 50;
+
+  // Smart Filter Chips State for "All Products"
+  const [allProductsFilter, setAllProductsFilter] = useState<'all' | 'deals' | 'popular' | 'budget' | 'daily' | 'inStock'>('all');
+  const [shuffleCount, setShuffleCount] = useState(0);
 
   // Deriving immediate states from properties for instant responses
   const loading = initialDataLoading && categories.length === 0 && allProducts.length === 0;
@@ -52,6 +115,136 @@ export const Home = ({
   const locationFilteredProducts = useMemo(() => {
     return filterProductsByLocation(allProducts, deliveryLocation || null);
   }, [allProducts, deliveryLocation]);
+
+  // Midnight Countdown Timer for Deals of the Day
+  const [dealsTimeLeft, setDealsTimeLeft] = useState({ hours: 0, minutes: 0, seconds: 0 });
+  useEffect(() => {
+    const calcTimer = () => {
+      const now = new Date();
+      const midnight = new Date(now);
+      midnight.setHours(23, 59, 59, 999);
+      const diff = Math.max(0, midnight.getTime() - now.getTime());
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+      setDealsTimeLeft({ hours, minutes, seconds });
+    };
+    calcTimer();
+    const timer = setInterval(calcTimer, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Time-Slot Smart Shelf Context (Morning, Afternoon, Evening/Dinner)
+  const currentTimeSlot = useMemo(() => {
+    const hour = new Date().getHours();
+    if (hour >= 5 && hour < 12) {
+      return {
+        id: 'morning',
+        title: 'Morning Dairy & Breakfast',
+        hindiSubtitle: 'ताज़ा दूध, दही, ब्रेड, अंडे, चाय व नाश्ता',
+        badge: '5 AM - 12 PM SPECIAL',
+        emoji: '🌅',
+        accentBg: 'from-amber-500/10 via-emerald-500/10 to-teal-500/5',
+        badgeColor: 'bg-amber-100 text-amber-900 border-amber-200',
+        borderColor: 'border-amber-200/80',
+        keywords: ['milk', 'doodh', 'curd', 'dahi', 'bread', 'butter', 'egg', 'tea', 'chai', 'coffee', 'fruit', 'paneer', 'oats', 'toast', 'biscuit', 'rusk', 'poha', 'breakfast', 'dairy']
+      };
+    } else if (hour >= 12 && hour < 19) {
+      return {
+        id: 'afternoon',
+        title: 'Tea Time & Evening Munchies',
+        hindiSubtitle: 'कुरकुरी नमकीन, बिस्कुट, चाय-कॉफ़ी व रिफ्रेशमेंट',
+        badge: 'AFTERNOON PICKS',
+        emoji: '☕',
+        accentBg: 'from-orange-500/10 via-amber-500/10 to-yellow-500/5',
+        badgeColor: 'bg-orange-100 text-orange-900 border-orange-200',
+        borderColor: 'border-orange-200/80',
+        keywords: ['snack', 'namkeen', 'biscuit', 'cookie', 'chip', 'wafer', 'tea', 'chai', 'coffee', 'cold drink', 'juice', 'beverage', 'rusk', 'mixture', 'bhujia', 'crisp', 'soda']
+      };
+    } else {
+      return {
+        id: 'dinner',
+        title: 'Dinner Staples & Late Treats',
+        hindiSubtitle: 'आटा, दाल, चावल, मसाले, तेल व स्वीट्स',
+        badge: 'DINNER SPECIAL',
+        emoji: '🌙',
+        accentBg: 'from-indigo-500/10 via-purple-500/10 to-emerald-500/5',
+        badgeColor: 'bg-indigo-100 text-indigo-900 border-indigo-200',
+        borderColor: 'border-indigo-200/80',
+        keywords: ['atta', 'rice', 'chawal', 'dal', 'oil', 'tel', 'ghee', 'spice', 'masala', 'vegetable', 'sabzi', 'dinner', 'sweet', 'mithai', 'ice cream', 'chocolate', 'noodle', 'maggi', 'staple']
+      };
+    }
+  }, []);
+
+  // Time-Slot Filtered Products
+  const timeSlotProducts = useMemo(() => {
+    if (!locationFilteredProducts || locationFilteredProducts.length === 0) return [];
+    const matched = locationFilteredProducts.filter(p => {
+      const text = `${p.name || ''} ${p.category || ''} ${p.description || ''}`.toLowerCase();
+      return currentTimeSlot.keywords.some(kw => text.includes(kw));
+    });
+    if (matched.length >= 4) {
+      return matched.slice(0, 10);
+    }
+    // If fewer items matched keywords, include available items so rail stays rich
+    const remaining = locationFilteredProducts.filter(p => !matched.some(m => m.id === p.id));
+    return [...matched, ...remaining].slice(0, 10);
+  }, [locationFilteredProducts, currentTimeSlot]);
+
+  // Deals of the Day (Flash Sale Rail with Highest Discount First)
+  const dealsOfTheDay = useMemo(() => {
+    if (!locationFilteredProducts || locationFilteredProducts.length === 0) return [];
+    const deals = locationFilteredProducts.filter(p => {
+      return (p.discountPrice && p.discountPrice < p.price) || Boolean(p.offerLabel);
+    });
+    const sorted = [...deals].sort((a, b) => {
+      const discPercentA = a.discountPrice ? ((a.price - a.discountPrice) / a.price) : 0.05;
+      const discPercentB = b.discountPrice ? ((b.price - b.discountPrice) / b.price) : 0.05;
+      return discPercentB - discPercentA;
+    });
+    return sorted.slice(0, 12);
+  }, [locationFilteredProducts]);
+
+  // Smart Filtered All Products (supports Deals, Popular, Budget, Daily Fresh, In Stock + Shuffle)
+  const smartFilteredAllProducts = useMemo(() => {
+    if (!locationFilteredProducts) return [];
+    let list = [...locationFilteredProducts];
+
+    switch (allProductsFilter) {
+      case 'deals':
+        list = list.filter(p => (p.discountPrice && p.discountPrice < p.price) || Boolean(p.offerLabel));
+        break;
+      case 'popular':
+        list = list.filter(p => p.isPopular || (p.salesCount && p.salesCount > 0));
+        break;
+      case 'budget':
+        list = list.filter(p => (p.discountPrice || p.price) <= 99);
+        break;
+      case 'daily':
+        list = list.filter(p => {
+          const text = `${p.name || ''} ${p.category || ''}`.toLowerCase();
+          return ['milk', 'doodh', 'bread', 'egg', 'atta', 'rice', 'dal', 'oil', 'sabzi', 'fruit', 'sugar', 'salt', 'tea', 'chai', 'fresh', 'dairy', 'grocery'].some(k => text.includes(k));
+        });
+        break;
+      case 'inStock':
+        list = list.filter(p => p.stock > 0);
+        break;
+      case 'all':
+      default:
+        break;
+    }
+
+    // Apply Smart Shuffle if user tapped shuffle
+    if (shuffleCount > 0) {
+      list = [...list].sort((a, b) => {
+        const hashA = ((a.id || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) * (shuffleCount + 3)) % 100;
+        const hashB = ((b.id || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) * (shuffleCount + 3)) % 100;
+        return hashA - hashB;
+      });
+    }
+
+    return list;
+  }, [locationFilteredProducts, allProductsFilter, shuffleCount]);
 
   const popularItems = useMemo(() => {
     if (!locationFilteredProducts || locationFilteredProducts.length === 0) return [];
@@ -207,11 +400,11 @@ export const Home = ({
   const isSearching = searchQuery.trim().length > 0;
 
   // Pagination Logic
-  const totalPages = Math.ceil(locationFilteredProducts.length / itemsPerPage);
+  const totalPages = Math.ceil(smartFilteredAllProducts.length / itemsPerPage);
   const paginatedProducts = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
-    return locationFilteredProducts.slice(start, start + itemsPerPage);
-  }, [locationFilteredProducts, currentPage]);
+    return smartFilteredAllProducts.slice(start, start + itemsPerPage);
+  }, [smartFilteredAllProducts, currentPage]);
 
   const handleJumpPage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -357,24 +550,44 @@ export const Home = ({
         </div>
       )}
 
-      {/* Search */}
-      <div className="flex gap-3 mb-8">
+      {/* Search with Voice Search (Microphone) */}
+      <div className="flex gap-2.5 mb-8">
         <div className="relative flex-grow">
           <Input 
-            placeholder="Search fresh groceries..." 
+            placeholder={isListening ? "Sun rahe hain... Boliye (Listening...)" : "Search fresh groceries..."} 
             icon={<Search size={20} />}
-            className="bg-white shadow-sm"
+            className={cn(
+              "bg-white shadow-sm pr-20 transition-all",
+              isListening ? "border-purple-500 ring-2 ring-purple-200" : ""
+            )}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
-          {isSearching && (
-            <button 
-              onClick={() => setSearchQuery('')}
-              className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+            {isSearching && (
+              <button 
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer"
+                title="Clear"
+              >
+                <X size={18} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleVoiceSearch}
+              className={cn(
+                "p-1.5 rounded-xl transition-all cursor-pointer flex items-center justify-center",
+                isListening 
+                  ? "bg-purple-600 text-white animate-pulse shadow-md" 
+                  : "bg-gray-100 text-gray-600 hover:bg-purple-50 hover:text-purple-600"
+              )}
+              title="Voice Search (माइक से बोलकर खोजें)"
             >
-              <X size={18} />
+              {isListening ? <MicOff size={16} /> : <Mic size={16} />}
             </button>
-          )}
+          </div>
         </div>
       </div>
 
@@ -509,56 +722,73 @@ export const Home = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            {/* New Arrivals */}
-            {newArrivals.length > 0 && (
+            {/* 1. TIME-BASED DYNAMIC SMART SHELF (Morning / Afternoon / Dinner) */}
+            {timeSlotProducts.length > 0 && (
               <div className="mb-8">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-bold text-[#1A1A1A]">New Arrivals</h3>
-                  <span className="bg-green-100 text-green-600 text-[10px] font-bold px-2 py-1 rounded-full uppercase">Just Added</span>
-                </div>
-                <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
-                  {newArrivals.map((product) => (
-                    <div 
-                      key={product.id}
-                      className="min-w-[140px] bg-white rounded-3xl p-3 shadow-sm border border-gray-50 flex flex-col cursor-pointer"
-                      onClick={() => navigate(`/product/${product.id}`)}
-                    >
-                      <div className="relative aspect-square mb-2 rounded-2xl overflow-hidden bg-gray-100 flex items-center justify-center">
-                        {product.image ? (
-                          <img 
-                            src={product.image} 
-                            alt={product.name}
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : (
-                          <Plus size={24} className="text-gray-300" />
-                        )}
-                        {(product.offerLabel || product.discountPrice) ? (
-                          <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
-                            {product.offerLabel || 'Offer'}
-                          </div>
-                        ) : (
-                          <div className="absolute top-2 left-2 bg-[#66D2A4] text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
-                            New
-                          </div>
-                        )}
-                        <div className="absolute bottom-2 left-2 bg-white/80 backdrop-blur-sm text-gray-600 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase border border-gray-100 z-10">
-                          {product.category}
-                        </div>
-                        <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-7 h-7 rounded-lg z-10" />
+                <div className={`p-4 rounded-3xl bg-gradient-to-r ${currentTimeSlot.accentBg} border ${currentTimeSlot.borderColor} mb-3.5 shadow-2xs flex items-center justify-between`}>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="text-2xl shrink-0">{currentTimeSlot.emoji}</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h3 className="text-sm font-black text-gray-900 truncate">
+                          {currentTimeSlot.title}
+                        </h3>
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${currentTimeSlot.badgeColor}`}>
+                          {currentTimeSlot.badge}
+                        </span>
                       </div>
-                      <h4 className="font-bold text-[11px] text-[#1A1A1A] line-clamp-1">{product.name}</h4>
-                      <div className="flex items-center gap-1 mt-1">
-                        <span className="font-bold text-[#66D2A4] text-xs">₹{product.discountPrice || product.price}</span>
-                        {product.discountPrice && (
-                          <span className="text-[9px] text-gray-400 line-through">₹{product.price}</span>
-                        )}
-                      </div>
-                      <div className="mt-1 min-h-[16px] flex items-center">
-                        <MultiSavingsBadge product={product} variant="compact" />
-                      </div>
+                      <p className="text-[11px] text-gray-600 truncate mt-0.5 font-medium">
+                        {currentTimeSlot.hindiSubtitle}
+                      </p>
                     </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
+                  {timeSlotProducts.map((product) => (
+                    <ProductRailCard key={`timeslot-${product.id}`} product={product} user={user} onAddToCart={onAddToCart} navigate={navigate} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 2. DEALS OF THE DAY / LIGHTNING DEALS (Countdown Timer Rail) */}
+            {dealsOfTheDay.length > 0 && (
+              <div className="mb-8">
+                <div className="flex items-center justify-between mb-3.5 flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-rose-500 text-white flex items-center justify-center shadow-xs">
+                      <Flame size={18} className="animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base font-black text-gray-900 leading-tight">
+                          Deals of the Day
+                        </h3>
+                        <span className="text-[9px] font-black bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                          FLASH SALE
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-500 font-medium">
+                        आज के सबसे बड़े डिस्काउंट्स व बचत
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Live Midnight Countdown Timer */}
+                  <div className="flex items-center gap-1.5 bg-stone-900 text-amber-300 px-2.5 py-1 rounded-xl text-[10px] font-mono font-black shadow-xs">
+                    <Clock size={12} className="text-amber-400 animate-spin" style={{ animationDuration: '6s' }} />
+                    <span className="tracking-wider">
+                      {String(dealsTimeLeft.hours).padStart(2, '0')}:
+                      {String(dealsTimeLeft.minutes).padStart(2, '0')}:
+                      {String(dealsTimeLeft.seconds).padStart(2, '0')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
+                  {dealsOfTheDay.map((product) => (
+                    <ProductRailCard key={`deal-${product.id}`} product={product} user={user} onAddToCart={onAddToCart} navigate={navigate} isDealCard />
                   ))}
                 </div>
               </div>
@@ -604,73 +834,91 @@ export const Home = ({
             {popularItems.length > 0 && (
               <div className="mb-8">
                 <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-bold text-[#1A1A1A]">Popular Items</h3>
-                  <span className="bg-orange-100 text-orange-600 text-[10px] font-bold px-2 py-1 rounded-full uppercase">Top Trending</span>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-[#1A1A1A]">Popular Items</h3>
+                    <span className="bg-orange-100 text-orange-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Top Trending</span>
+                  </div>
                 </div>
-                <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
-                  {loading ? (
-                    [1, 2, 3, 4].map(i => (
-                      <div key={i} className="min-w-[140px] bg-white rounded-3xl p-3 shadow-sm border border-gray-50 flex flex-col">
-                        <Skeleton className="w-full aspect-square mb-2 rounded-2xl" />
-                        <Skeleton className="w-3/4 h-2 mb-1 rounded-full" />
-                        <Skeleton className="w-1/2 h-2 rounded-full" />
-                      </div>
-                    ))
-                  ) : (
-                    popularItems.map((product) => (
-                      <div 
-                        key={product.id}
-                        className="min-w-[140px] bg-white rounded-3xl p-3 shadow-sm border border-gray-50 flex flex-col cursor-pointer"
-                        onClick={() => navigate(`/product/${product.id}`)}
-                      >
-                        <div className="relative aspect-square mb-2 rounded-2xl overflow-hidden bg-gray-100 flex items-center justify-center">
-                          {product.image ? (
-                            <img 
-                              src={product.image} 
-                              alt={product.name}
-                              className="w-full h-full object-cover"
-                              referrerPolicy="no-referrer"
-                            />
-                          ) : (
-                            <Plus size={24} className="text-gray-300" />
-                          )}
-                          {(product.offerLabel || product.discountPrice) ? (
-                            <div className="absolute top-2 left-2 bg-red-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
-                              {product.offerLabel || 'Offer'}
-                            </div>
-                          ) : (
-                            <div className="absolute top-2 left-2 bg-orange-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase z-10">
-                              Hot
-                            </div>
-                          )}
-                          <div className="absolute bottom-2 left-2 bg-white/80 backdrop-blur-sm text-gray-600 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase border border-gray-100 z-10">
-                            {product.category}
-                          </div>
-                          <WishlistButton user={user} productId={product.id} className="absolute top-2 right-2 w-7 h-7 rounded-lg z-10" />
-                        </div>
-                        <h4 className="font-bold text-[11px] text-[#1A1A1A] line-clamp-1">{product.name}</h4>
-                        <div className="flex items-center gap-1 mt-1">
-                          <span className="font-bold text-[#66D2A4] text-xs">₹{product.discountPrice || product.price}</span>
-                          {product.discountPrice && (
-                            <span className="text-[9px] text-gray-400 line-through">₹{product.price}</span>
-                          )}
-                        </div>
-                        <div className="mt-1 min-h-[16px] flex items-center">
-                          <MultiSavingsBadge product={product} variant="compact" />
-                        </div>
-                      </div>
-                    ))
-                  )}
+                <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
+                  {popularItems.map((product) => (
+                    <ProductRailCard key={`popular-${product.id}`} product={product} user={user} onAddToCart={onAddToCart} navigate={navigate} />
+                  ))}
                 </div>
               </div>
             )}
 
-            {/* All Products */}
-            <div className="pb-8" id="all-products-section">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-bold text-[#1A1A1A]">All Products</h3>
-                <span className="text-xs text-gray-400 font-medium">{locationFilteredProducts.length} items</span>
+            {/* New Arrivals */}
+            {newArrivals.length > 0 && (
+              <div className="mb-8">
+                <div className="flex justify-between items-center mb-4">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-[#1A1A1A]">New Arrivals</h3>
+                    <span className="bg-green-100 text-green-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Just Added</span>
+                  </div>
+                </div>
+                <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
+                  {newArrivals.map((product) => (
+                    <ProductRailCard key={`new-${product.id}`} product={product} user={user} onAddToCart={onAddToCart} navigate={navigate} />
+                  ))}
+                </div>
               </div>
+            )}
+
+            {/* 3. ALL PRODUCTS WITH SMART QUICK-FILTER CHIPS & ROTATION / SHUFFLE */}
+            <div className="pb-8" id="all-products-section">
+              <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
+                <div>
+                  <h3 className="text-lg font-bold text-[#1A1A1A]">All Products</h3>
+                  <p className="text-[11px] text-gray-400">
+                    Showing {smartFilteredAllProducts.length} items
+                    {allProductsFilter !== 'all' && ` • Filtered`}
+                  </p>
+                </div>
+
+                {/* Interactive Shuffle Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShuffleCount(prev => prev + 1);
+                    setCurrentPage(1);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-xl border border-emerald-200/80 transition-all cursor-pointer active:scale-95 shadow-2xs"
+                  title="Randomize / Shuffle product order"
+                >
+                  <Shuffle size={13} className="text-emerald-600" />
+                  <span>Shuffle (नया क्रम)</span>
+                </button>
+              </div>
+
+              {/* Quick Filter Chips Bar */}
+              <div className="flex gap-2 overflow-x-auto pb-3 mb-4 no-scrollbar">
+                {[
+                  { id: 'all', label: `⚡ All (${locationFilteredProducts.length})` },
+                  { id: 'deals', label: '🔥 Best Offers' },
+                  { id: 'popular', label: '⭐ Top Trending' },
+                  { id: 'budget', label: '🪙 Under ₹99' },
+                  { id: 'daily', label: '🌱 Daily Fresh' },
+                  { id: 'inStock', label: '📦 In Stock Only' },
+                ].map((chip) => (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    onClick={() => {
+                      setAllProductsFilter(chip.id as any);
+                      setCurrentPage(1);
+                    }}
+                    className={cn(
+                      "px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer border whitespace-nowrap",
+                      allProductsFilter === chip.id
+                        ? "bg-[#66D2A4] text-white border-[#66D2A4] shadow-sm shadow-[#66D2A4]/25"
+                        : "bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                    )}
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 {loading ? (
                   [1, 2, 3, 4, 5, 6].map(i => (
@@ -686,24 +934,37 @@ export const Home = ({
                   ))
                 ) : (
                   <>
-                    {locationFilteredProducts.length === 0 && (
+                    {smartFilteredAllProducts.length === 0 && (
                       <div className="col-span-2 py-8 text-center bg-white rounded-3xl p-6 border border-gray-100 shadow-2xs">
                         <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto mb-3 text-emerald-600">
                           <MapPin size={24} />
                         </div>
                         <p className="text-sm font-bold text-gray-800">
-                          {deliveryLocation ? `No products deliverable to ${deliveryLocation.label}` : 'No products found'}
+                          {allProductsFilter !== 'all' 
+                            ? 'Is filter me koi product nahi mila' 
+                            : (deliveryLocation ? `No products deliverable to ${deliveryLocation.label}` : 'No products found')}
                         </p>
                         <p className="text-xs text-gray-400 mt-1 mb-4">
-                          {deliveryLocation ? 'Try changing your pincode or view products available Pan-India' : 'Check back later for fresh stock.'}
+                          {allProductsFilter !== 'all'
+                            ? 'Kripya doosra filter chunein ya All products dekhein.'
+                            : (deliveryLocation ? 'Try changing your pincode or view products available Pan-India' : 'Check back later for fresh stock.')}
                         </p>
-                        {deliveryLocation && (
-                          <button 
-                            onClick={() => onSelectDeliveryLocation?.(null)}
-                            className="bg-[#66D2A4] hover:bg-[#55b88e] text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-xs transition-colors"
+                        {allProductsFilter !== 'all' ? (
+                          <button
+                            onClick={() => setAllProductsFilter('all')}
+                            className="bg-[#66D2A4] hover:bg-[#55b88e] text-white text-xs font-bold px-4 py-2 rounded-xl shadow-xs transition-colors"
                           >
-                            View All-India Products
+                            View All Products
                           </button>
+                        ) : (
+                          deliveryLocation && (
+                            <button 
+                              onClick={() => onSelectDeliveryLocation?.(null)}
+                              className="bg-[#66D2A4] hover:bg-[#55b88e] text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-xs transition-colors"
+                            >
+                              View All-India Products
+                            </button>
+                          )
                         )}
                       </div>
                     )}
@@ -715,7 +976,7 @@ export const Home = ({
               </div>
 
               {/* Pagination UI */}
-              {!loading && locationFilteredProducts.length > itemsPerPage && (
+              {!loading && smartFilteredAllProducts.length > itemsPerPage && (
                 <div className="mt-10 space-y-6">
                   <div className="flex items-center justify-center gap-2">
                     <button 
@@ -944,5 +1205,120 @@ const ProductCard: React.FC<{
         </button>
       </div>
     </motion.div>
+  );
+};
+
+const ProductRailCard: React.FC<{
+  product: Product;
+  user: User | null;
+  onAddToCart: (p: Product, quantity?: number, variant?: ProductVariant) => void;
+  navigate: any;
+  isDealCard?: boolean;
+}> = ({ product, user, onAddToCart, navigate, isDealCard }) => {
+  const defaultVariant = product.hasVariants && product.variants?.length 
+    ? sortVariantsByWeight(product.variants)[0] 
+    : undefined;
+
+  const effectivePrice = defaultVariant 
+    ? (defaultVariant.discountPrice || defaultVariant.price)
+    : (product.discountPrice || product.price);
+
+  const effectiveOriginalPrice = defaultVariant
+    ? (defaultVariant.discountPrice ? defaultVariant.price : null)
+    : (product.discountPrice ? product.price : null);
+
+  const discountPercent = effectiveOriginalPrice && effectiveOriginalPrice > effectivePrice
+    ? Math.round(((effectiveOriginalPrice - effectivePrice) / effectiveOriginalPrice) * 100)
+    : (product.discountPrice && product.price > product.discountPrice
+        ? Math.round(((product.price - product.discountPrice) / product.price) * 100)
+        : null);
+
+  const effectiveStock = defaultVariant?.stock !== undefined 
+    ? defaultVariant.stock 
+    : product.stock;
+
+  return (
+    <div
+      onClick={() => navigate(`/product/${product.id}`)}
+      className="min-w-[145px] max-w-[145px] sm:min-w-[155px] sm:max-w-[155px] bg-white rounded-3xl p-3 shadow-2xs hover:shadow-md transition-all border border-gray-100 flex flex-col justify-between shrink-0 cursor-pointer group select-none"
+    >
+      <div>
+        <div className="relative aspect-square mb-2.5 rounded-2xl overflow-hidden bg-gray-50 flex items-center justify-center">
+          {product.image ? (
+            <img 
+              src={product.image} 
+              alt={product.name}
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <Plus size={24} className="text-gray-300" />
+          )}
+
+          {/* Discount Badge */}
+          {discountPercent ? (
+            <div className="absolute top-2 left-2 bg-gradient-to-r from-rose-600 to-red-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase z-10 shadow-2xs">
+              {discountPercent}% OFF
+            </div>
+          ) : product.offerLabel ? (
+            <div className="absolute top-2 left-2 bg-rose-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase z-10">
+              {product.offerLabel}
+            </div>
+          ) : isDealCard ? (
+            <div className="absolute top-2 left-2 bg-amber-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase z-10">
+              HOT DEAL
+            </div>
+          ) : null}
+
+          {/* Category Chip */}
+          {product.category && (
+            <div className="absolute bottom-1.5 left-1.5 bg-white/90 backdrop-blur-xs text-gray-700 text-[8px] font-bold px-1.5 py-0.2 rounded-md uppercase border border-gray-100 z-10 truncate max-w-[95px]">
+              {product.category}
+            </div>
+          )}
+
+          <WishlistButton user={user} productId={product.id} className="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg z-10" />
+        </div>
+
+        <h4 className="font-bold text-xs text-[#1A1A1A] line-clamp-1 group-hover:text-emerald-700 transition-colors">
+          {product.name}
+        </h4>
+
+        {defaultVariant && (
+          <span className="text-[9px] font-bold text-emerald-800 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-100 inline-block mt-0.5">
+            {defaultVariant.weight}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-2.5 pt-2 border-t border-gray-100 flex items-center justify-between">
+        <div className="min-w-0 pr-1">
+          <span className="font-extrabold text-[#66D2A4] text-xs">₹{effectivePrice}</span>
+          {effectiveOriginalPrice && (
+            <span className="text-[9px] text-gray-400 line-through block -mt-0.5 truncate">₹{effectiveOriginalPrice}</span>
+          )}
+        </div>
+
+        <button
+          type="button"
+          disabled={effectiveStock <= 0}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (effectiveStock > 0) {
+              onAddToCart(product, 1, defaultVariant);
+            }
+          }}
+          className={cn(
+            "p-1.5 rounded-xl transition-all active:scale-90 flex items-center justify-center shrink-0 cursor-pointer shadow-2xs",
+            effectiveStock > 0
+              ? "bg-[#66D2A4] hover:bg-[#55b88e] text-white"
+              : "bg-gray-200 text-gray-400 cursor-not-allowed"
+          )}
+          title={effectiveStock > 0 ? "Add to Cart" : "Out of Stock"}
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+    </div>
   );
 };

@@ -41,6 +41,8 @@ export interface DeliveryLocation {
   district?: string;
   city?: string;
   label?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface Category {
@@ -172,6 +174,9 @@ export interface AppSettings {
   loyaltyPointValue?: number; // e.g. 1 point = ₹1 discount
   fcmEnabled?: boolean;
   fcmVapidKey?: string;
+  fcmServerKey?: string;
+  fcmServiceAccountJson?: string; // Firebase Admin Service Account JSON for modern FCM HTTP v1
+  adminFcmTokens?: string[];
   // Delivery Charge Settings
   standardDeliveryFee?: number; // Standard delivery charge (e.g. ₹20 or ₹40)
   freeDeliveryMinAmount?: number; // Free delivery for orders >= this amount (e.g. ₹499 or ₹100)

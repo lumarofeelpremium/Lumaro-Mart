@@ -16,7 +16,7 @@ import * as XLSX from 'xlsx';
 import { downloadReceiptPdf, sendWhatsAppBill, sendOrderStatusWhatsAppAlert, calculateEarnedPoints, printIsolatedElement, shareReceiptPdf } from '../lib/receipt-utils';
 import { downloadSalesExcel, shareSalesExcel } from '../lib/excel-utils';
 import { sendTelegramOrderCancelAlert } from '../lib/telegram-utils';
-import { isFcmSupported, getFcmPermissionStatus, requestFcmToken, requestFcmTokenDetailed, saveFcmToken, showPlatformNotification } from '../lib/fcm-utils';
+import { isFcmSupported, getFcmPermissionStatus, requestFcmToken, requestFcmTokenDetailed, saveFcmToken, showPlatformNotification, triggerOrderAlertSoundAndVibration, sendCustomerFcmOrderStatusAlert } from '../lib/fcm-utils';
 import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
 import { WhatsAppStatusAlertModal } from '../components/WhatsAppStatusAlertModal';
@@ -781,6 +781,25 @@ export const AdminDashboard = () => {
         }).catch(err => console.warn('Order status notification write error:', err));
       }
 
+      // Automated Background FCM Push Notification to Customer Phone & Browser
+      // Rings customer phone even when the app/browser is closed!
+      sendCustomerFcmOrderStatusAlert({
+        orderId: orderId || orderData.id,
+        newStatus,
+        userId: orderData.userId,
+        customerFcmToken: (orderData as any).userFcmToken || (orderData as any).fcmToken,
+        orderTotal: orderData.total,
+        customerName: orderData.userName
+      }).then(res => {
+        if (res.success) {
+          console.log(`[FCM] Successfully delivered background push to customer for order #${(orderId || orderData.id).slice(-6).toUpperCase()}`);
+        } else {
+          console.warn(`[FCM] Customer background push notice:`, res.error);
+        }
+      }).catch(err => {
+        console.warn('[FCM] Error dispatching customer FCM background push:', err);
+      });
+
       // Send Telegram cancel alert if canceled by admin
       if (newStatus === 'canceled' && oldStatus !== 'canceled') {
         let cancelCust: User | null = null;
@@ -1002,18 +1021,14 @@ export const AdminDashboard = () => {
               settings={appSettings} 
               onSave={handleUpdateSettings} 
               onTestNotification={() => {
-                // To unlock audio on some browsers, we need user interaction
-                if (notificationAudio.current) {
-                  notificationAudio.current.play()
-                    .then(() => {
-                      if ("Notification" in window && Notification.permission === "granted") {
-                        showPlatformNotification("Lumaro Mart Admin", {
-                          body: "Testing notifications! They are working correctly.",
-                          icon: '/favicon.ico'
-                        });
-                      }
-                    })
-                    .catch(e => console.error("Audio test failed:", e));
+                triggerOrderAlertSoundAndVibration();
+                if ("Notification" in window && Notification.permission === "granted") {
+                  showPlatformNotification("🛍️ Lumaro Mart: Naya Order Recieve Hua!", {
+                    body: "Test Order from Shiva (Customer) - ₹499. Ringtone aur pop-up sahi kaam kar rahe hain! 🎉",
+                    icon: '/favicon.ico',
+                    tag: 'admin-test-alert',
+                    data: { url: '/admin' }
+                  });
                 }
               }}
               onNavigateToSubscriptions={() => setActiveTab('subscriptions')}

@@ -7,7 +7,8 @@ import {
   requestFcmToken, 
   saveFcmToken,
   sendLocalTestNotification,
-  getNotificationDiagnostic 
+  getNotificationDiagnostic,
+  ensureUserFcmTokenSynced 
 } from '../lib/fcm-utils';
 import { User } from '../types';
 
@@ -28,8 +29,13 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
     const currentPermission = getFcmPermissionStatus();
     setPermissionState(currentPermission);
 
-    // If permission already granted, no need to show banner
-    if (currentPermission === 'granted') return;
+    // If permission already granted, ensure token is synced and don't show banner
+    if (currentPermission === 'granted') {
+      if (user?.uid) {
+        ensureUserFcmTokenSynced(user);
+      }
+      return;
+    }
 
     // Check if dismissed in this session
     const isDismissed = sessionStorage.getItem('lumaro_notif_dismissed');

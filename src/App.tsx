@@ -20,7 +20,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import ScrollToTop from './components/ScrollToTop';
 import { MobileBackButtonSync } from './components/MobileBackButtonSync';
 import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
-import { setupForegroundPushListener, showPlatformNotification } from './lib/fcm-utils';
+import { setupForegroundPushListener, showPlatformNotification, triggerOrderAlertSoundAndVibration, ensureUserFcmTokenSynced } from './lib/fcm-utils';
 import { User, CartItem, Product, Category, Banner, DeliveryLocation, ProductVariant } from './types';
 import { getStoredDeliveryLocation, setStoredDeliveryLocation, getStateFromPincode } from './lib/location-utils';
 import { cacheUtils } from './lib/cache-utils';
@@ -93,6 +93,13 @@ export default function App() {
       if (unsubPush) unsubPush();
     };
   }, []);
+
+  // Automatically ensure logged-in customer's FCM token is generated & synced
+  useEffect(() => {
+    if (user?.uid) {
+      ensureUserFcmTokenSynced(user);
+    }
+  }, [user?.uid]);
 
   // Real-time listener for Customer's Orders to trigger Instant Browser & Phone Notifications
   const previousOrderStatuses = useRef<Record<string, string>>({});
@@ -172,6 +179,73 @@ export default function App() {
 
     return () => unsubscribe();
   }, [user?.uid]);
+
+  // App-Wide Real-Time Listener for ADMIN: Triggers Loud Order Sound & Pop-Up Alerts
+  useEffect(() => {
+    const isAdminUser = user?.role === 'admin' || user?.email === 'shiva1520980@gmail.com';
+    if (!isAdminUser) return;
+
+    // 1. Listen for cross-tab broadcast notifications
+    let channel: BroadcastChannel | null = null;
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        channel = new BroadcastChannel('lumaro_admin_alerts');
+        channel.onmessage = (event) => {
+          if (event.data?.type === 'NEW_ORDER_ALERT') {
+            triggerOrderAlertSoundAndVibration();
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              showPlatformNotification(`🛍️ Naya Order! (₹${event.data.total})`, {
+                body: `${event.data.customerName || 'Customer'} ne naya order place kiya hai (#${event.data.orderId.slice(-6).toUpperCase()}).`,
+                icon: '/favicon.ico',
+                tag: `admin-order-${event.data.orderId}`,
+                data: { url: '/admin' }
+              });
+            }
+          }
+        };
+      }
+    } catch (_) {}
+
+    // 2. Real-time Firestore listener for newly added orders
+    let isInitialLoad = true;
+    const adminOrdersQuery = query(
+      collection(db, 'orders'),
+      orderBy('createdAt', 'desc'),
+      limit(1)
+    );
+
+    const unsubAdminOrders = onSnapshot(adminOrdersQuery, (snapshot) => {
+      if (isInitialLoad) {
+        isInitialLoad = false;
+        return;
+      }
+
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const order = change.doc.data();
+          const orderTime = order.createdAt?.toMillis ? order.createdAt.toMillis() : Date.now();
+          if (Date.now() - orderTime < 60000) {
+            triggerOrderAlertSoundAndVibration();
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              showPlatformNotification(`🛍️ Naya Order Recieve Hua! (₹${order.total})`, {
+                body: `Order from ${order.userName || 'Customer'} - ₹${order.total}. Tap karke Admin Dashboard me dekhein.`,
+                icon: '/favicon.ico',
+                tag: `admin-order-${change.doc.id}`,
+                data: { url: '/admin' }
+              });
+            }
+          }
+        }
+      });
+    }, (err) => {
+      console.warn('Admin app-wide order listener error:', err);
+    });
+
+    return () => {
+      if (channel) channel.close();
+      unsubAdminOrders();
+    };
+  }, [user?.role, user?.email]);
 
   // Centralized real-time listener for ALL products without artificial limits
   useEffect(() => {

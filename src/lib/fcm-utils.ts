@@ -1,6 +1,7 @@
 import { messaging, db } from '../firebase';
 import { getToken, onMessage, MessagePayload } from 'firebase/messaging';
-import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, getDoc, collection, addDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { sendFcmV1Push } from './fcm-v1-client';
 
 export const DEFAULT_VAPID_KEY = 'BH5pHZc7Wf0ASibIMFNVtrRi-5Waime9pc9RYCnOh4XqHW3xbwAP8yBWofnR2tc3rbqQ4FnMd15liNgznCN5P08';
 
@@ -45,7 +46,32 @@ export const requestBrowserNotificationPermission = async (): Promise<Notificati
  * Calling 'new Notification()' on Chrome Android throws TypeError: Illegal constructor.
  * Web apps on Android mobile MUST use ServiceWorkerRegistration.showNotification().
  */
-export const showPlatformNotification = async (title: string, options?: NotificationOptions): Promise<boolean> => {
+export const showPlatformNotification = async (
+  title: string, 
+  options?: NotificationOptions & { orderId?: string }
+): Promise<boolean> => {
+  // 1. Android Native App Channel (JavascriptInterface from MainActivity.java)
+  // Triggers OS-level Heads-Up Notification, Status Bar alert, Ringtone & Vibration
+  if (typeof window !== 'undefined') {
+    const androidNotification = (window as unknown as {
+      AndroidNotification?: {
+        showNotification: (t: string, b: string, id: string) => void;
+        triggerVibration: (duration: number) => void;
+      };
+    }).AndroidNotification;
+
+    if (androidNotification && typeof androidNotification.showNotification === 'function') {
+      try {
+        const bodyText = (options?.body as string) || '';
+        const orderId = options?.orderId || (options?.data?.orderId as string) || '';
+        androidNotification.showNotification(title, bodyText, orderId);
+        return true;
+      } catch (nativeErr) {
+        console.warn('[Notification] Android Native Channel error:', nativeErr);
+      }
+    }
+  }
+
   if (typeof window === 'undefined' || !('Notification' in window)) return false;
   if (Notification.permission !== 'granted') return false;
 
@@ -56,7 +82,7 @@ export const showPlatformNotification = async (title: string, options?: Notifica
     audio.play().catch(() => {});
   } catch (_) {}
 
-  // 1. Mobile/Android Service Worker showNotification (Mandatory for Android lock screen & shade)
+  // 2. Mobile/Android Service Worker showNotification (Mandatory for Android lock screen & shade in Chrome)
   if ('serviceWorker' in navigator) {
     try {
       let reg = await navigator.serviceWorker.getRegistration('/');
@@ -77,7 +103,7 @@ export const showPlatformNotification = async (title: string, options?: Notifica
     }
   }
 
-  // 2. Desktop fallback (Only works on Desktop browsers)
+  // 3. Desktop fallback (Only works on Desktop browsers)
   try {
     new Notification(title, {
       icon: '/favicon.ico',
@@ -391,5 +417,492 @@ export const setupForegroundPushListener = (
   } catch (error) {
     console.warn('[FCM] Error setting up foreground message listener:', error);
     return null;
+  }
+};
+
+/**
+ * Triggers distinct sound chime and vibration for new order arrival
+ */
+export const triggerOrderAlertSoundAndVibration = () => {
+  // 1. Android Native App Channel Vibration
+  if (typeof window !== 'undefined') {
+    const androidNotification = (window as unknown as {
+      AndroidNotification?: {
+        triggerVibration: (duration: number) => void;
+      };
+    }).AndroidNotification;
+
+    if (androidNotification && typeof androidNotification.triggerVibration === 'function') {
+      try {
+        androidNotification.triggerVibration(600);
+      } catch (_) {}
+    }
+  }
+
+  // 2. Web Audio alert
+  try {
+    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+    audio.volume = 1.0;
+    audio.play().catch(e => console.log('Audio playback prevented by browser:', e));
+  } catch (_) {}
+
+  // 3. Web Navigator Vibration API
+  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+    try {
+      navigator.vibrate([300, 150, 300, 150, 300]);
+    } catch (_) {}
+  }
+};
+
+/**
+ * Broadcasts instant real-time order alert across open browser tabs/windows
+ */
+export const broadcastNewOrderAlert = (data: {
+  orderId: string;
+  total: number;
+  customerName: string;
+}) => {
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      const channel = new BroadcastChannel('lumaro_admin_alerts');
+      channel.postMessage({
+        type: 'NEW_ORDER_ALERT',
+        ...data,
+        timestamp: Date.now()
+      });
+      channel.close();
+    }
+  } catch (err) {
+    console.warn('BroadcastChannel error:', err);
+  }
+};
+
+/**
+ * Registers the current device specifically as an Admin Notification Receiver
+ */
+export const registerCurrentDeviceAsAdminReceiver = async (userId: string): Promise<{ success: boolean; token?: string; error?: string }> => {
+  try {
+    const res = await requestFcmTokenDetailed();
+    if (!res.token) {
+      return { success: false, error: res.error || 'FCM Token prapt nahi ho saka' };
+    }
+
+    // 1. Save in user and fcm_tokens
+    await saveFcmToken(userId, res.token, 'admin');
+
+    // 2. Add to global admin tokens in settings/global for backend dispatch
+    try {
+      await updateDoc(doc(db, 'settings', 'global'), {
+        adminFcmTokens: arrayUnion(res.token)
+      });
+    } catch (e) {
+      console.warn('Could not update adminFcmTokens in settings/global:', e);
+    }
+
+    // 3. Trigger immediate confirmation alert
+    await showPlatformNotification('Admin Alert Activated! 🔔', {
+      body: 'Aapka yeh device naye orders ke notifications ke liye successfully connect ho gaya hai.',
+      icon: '/favicon.ico',
+      tag: 'admin-device-registered'
+    });
+
+    return { success: true, token: res.token };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+};
+
+/**
+ * Dispatches an instant FCM push notification to Admin for a new order
+ */
+export const sendAdminFcmOrderAlert = async (params: {
+  orderId: string;
+  total: number;
+  customerName?: string;
+  address?: string;
+}) => {
+  const shortId = params.orderId.slice(-6).toUpperCase();
+  const alertTitle = `🛍️ Naya Order Recieve Hua! (#${shortId})`;
+  const alertBody = `${params.customerName || 'Customer'} ne ₹${params.total} ka naya order place kiya hai.`;
+
+  // 1. Broadcast to all open tabs / windows immediately (0ms latency)
+  broadcastNewOrderAlert({
+    orderId: params.orderId,
+    total: params.total,
+    customerName: params.customerName || 'Customer'
+  });
+
+  // 2. Add record in notifications collection for admin history
+  try {
+    await addDoc(collection(db, 'notifications'), {
+      title: alertTitle,
+      message: `${alertBody} Address: ${params.address || 'Standard Delivery'}`,
+      type: 'admin_order_alert',
+      orderId: params.orderId,
+      recipientRole: 'admin',
+      total: params.total,
+      createdAt: serverTimestamp()
+    });
+  } catch (err) {
+    console.warn('[FCM] Error adding admin order notification doc:', err);
+  }
+
+  // 3. Send FCM Push Message via modern FCM v1 or Legacy API
+  try {
+    const settingsSnap = await getDoc(doc(db, 'settings', 'global'));
+    if (settingsSnap.exists()) {
+      const data = settingsSnap.data();
+      const serviceAccountJson = data.fcmServiceAccountJson?.trim();
+      const serverKey = data.fcmServerKey?.trim();
+      const adminTokens: string[] = Array.isArray(data.adminFcmTokens) ? data.adminFcmTokens : [];
+
+      if (adminTokens.length > 0) {
+        if (serviceAccountJson && serviceAccountJson.startsWith('{')) {
+          // Send via Google FCM HTTP v1 (Modern)
+          for (const token of adminTokens) {
+            sendFcmV1Push({
+              serviceAccount: serviceAccountJson,
+              token,
+              title: alertTitle,
+              body: alertBody,
+              url: '/admin',
+              data: {
+                orderId: params.orderId,
+                type: 'new_order'
+              }
+            }).catch(e => console.warn('[FCM v1] Admin push error:', e));
+          }
+        } else if (serverKey) {
+          // Send via FCM Legacy HTTP API
+          fetch('https://fcm.googleapis.com/fcm/send', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `key=${serverKey}`
+            },
+            body: JSON.stringify({
+              registration_ids: adminTokens,
+              notification: {
+                title: alertTitle,
+                body: alertBody,
+                icon: '/favicon.ico',
+                click_action: '/admin',
+                sound: 'default'
+              },
+              data: {
+                orderId: params.orderId,
+                url: '/admin',
+                type: 'new_order'
+              },
+              priority: 'high'
+            }),
+            keepalive: true
+          }).catch(fcmErr => {
+            console.warn('[FCM] HTTP push dispatch error:', fcmErr);
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[FCM] Error checking settings for push:', err);
+  }
+};
+
+/**
+ * Automatically dispatches high-priority background FCM Push Notification
+ * directly to the customer's phone/browser when Admin updates order status.
+ * Delivers and rings even when the customer's browser or app is COMPLETELY CLOSED.
+ */
+export const sendCustomerFcmOrderStatusAlert = async (params: {
+  orderId: string;
+  newStatus: string;
+  userId?: string;
+  customerFcmToken?: string;
+  orderTotal?: number;
+  customerName?: string;
+}): Promise<{ success: boolean; pushedCount: number; error?: string; tokensCount?: number }> => {
+  const shortId = params.orderId.slice(-6).toUpperCase();
+
+  // 1. Determine title and message based on new status
+  const statusDetails: Record<string, { title: string; body: string }> = {
+    confirmed: {
+      title: `Order Confirmed! ✅ (#${shortId})`,
+      body: `Aapka ₹${params.orderTotal || ''} ka order accept kar liya gaya hai. Store is par kaam kar raha hai.`
+    },
+    packed: {
+      title: `Order Packed! 📦 (#${shortId})`,
+      body: `Aapka order pack ho chuka hai aur delivery ke liye bilkul ready hai.`
+    },
+    out_for_delivery: {
+      title: `Order Out for Delivery! 🚚 (#${shortId})`,
+      body: `Aapka order delivery person ke sath nikal chuka hai. Jaldi hi aapke paas pahuchega!`
+    },
+    delivered: {
+      title: `Order Delivered! 🎉 (#${shortId})`,
+      body: `Aapka order successfully deliver ho gaya hai. Lumaro Mart se shopping karne ke liye dhanyawad!`
+    },
+    canceled: {
+      title: `Order Canceled ❌ (#${shortId})`,
+      body: `Aapka order store dwara cancel kar diya gaya hai. Kisi bhi query ke liye support se sampark karein.`
+    }
+  };
+
+  const details = statusDetails[params.newStatus] || {
+    title: `Order Update: #${shortId}`,
+    body: `Aapke order ka status ab ${params.newStatus} ho gaya hai.`
+  };
+
+  // 2. Collect all target tokens for this customer
+  const tokensSet = new Set<string>();
+
+  if (params.customerFcmToken && params.customerFcmToken.trim().length > 10) {
+    tokensSet.add(params.customerFcmToken.trim());
+  }
+
+  // Look up user profile in Firestore if userId provided
+  if (params.userId) {
+    try {
+      const userSnap = await getDoc(doc(db, 'users', params.userId));
+      if (userSnap.exists()) {
+        const uData = userSnap.data();
+        if (uData.fcmToken && typeof uData.fcmToken === 'string' && uData.fcmToken.length > 10) {
+          tokensSet.add(uData.fcmToken.trim());
+        }
+      }
+    } catch (e) {
+      console.warn('[FCM] Error fetching user doc for token:', e);
+    }
+  }
+
+  const tokens = Array.from(tokensSet);
+
+  if (tokens.length === 0) {
+    console.warn(`[FCM] No registered FCM token found for customer (userId: ${params.userId || 'N/A'}). Background push cannot reach device until customer allows notifications.`);
+    return { 
+      success: false, 
+      pushedCount: 0, 
+      tokensCount: 0, 
+      error: 'Grahak ke device ka FCM Token registered nahi mila. Grahak ko app me "Allow Notifications" karna zaroori hai.' 
+    };
+  }
+
+  // 3. Fetch FCM Credentials (Service Account JSON for v1 or Legacy Server Key)
+  let serviceAccountJson = '';
+  let serverKey = '';
+  try {
+    const settingsSnap = await getDoc(doc(db, 'settings', 'global'));
+    if (settingsSnap.exists()) {
+      const data = settingsSnap.data();
+      serviceAccountJson = data.fcmServiceAccountJson?.trim() || '';
+      serverKey = data.fcmServerKey?.trim() || '';
+    }
+  } catch (err) {
+    console.warn('[FCM] Error retrieving FCM credentials from settings:', err);
+  }
+
+  // 4A. Modern FCM HTTP v1 Dispatch (Google's official recommended standard)
+  if (serviceAccountJson && serviceAccountJson.startsWith('{')) {
+    let successCount = 0;
+    for (const token of tokens) {
+      try {
+        const v1Res = await sendFcmV1Push({
+          serviceAccount: serviceAccountJson,
+          token,
+          title: details.title,
+          body: details.body,
+          url: '/my-orders',
+          tag: `lumaro-order-${params.orderId}`,
+          data: {
+            orderId: params.orderId,
+            status: params.newStatus,
+            type: 'order_update'
+          }
+        });
+        if (v1Res.success) {
+          successCount++;
+        }
+      } catch (v1Err) {
+        console.warn('[FCM v1] Push failed for token:', v1Err);
+      }
+    }
+
+    if (successCount > 0) {
+      console.log(`[FCM v1] Successfully delivered background order push to ${successCount} device(s)`);
+      return {
+        success: true,
+        pushedCount: successCount,
+        tokensCount: tokens.length
+      };
+    }
+  }
+
+  // 4B. Fallback: Legacy FCM HTTP API (if Legacy Server Key is present)
+  if (!serverKey) {
+    console.warn('[FCM] Neither FCM Service Account JSON (v1) nor Legacy Server Key is configured in Admin Settings.');
+    return {
+      success: false,
+      pushedCount: 0,
+      tokensCount: tokens.length,
+      error: 'Admin Settings me "Service Account JSON" ya "FCM Server Key" save nahi hai. Google FCM v1 Service Account JSON upload karein.'
+    };
+  }
+
+  // Send via Legacy FCM HTTP API
+  try {
+    const response = await fetch('https://fcm.googleapis.com/fcm/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `key=${serverKey}`
+      },
+      body: JSON.stringify({
+        registration_ids: tokens,
+        notification: {
+          title: details.title,
+          body: details.body,
+          icon: '/favicon.ico',
+          badge: '/favicon.ico',
+          click_action: '/my-orders',
+          sound: 'default'
+        },
+        data: {
+          orderId: params.orderId,
+          status: params.newStatus,
+          url: '/my-orders',
+          type: 'order_update',
+          tag: `lumaro-order-${params.orderId}`
+        },
+        priority: 'high',
+        content_available: true
+      }),
+      keepalive: true
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('[FCM] HTTP error from FCM servers:', response.status, errText);
+      return {
+        success: false,
+        pushedCount: 0,
+        tokensCount: tokens.length,
+        error: `FCM Server Error: ${response.status} - ${errText}`
+      };
+    }
+
+    const resJson = await response.json();
+    console.log('[FCM] Successfully sent background order status push to customer:', resJson);
+    return {
+      success: resJson.success > 0,
+      pushedCount: resJson.success || 0,
+      tokensCount: tokens.length
+    };
+  } catch (pushErr: any) {
+    console.error('[FCM] Network error sending customer FCM push:', pushErr);
+    return {
+      success: false,
+      pushedCount: 0,
+      tokensCount: tokens.length,
+      error: pushErr?.message || String(pushErr)
+    };
+  }
+};
+
+/**
+ * Automatically ensures the currently logged-in user's FCM token is generated and synced
+ * if browser notification permission is already granted.
+ */
+export const ensureUserFcmTokenSynced = async (user: { uid: string; role?: string; fcmToken?: string } | null) => {
+  if (!user?.uid || typeof window === 'undefined' || !('Notification' in window)) return;
+  if (Notification.permission !== 'granted') return;
+
+  try {
+    // 1. Check local storage first
+    let token = localStorage.getItem('lumaro_fcm_token');
+    if (!token) {
+      token = await requestFcmToken();
+    }
+
+    if (token) {
+      localStorage.setItem('lumaro_fcm_token', token);
+      // Sync if user doesn't have it on profile yet
+      if (user.fcmToken !== token) {
+        await saveFcmToken(user.uid, token, (user.role as any) || 'user');
+      }
+    }
+  } catch (err) {
+    console.warn('[FCM] Error in automatic token sync:', err);
+  }
+};
+
+/**
+ * Sends a real live background FCM push test to current device with optional delay
+ * allowing the user to minimize app or lock screen and witness the ring & banner!
+ */
+export const sendBackgroundFcmPushTest = async (
+  token: string,
+  serverKeyOrServiceAccount: string,
+  delaySeconds: number = 0
+): Promise<{ success: boolean; error?: string }> => {
+  if (!token) return { success: false, error: 'Device token nahi mila. Kripya pehle "Device Connect Karein" par tap karein.' };
+  if (!serverKeyOrServiceAccount || !serverKeyOrServiceAccount.trim()) {
+    return { success: false, error: 'Service Account JSON ya FCM Server Key enter karein aur Save karein.' };
+  }
+
+  if (delaySeconds > 0) {
+    await new Promise(resolve => setTimeout(resolve, delaySeconds * 1000));
+  }
+
+  const trimmed = serverKeyOrServiceAccount.trim();
+
+  // If Service Account JSON is provided (Modern FCM v1)
+  if (trimmed.startsWith('{')) {
+    return await sendFcmV1Push({
+      serviceAccount: trimmed,
+      token,
+      title: '🔔 FCM v1 Background Push Succeeded!',
+      body: 'Google FCM v1 ने आपके बंद फोन पर लाइव अलर्ट और घंटी बजा दी! 🎉',
+      url: '/admin',
+      data: {
+        type: 'test_push'
+      }
+    });
+  }
+
+  // Fallback: Legacy FCM HTTP API
+  try {
+    const res = await fetch('https://fcm.googleapis.com/fcm/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `key=${trimmed}`
+      },
+      body: JSON.stringify({
+        to: token,
+        priority: 'high',
+        notification: {
+          title: '🔔 Background Push Test Succeeded!',
+          body: 'Google FCM server ne aapke phone par live background alert deliver kar diya! 🎉',
+          icon: '/favicon.ico',
+          badge: '/favicon.ico',
+          sound: 'default'
+        },
+        data: {
+          type: 'test_push',
+          url: '/admin'
+        }
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      return { success: false, error: `FCM Error ${res.status}: ${err}` };
+    }
+    const json = await res.json();
+    if (json.success > 0) {
+      return { success: true };
+    }
+    return { success: false, error: json.results?.[0]?.error || 'Unknown push failure' };
+  } catch (e: any) {
+    return { success: false, error: e?.message || String(e) };
   }
 };

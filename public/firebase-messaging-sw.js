@@ -23,19 +23,61 @@ const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Received background message:', payload);
 
-  const notificationTitle = payload.notification?.title || payload.data?.title || 'Lumaro Mart Alert';
+  const notificationTitle = payload.notification?.title || payload.data?.title || '🛍️ Lumaro Mart Alert';
+  const notificationBody = payload.notification?.body || payload.data?.body || 'Aapke order par naya update aaya hai.';
+  const defaultUrl = payload.data?.type === 'new_order' ? '/admin' : '/my-orders';
+  const targetUrl = payload.data?.url || payload.fcmOptions?.link || defaultUrl;
+
   const notificationOptions = {
-    body: payload.notification?.body || payload.data?.body || 'Aapke pass naya notification aaya hai.',
+    body: notificationBody,
     icon: payload.notification?.icon || payload.data?.icon || '/favicon.ico',
     badge: '/favicon.ico',
-    vibrate: [200, 100, 200],
-    tag: payload.data?.tag || 'lumaro-notification',
+    vibrate: [400, 200, 400, 200, 400],
+    tag: payload.data?.tag || ('lumaro-' + (payload.data?.orderId || Date.now())),
+    renotify: true,
+    requireInteraction: true,
     data: {
-      url: payload.data?.url || payload.fcmOptions?.link || '/'
+      url: targetUrl,
+      orderId: payload.data?.orderId
     }
   };
 
   return self.registration.showNotification(notificationTitle, notificationOptions);
+});
+
+// Direct Web Push event listener for fallback/cross-browser push
+self.addEventListener('push', (event) => {
+  console.log('[firebase-messaging-sw.js] Push event received:', event);
+  let data = {};
+  if (event.data) {
+    try {
+      data = event.data.json();
+    } catch (_) {
+      try {
+        data = { body: event.data.text() };
+      } catch (__) {
+        data = {};
+      }
+    }
+  }
+
+  const title = data.notification?.title || data.title || '🛍️ Lumaro Mart Alert';
+  const body = data.notification?.body || data.body || 'Naya update prapt hua hai.';
+  const defaultUrl = (data.data?.type === 'new_order' || data.type === 'new_order') ? '/admin' : '/my-orders';
+  const url = data.data?.url || data.url || defaultUrl;
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: '/favicon.ico',
+      badge: '/favicon.ico',
+      vibrate: [400, 200, 400, 200, 400],
+      requireInteraction: true,
+      renotify: true,
+      tag: data.tag || data.data?.tag || ('lumaro-' + (data.data?.orderId || Date.now())),
+      data: { url, orderId: data.data?.orderId }
+    })
+  );
 });
 
 // Handle notification click
@@ -43,7 +85,7 @@ self.addEventListener('notificationclick', (event) => {
   console.log('[firebase-messaging-sw.js] Notification clicked:', event.notification);
   event.notification.close();
 
-  const targetUrl = event.notification.data?.url || '/';
+  const targetUrl = event.notification.data?.url || '/my-orders';
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {

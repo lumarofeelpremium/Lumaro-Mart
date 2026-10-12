@@ -19,6 +19,7 @@ export default defineConfig(({mode}) => {
       },
     },
     optimizeDeps: {
+      entries: ['index.html'],
       exclude: ['firebase', 'firebase/app', 'firebase/auth', 'firebase/firestore', 'firebase/storage'],
     },
     build: {
