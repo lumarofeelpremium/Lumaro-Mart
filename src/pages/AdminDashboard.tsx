@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle, QrCode, ArrowUpDown, Award, Sparkles, Gift, Wallet, Globe, MapPin, Building2, Zap, Share2, Copy, Key, Megaphone, Tag, Crown, Truck } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Users, Package, TrendingUp, ShieldCheck, Edit2, Trash2, Plus, X, Layers, AlertTriangle, Search, Settings, CheckCircle, ShoppingBag, XCircle, Clock, Send, Bell, FileText, Printer, Download, Filter, Phone, Image, Loader2, Star, Layout, Eye, EyeOff, Smartphone, DollarSign, HelpCircle, QrCode, ArrowUpDown, Award, Sparkles, Gift, Wallet, Globe, MapPin, Building2, Zap, Share2, Copy, Key, Megaphone, Tag, Crown, Truck, Flame, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { runDailyOrderSalesAnalysis, fetchFirestoreOrderAnalyticsSummary } from '../lib/order-analytics';
 import { Button, Input } from '../components/ui/Base';
 import { User, Product, Category, Order, AppSettings, Banner, ProductVariant, DayDeliveryRule, UserSubscription } from '../types';
 import { DAYS_OF_WEEK, getTodayDeliveryRule, cancelUserSubscription, verifyAndActivateSubscription } from '../lib/subscription-utils';
@@ -16,7 +17,7 @@ import * as XLSX from 'xlsx';
 import { downloadReceiptPdf, sendWhatsAppBill, sendOrderStatusWhatsAppAlert, calculateEarnedPoints, printIsolatedElement, shareReceiptPdf } from '../lib/receipt-utils';
 import { downloadSalesExcel, shareSalesExcel } from '../lib/excel-utils';
 import { sendTelegramOrderCancelAlert } from '../lib/telegram-utils';
-import { isFcmSupported, getFcmPermissionStatus, requestFcmToken, requestFcmTokenDetailed, saveFcmToken, showPlatformNotification, triggerOrderAlertSoundAndVibration, sendCustomerFcmOrderStatusAlert } from '../lib/fcm-utils';
+import { isFcmSupported, getFcmPermissionStatus, requestFcmToken, requestFcmTokenDetailed, saveFcmToken, showPlatformNotification, triggerOrderAlertSoundAndVibration, sendCustomerFcmOrderStatusAlert, sendAdminFcmStockAlert, registerCurrentDeviceAsAdminReceiver } from '../lib/fcm-utils';
 import { PrintableOrderReceipt } from '../components/PrintableOrderReceipt';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
 import { WhatsAppStatusAlertModal } from '../components/WhatsAppStatusAlertModal';
@@ -114,6 +115,17 @@ export const AdminDashboard = () => {
       return () => clearTimeout(timer);
     }
   }, [successMessage]);
+
+  // Automatically ensure current device is registered as an Admin FCM Receiver for background alerts
+  useEffect(() => {
+    if (auth.currentUser?.uid && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      registerCurrentDeviceAsAdminReceiver(auth.currentUser.uid).then(res => {
+        if (res.success) {
+          console.log('[Admin] Device successfully registered for background order pushes!');
+        }
+      }).catch(e => console.warn('[Admin] Auto device register error:', e));
+    }
+  }, [auth.currentUser?.uid]);
 
   // Merge recent (ultra-fast) and older (delayed) orders dynamically
   useEffect(() => {
@@ -742,32 +754,41 @@ export const AdminDashboard = () => {
       }
 
       // Create Customer Order Update Notification in Firestore
+      const shortId = (orderId || orderData.id).slice(-6).toUpperCase();
       const statusTitles: Record<string, { title: string; message: string }> = {
+        pending: {
+          title: `Order Pending ⏳ (#${shortId})`,
+          message: `Aapka order review ho raha hai. Store jaldi hi isko confirm karega.`
+        },
         confirmed: {
-          title: `Order Confirmed! (#${(orderId || orderData.id).slice(-6).toUpperCase()})`,
+          title: `Order Confirmed! ✅ (#${shortId})`,
+          message: `Aapka order confirm ho gaya hai aur store par pack kiya ja raha hai.`
+        },
+        confirm: {
+          title: `Order Confirmed! ✅ (#${shortId})`,
           message: `Aapka order confirm ho gaya hai aur store par pack kiya ja raha hai.`
         },
         packed: {
-          title: `Order Packed! (#${(orderId || orderData.id).slice(-6).toUpperCase()})`,
+          title: `Order Packed! 📦 (#${shortId})`,
           message: `Aapka order pack ho chuka hai aur delivery ke liye ready hai.`
         },
         out_for_delivery: {
-          title: `Order Out for Delivery! 🚚 (#${(orderId || orderData.id).slice(-6).toUpperCase()})`,
+          title: `Order Out for Delivery! 🚚 (#${shortId})`,
           message: `Aapka order delivery person ke sath nikal chuka hai. Jaldi hi aapke paas pahuchega!`
         },
         delivered: {
-          title: `Order Delivered! 🎉 (#${(orderId || orderData.id).slice(-6).toUpperCase()})`,
+          title: `Order Delivered! 🎉 (#${shortId})`,
           message: `Aapka order successfully deliver ho gaya hai. Lumaro Mart se shopping karne ke liye dhanyawad!`
         },
         canceled: {
-          title: `Order Canceled (#${(orderId || orderData.id).slice(-6).toUpperCase()})`,
+          title: `Order Canceled ❌ (#${shortId})`,
           message: `Aapka order store dwara cancel kar diya gaya hai.`
         }
       };
 
       const notifInfo = statusTitles[newStatus] || {
-        title: `Order Update: ${newStatus}`,
-        message: `Aapke order ka status ab ${newStatus} hai.`
+        title: `Order Update: ${newStatus.toUpperCase()} (#${shortId})`,
+        message: `Aapke order ka status ab ${newStatus} ho gaya hai.`
       };
 
       if (orderData.userId) {
@@ -1223,13 +1244,15 @@ const BroadcastTab = ({
                 <div className="flex items-start gap-3 flex-1 min-w-0">
                   <div className={cn(
                     "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
+                    notif.type === 'stock_alert' ? "bg-red-100 text-red-600 animate-pulse" :
                     notif.type === 'flash_sale' ? "bg-amber-100 text-amber-600" :
                     notif.type === 'offer' || notif.type === 'discount' ? "bg-rose-100 text-rose-600" :
                     notif.type === 'announcement' ? "bg-purple-100 text-purple-600" :
                     notif.type === 'new_product' ? "bg-emerald-100 text-emerald-600" :
                     "bg-blue-100 text-blue-600"
                   )}>
-                    {notif.type === 'flash_sale' ? <Zap size={18} /> :
+                    {notif.type === 'stock_alert' ? <AlertTriangle size={18} /> :
+                     notif.type === 'flash_sale' ? <Zap size={18} /> :
                      notif.type === 'announcement' ? <Megaphone size={18} /> :
                      notif.type === 'new_product' ? <Package size={18} /> :
                      <Tag size={18} />}
@@ -1238,12 +1261,14 @@ const BroadcastTab = ({
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className={cn(
                         "text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded",
+                        notif.type === 'stock_alert' ? "bg-red-600 text-white font-black" :
                         notif.type === 'flash_sale' ? "bg-amber-100 text-amber-700" :
                         notif.type === 'offer' || notif.type === 'discount' ? "bg-rose-100 text-rose-700" :
                         notif.type === 'announcement' ? "bg-purple-100 text-purple-700" :
                         "bg-emerald-100 text-emerald-700"
                       )}>
-                        {notif.type === 'flash_sale' ? '⚡ Flash Sale' :
+                        {notif.type === 'stock_alert' ? '🚨 Stock Out Alert' :
+                         notif.type === 'flash_sale' ? '⚡ Flash Sale' :
                          notif.type === 'offer' ? '🏷️ Special Offer' :
                          notif.type === 'discount' ? '🎁 Discount' :
                          notif.type === 'announcement' ? '📢 Notice' :
@@ -1916,7 +1941,63 @@ const ProductList = ({
 }) => {
   const [isAlertsExpanded, setIsAlertsExpanded] = useState(false);
   const [filterTab, setFilterTab] = useState<'all' | 'popular' | 'low-stock' | 'all-india' | 'states' | 'districts' | 'pincodes'>('all');
+  const [isAnalyzingOrders, setIsAnalyzingOrders] = useState(false);
+  const [analysisStatusMsg, setAnalysisStatusMsg] = useState<string | null>(null);
+  const [lastAnalysisDate, setLastAnalysisDate] = useState<string>(() => {
+    return typeof localStorage !== 'undefined' ? (localStorage.getItem('lumaro_last_order_analysis_date') || '') : '';
+  });
+
+  const handleRunDailyAnalysis = async () => {
+    setIsAnalyzingOrders(true);
+    setAnalysisStatusMsg(null);
+    try {
+      const res = await runDailyOrderSalesAnalysis(true);
+      if (res.success) {
+        setAnalysisStatusMsg(`✅ दैनिक विश्लेषण पूर्ण! ${res.totalOrdersChecked} ऑर्डर्स जाँचे गए और टॉप ${res.topProducts.length} प्रोडक्ट्स का क्रम अपडेट कर दिया गया।`);
+        setLastAnalysisDate(res.lastAnalyzedDate);
+      } else {
+        setAnalysisStatusMsg(`⚠️ विश्लेषण त्रुटि: ${res.message}`);
+      }
+    } catch (err: any) {
+      setAnalysisStatusMsg(`⚠️ विश्लेषण विफल: ${err?.message || 'Error'}`);
+    } finally {
+      setIsAnalyzingOrders(false);
+    }
+  };
+
+  const [isSendingStockAlert, setIsSendingStockAlert] = useState(false);
+  const [stockAlertToast, setStockAlertToast] = useState<string | null>(null);
+
   const lowStockItems = products.filter(p => p.stock <= stockThreshold);
+  const outOfStockItems = products.filter(p => p.stock <= 0);
+
+  const handleTriggerStockFcmAlert = async () => {
+    if (lowStockItems.length === 0) return;
+    setIsSendingStockAlert(true);
+    setStockAlertToast(null);
+    try {
+      const targetItems = outOfStockItems.length > 0 ? outOfStockItems : lowStockItems.slice(0, 5);
+      const res = await sendAdminFcmStockAlert({
+        products: targetItems.map(p => ({
+          id: p.id,
+          name: p.name,
+          stock: p.stock,
+          category: p.category,
+          image: p.image,
+          isOutOfStock: p.stock <= 0
+        })),
+        alertType: outOfStockItems.length > 0 ? 'out_of_stock' : 'low_stock',
+        force: true
+      });
+      setStockAlertToast(res.message);
+      setTimeout(() => setStockAlertToast(null), 6000);
+    } catch (err: any) {
+      setStockAlertToast(`FCM error: ${err?.message || 'Error'}`);
+      setTimeout(() => setStockAlertToast(null), 6000);
+    } finally {
+      setIsSendingStockAlert(false);
+    }
+  };
   
   const hiddenCategoryNames = useMemo(() => {
     return new Set(
@@ -1946,20 +2027,47 @@ const ProductList = ({
     });
   }, [products]);
 
+  // Products sorted strictly by salesCount (order quantity) descending:
+  // Decreasing order (घटते क्रम में): Highest customer order volume #1, then 2, 3...
+  const sortedBySalesProducts = useMemo(() => {
+    return [...products].sort((a, b) => {
+      const salesA = Number(a.salesCount) || 0;
+      const salesB = Number(b.salesCount) || 0;
+      if (salesB !== salesA) return salesB - salesA; // Decreasing order
+      const ratingA = Number(a.rating) || 0;
+      const ratingB = Number(b.rating) || 0;
+      if (ratingB !== ratingA) return ratingB - ratingA;
+      const creatA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+      const creatB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+      return creatB - creatA;
+    });
+  }, [products]);
+
   // Map of productId to popular rank (1-indexed)
   const popularRankMap = useMemo(() => {
     const map = new Map<string, number>();
-    sortedPopularProducts.forEach((p, idx) => {
-      map.set(p.id, idx + 1);
-    });
+    if (sortedPopularProducts.length > 0) {
+      sortedPopularProducts.forEach((p, idx) => {
+        map.set(p.id, idx + 1);
+      });
+    } else {
+      sortedBySalesProducts.forEach((p, idx) => {
+        map.set(p.id, idx + 1);
+      });
+    }
     return map;
-  }, [sortedPopularProducts]);
+  }, [sortedPopularProducts, sortedBySalesProducts]);
 
   const [itemsPerPage, setItemsPerPage] = useState<number>(25);
 
   const displayedSourceList = useMemo(() => {
     if (filterTab === 'popular') {
-      return sortedPopularProducts;
+      if (sortedPopularProducts.length > 0) {
+        return sortedPopularProducts;
+      }
+      // When NO popular product is selected by admin:
+      // Show products in decreasing order of customer order volume!
+      return sortedBySalesProducts;
     }
     if (filterTab === 'low-stock') {
       return lowStockItems;
@@ -1997,26 +2105,54 @@ const ProductList = ({
   return (
     <div className="space-y-6">
       {/* Alerts Section */}
-      <div className="bg-orange-50 rounded-[32px] p-6 border border-orange-100">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2 text-orange-600">
-            <AlertTriangle size={20} />
-            <h3 className="font-bold text-sm">Low Stock Alerts ({lowStockItems.length})</h3>
+      <div className={cn(
+        "rounded-[32px] p-6 border transition-all",
+        outOfStockItems.length > 0 
+          ? "bg-rose-50/90 border-rose-200" 
+          : "bg-orange-50 border-orange-100"
+      )}>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            {outOfStockItems.length > 0 ? (
+              <span className="text-xl">🚨</span>
+            ) : (
+              <AlertTriangle size={20} className="text-orange-600" />
+            )}
+            <h3 className="font-bold text-sm text-gray-900">
+              Low Stock & Out-of-Stock Alerts ({lowStockItems.length})
+            </h3>
+            {outOfStockItems.length > 0 && (
+              <span className="text-[10px] bg-red-600 text-white font-black px-2.5 py-0.5 rounded-full uppercase shadow-2xs animate-pulse">
+                {outOfStockItems.length} Stock Out (0 Left)
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {lowStockItems.length > 0 && (
+              <button
+                type="button"
+                onClick={handleTriggerStockFcmAlert}
+                disabled={isSendingStockAlert}
+                className="text-xs font-bold bg-white hover:bg-rose-50 text-rose-700 px-3 py-1.5 rounded-xl border border-rose-200 shadow-2xs flex items-center gap-1.5 transition-all cursor-pointer"
+                title="Admin ke registered phones par push notification aur alarm bajayein"
+              >
+                <Bell size={13} className={isSendingStockAlert ? "animate-spin text-rose-600" : "text-rose-600"} />
+                <span>{isSendingStockAlert ? "Sending FCM..." : "📲 Phone Par FCM Alert Bhejein"}</span>
+              </button>
+            )}
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-orange-400 uppercase">Threshold:</span>
+              <span className="text-[10px] font-bold text-gray-500 uppercase">Threshold:</span>
               <input 
                 type="number" 
                 value={stockThreshold}
                 onChange={(e) => onThresholdChange(Number(e.target.value))}
-                className="w-12 bg-white border border-orange-200 rounded-lg px-2 py-1 text-xs font-bold text-orange-600 outline-none"
+                className="w-12 bg-white border border-gray-300 rounded-lg px-2 py-1 text-xs font-bold text-gray-800 outline-none"
               />
             </div>
             {lowStockItems.length > 0 && (
               <button 
                 onClick={() => setIsAlertsExpanded(!isAlertsExpanded)}
-                className="p-2 bg-orange-100 text-orange-600 rounded-full hover:bg-orange-200 transition-colors"
+                className="p-2 bg-white text-gray-700 rounded-full hover:bg-gray-100 transition-colors border border-gray-200"
                 title={isAlertsExpanded ? "Collapse" : "Expand"}
               >
                 {isAlertsExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -2025,8 +2161,15 @@ const ProductList = ({
           </div>
         </div>
 
+        {stockAlertToast && (
+          <div className="mb-3 p-2.5 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-bold flex items-center gap-2">
+            <span>✅</span>
+            <span>{stockAlertToast}</span>
+          </div>
+        )}
+
         {lowStockItems.length === 0 ? (
-          <p className="text-[10px] text-orange-400 italic">All products are well stocked.</p>
+          <p className="text-[10px] text-emerald-600 font-bold italic">All products are well stocked.</p>
         ) : (
           <AnimatePresence>
             {isAlertsExpanded ? (
@@ -2042,26 +2185,52 @@ const ProductList = ({
                     onClick={() => {
                       onEdit(p);
                     }}
-                    className="w-full flex justify-between items-center bg-white/50 p-3 rounded-xl border border-orange-100/50 hover:bg-white hover:border-orange-300 transition-all text-left group"
+                    className={cn(
+                      "w-full flex justify-between items-center p-3 rounded-2xl border transition-all text-left group",
+                      p.stock <= 0 
+                        ? "bg-white border-red-300 hover:border-red-500 shadow-2xs" 
+                        : "bg-white/70 border-orange-200 hover:bg-white hover:border-orange-400"
+                    )}
                     title="Click to edit product stock"
                   >
-                    <div className="flex flex-col">
-                      <span className="text-[11px] font-bold text-orange-700 group-hover:text-orange-900">{p.name}</span>
-                      <span className="text-[9px] text-orange-400 font-medium">{p.category}</span>
+                    <div className="flex flex-col min-w-0 pr-2">
+                      <div className="flex items-center gap-2">
+                        {p.stock <= 0 && <span className="text-xs">⚠️</span>}
+                        <span className={cn(
+                          "text-[11px] font-bold truncate",
+                          p.stock <= 0 ? "text-red-700" : "text-gray-900"
+                        )}>
+                          {p.name}
+                        </span>
+                      </div>
+                      <span className="text-[9px] text-gray-500 font-medium">{p.category}</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold px-2 py-1 bg-orange-100 text-orange-600 rounded-lg group-hover:bg-orange-200">
-                        {p.stock} left
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={cn(
+                        "text-[10px] font-black px-2.5 py-1 rounded-lg",
+                        p.stock <= 0 
+                          ? "bg-red-600 text-white shadow-2xs animate-pulse" 
+                          : "bg-orange-100 text-orange-700"
+                      )}>
+                        {p.stock <= 0 ? "OUT OF STOCK (0)" : `${p.stock} left`}
                       </span>
-                      <Edit2 size={12} className="text-orange-400 group-hover:text-orange-600" />
+                      <Edit2 size={12} className="text-gray-400 group-hover:text-gray-700" />
                     </div>
                   </button>
                 ))}
               </motion.div>
             ) : (
-              <p className="text-[10px] text-orange-500 font-medium bg-orange-100/50 px-3 py-2 rounded-xl border border-orange-100">
-                ⚠️ Click the arrow to view {lowStockItems.length} products with low stock.
-              </p>
+              <div className="flex items-center justify-between text-[11px] font-medium bg-white/80 px-3.5 py-2.5 rounded-2xl border border-gray-200 flex-wrap gap-2">
+                <span className="text-gray-700">
+                  {outOfStockItems.length > 0 ? (
+                    <strong className="text-red-600">🚨 {outOfStockItems.length} products stock-out (0 left)!</strong>
+                  ) : (
+                    <span>⚠️ {lowStockItems.length} products with low stock.</span>
+                  )}
+                  {" "}Kripya jaldi purchase karke restock karein.
+                </span>
+                <span className="text-[10px] text-gray-500 font-bold">Arrow par click karke dekhein →</span>
+              </div>
             )}
           </AnimatePresence>
         )}
@@ -2104,7 +2273,7 @@ const ProductList = ({
             )}
           >
             <Star size={14} className={filterTab === 'popular' ? "fill-white" : "fill-amber-500"} />
-            Popular Items ({sortedPopularProducts.length}/10 Max)
+            Popular Items ({sortedPopularProducts.length > 0 ? `${sortedPopularProducts.length}/10 Max` : 'Auto Most-Ordered'})
           </button>
           <button
             onClick={() => {
@@ -2184,26 +2353,68 @@ const ProductList = ({
 
         {/* Popular items explanation banner */}
         {filterTab === 'popular' && (
-          <div className="bg-amber-50/90 border border-amber-200 rounded-2xl p-4 text-xs text-amber-900 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 font-bold text-amber-800">
-                <Star size={16} className="fill-amber-500 text-amber-600" />
-                <span>Popular Items Live Order (Auto Max 10 Items)</span>
+          sortedPopularProducts.length > 0 ? (
+            <div className="bg-amber-50/90 border border-amber-200 rounded-2xl p-4 text-xs text-amber-900 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-bold text-amber-800">
+                  <Star size={16} className="fill-amber-500 text-amber-600" />
+                  <span>Manual Popular Items Active ({sortedPopularProducts.length} selected - Max 10 on Home)</span>
+                </div>
+                {sortedPopularProducts.length > 10 && onTrimPopular && (
+                  <button
+                    type="button"
+                    onClick={onTrimPopular}
+                    className="px-3 py-1 bg-amber-600 text-white rounded-xl text-[10px] font-bold hover:bg-amber-700 transition-all shadow-sm"
+                  >
+                    Trim to Max 10 Now
+                  </button>
+                )}
               </div>
-              {sortedPopularProducts.length > 10 && onTrimPopular && (
+              <p className="text-[11px] text-amber-700 leading-relaxed">
+                ⭐ <strong>Manual Override Active:</strong> Customer Home Screen par strictly aapke dwara chune gaye Top 10 popular items dikh rahe hain (#1 sabse naya). Agar aap kisi bhi item ko popular nahi rakhenge, toh system automatically <strong>customers dwara sabse zyada order kiye gaye items ko ghatte kram (decreasing order)</strong> me dikhayega.
+              </p>
+            </div>
+          ) : (
+            <div className="bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 rounded-2xl p-4 text-xs text-orange-950 space-y-3 shadow-xs">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2 font-bold text-orange-900">
+                  <Flame size={18} className="text-orange-500 fill-orange-500" />
+                  <span className="text-sm">Auto Most-Ordered Ranking Active (घटते क्रम में)</span>
+                </div>
                 <button
                   type="button"
-                  onClick={onTrimPopular}
-                  className="px-3 py-1 bg-amber-600 text-white rounded-xl text-[10px] font-bold hover:bg-amber-700 transition-all shadow-sm"
+                  onClick={handleRunDailyAnalysis}
+                  disabled={isAnalyzingOrders}
+                  className="px-3 py-1.5 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50 cursor-pointer active:scale-95"
                 >
-                  Trim to Max 10 Now
+                  <RefreshCw size={13} className={isAnalyzingOrders ? "animate-spin" : ""} />
+                  <span>{isAnalyzingOrders ? 'विश्लेषण चालू है...' : '🔄 Run Orders Analysis Now'}</span>
                 </button>
+              </div>
+              <p className="text-[11px] text-orange-800 leading-relaxed">
+                📊 <strong>दैनिक ऑर्डर विश्लेषण सक्रिय:</strong> वर्तमान में आपने किसी भी प्रोडक्ट को मैन्युअल रूप से 'Popular' स्टार मार्क नहीं किया है। इसलिए ग्राहकों के होम स्क्रीन पर वो प्रोडक्ट्स दिख रहे हैं जो <strong>उपयोगकर्ताओं द्वारा सबसे ज्यादा संख्या में ऑर्डर किए गए हैं — बिल्कुल घटते क्रम में (#1 से #10 तक)</strong>।
+              </p>
+              {analysisStatusMsg && (
+                <div className="p-2.5 rounded-xl bg-white/90 border border-orange-200 text-[11px] font-bold text-orange-900">
+                  {analysisStatusMsg}
+                </div>
               )}
+              <div className="flex items-center gap-4 text-[11px] text-orange-700 bg-white/70 p-2.5 rounded-xl border border-orange-100 flex-wrap">
+                <div>
+                  <span className="font-semibold text-gray-600">अंतिम विश्लेषण: </span>
+                  <span className="font-bold text-orange-900">{lastAnalysisDate || 'आज'}</span>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-600">विश्लेषण नियम: </span>
+                  <span className="font-bold text-orange-900">रोजाना 1 बार ऑटोमैटिक</span>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-600">होम स्क्रीन क्रम: </span>
+                  <span className="font-bold text-orange-900">घटता क्रम (Decreasing Order)</span>
+                </div>
+              </div>
             </div>
-            <p className="text-[11px] text-amber-700 leading-relaxed">
-              ⭐ <strong>Auto Max 10 Rule Active:</strong> Customer Home Screen par strictly <strong>Top 10</strong> popular items dikhte hain. Jab bhi aap kisi naye product ko Popular banate hain, woh automatically <strong>#1 position (sabse upar)</strong> par aa jata hai aur <strong>10 se upar jaane par sabse purana item apne aap popular list se uncheck/remove ho jata hai</strong>.
-            </p>
-          </div>
+          )
         )}
 
         {/* Search Input */}
@@ -2266,7 +2477,7 @@ const ProductList = ({
                           {product.offerLabel}
                         </span>
                       )}
-                      {product.isPopular && (
+                      {product.isPopular ? (
                         <span className={cn(
                           "text-[9px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1",
                           isTop10Popular 
@@ -2276,7 +2487,12 @@ const ProductList = ({
                           <Star size={10} className={isTop10Popular ? "fill-amber-500 text-amber-600" : "text-gray-400"} />
                           {popularRank ? `#${popularRank} Popular${popularRank === 1 ? ' (First on Home)' : ''}` : 'Popular'}
                         </span>
-                      )}
+                      ) : sortedPopularProducts.length === 0 && popularRank !== undefined && popularRank <= 10 ? (
+                        <span className="text-[9px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 bg-orange-100 text-orange-800 border border-orange-300">
+                          <Flame size={10} className="fill-orange-500 text-orange-600" />
+                          #{popularRank} Most Ordered ({product.salesCount || 0} orders)
+                        </span>
+                      ) : null}
                       {isCatHidden && (
                         <span className="text-[9px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
                           <EyeOff size={10} /> Hidden Category
@@ -2288,7 +2504,7 @@ const ProductList = ({
                       {product.discountPrice && (
                         <p className="text-[8px] text-red-400 line-through">₹{product.price}</p>
                       )}
-                      <span className="text-[10px] text-gray-400">• {product.stock} in stock • {product.category}</span>
+                      <span className="text-[10px] text-gray-400">• {product.stock} in stock • {product.category} • {product.salesCount || 0} sold</span>
                       {product.hasVariants && product.variants && product.variants.length > 0 && (
                         <span className="text-[9px] px-2 py-0.5 rounded-full font-bold bg-teal-50 text-teal-800 border border-teal-200 flex items-center gap-1">
                           ⚖️ {product.variants.length} Weights ({sortVariantsByWeight(product.variants).map(v => v.weight).join(', ')})
@@ -3978,13 +4194,11 @@ const ProductFormModal = ({
     if (product?.variants && product.variants.length > 0) {
       return sortVariantsByWeight(product.variants);
     }
-    const basePrice = product?.price || 50;
-    const baseDiscountPrice = product?.discountPrice || 45;
     return sortVariantsByWeight([
-      { id: 'v_100g', weight: '100g', price: Math.round(basePrice * 0.25) || 20, discountPrice: Math.round(baseDiscountPrice * 0.25) || 18, stock: 50 },
-      { id: 'v_250g', weight: '250g', price: Math.round(basePrice * 0.5) || 35, discountPrice: Math.round(baseDiscountPrice * 0.5) || 30, stock: 50 },
-      { id: 'v_500g', weight: '500g', price: basePrice, discountPrice: baseDiscountPrice, stock: 50 },
-      { id: 'v_1kg', weight: '1kg', price: Math.round(basePrice * 1.9) || 95, discountPrice: Math.round(baseDiscountPrice * 1.9) || 85, stock: 50 }
+      { id: 'v_100g', weight: '100g', price: '' as any, discountPrice: undefined, stock: 100 },
+      { id: 'v_250g', weight: '250g', price: '' as any, discountPrice: undefined, stock: 100 },
+      { id: 'v_500g', weight: '500g', price: '' as any, discountPrice: undefined, stock: 100 },
+      { id: 'v_1kg', weight: '1kg', price: '' as any, discountPrice: undefined, stock: 100 }
     ]);
   });
 
@@ -4171,7 +4385,7 @@ const ProductFormModal = ({
               weight: v.weight.trim(),
               price: Number(v.price) || 0,
               discountPrice: v.discountPrice ? Number(v.discountPrice) : undefined,
-              stock: v.stock !== undefined ? Number(v.stock) : 50
+              stock: v.stock !== undefined ? Number(v.stock) : 100
             }))
         );
         
@@ -4544,9 +4758,9 @@ const ProductFormModal = ({
                             const newV: ProductVariant = {
                               id: `v_${w.toLowerCase()}_${Date.now()}`,
                               weight: w,
-                              price: Number(formData.price) || 100,
-                              discountPrice: formData.discountPrice ? Number(formData.discountPrice) : undefined,
-                              stock: Number(formData.stock) || 50
+                              price: '' as any,
+                              discountPrice: undefined,
+                              stock: 100
                             };
                             setVariants(prev => sortVariantsByWeight([...prev, newV]));
                           }}
@@ -4588,9 +4802,9 @@ const ProductFormModal = ({
                         const newV: ProductVariant = {
                           id: `v_${Date.now()}`,
                           weight: '',
-                          price: Number(formData.price) || 100,
-                          discountPrice: formData.discountPrice ? Number(formData.discountPrice) : undefined,
-                          stock: Number(formData.stock) || 50
+                          price: '' as any,
+                          discountPrice: undefined,
+                          stock: 100
                         };
                         setVariants(prev => [...prev, newV]);
                       }}
@@ -4659,10 +4873,11 @@ const ProductFormModal = ({
                             <input 
                               type="number"
                               min="0"
-                              value={v.price}
+                              value={v.price !== undefined && v.price !== null && v.price !== ('' as any) ? v.price : ''}
                               onChange={(e) => {
                                 const updated = [...variants];
-                                updated[index].price = Number(e.target.value);
+                                const val = e.target.value;
+                                updated[index].price = val === '' ? ('' as any) : Number(val);
                                 setVariants(updated);
                               }}
                               placeholder="MRP"

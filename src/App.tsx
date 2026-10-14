@@ -20,11 +20,13 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import ScrollToTop from './components/ScrollToTop';
 import { MobileBackButtonSync } from './components/MobileBackButtonSync';
 import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
+import { InAppOrderNotificationBanner, InAppOrderNotificationData } from './components/InAppOrderNotificationBanner';
 import { setupForegroundPushListener, showPlatformNotification, triggerOrderAlertSoundAndVibration, ensureUserFcmTokenSynced } from './lib/fcm-utils';
 import { User, CartItem, Product, Category, Banner, DeliveryLocation, ProductVariant } from './types';
 import { getStoredDeliveryLocation, setStoredDeliveryLocation, getStateFromPincode } from './lib/location-utils';
 import { cacheUtils } from './lib/cache-utils';
 import { sortVariantsByWeight } from './lib/utils';
+import { checkAndTriggerDailyAnalysis } from './lib/order-analytics';
 
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -62,6 +64,7 @@ export default function App() {
   const [initialDataLoading, setInitialDataLoading] = useState(true);
   const [isQuotaExhausted, setIsQuotaExhausted] = useState(false);
   const [deliveryLocation, setDeliveryLocation] = useState<DeliveryLocation | null>(() => getStoredDeliveryLocation());
+  const [inAppOrderNotification, setInAppOrderNotification] = useState<InAppOrderNotificationData | null>(null);
 
   // Auto-sync delivery location if user has saved pincode in their profile
   useEffect(() => {
@@ -88,11 +91,80 @@ export default function App() {
   useEffect(() => {
     const unsubPush = setupForegroundPushListener((payload) => {
       console.log('[App] Foreground push message received:', payload);
+      const title = payload.notification?.title || payload.data?.title;
+      const body = payload.notification?.body || payload.data?.body;
+      const orderId = payload.data?.orderId || '';
+      let status = (payload.data?.status || '').toLowerCase().trim();
+
+      // Automatically infer status if not directly present in data payload
+      if (!status || status === 'update') {
+        const text = `${title || ''} ${body || ''}`.toLowerCase();
+        if (text.includes('confirm')) status = 'confirmed';
+        else if (text.includes('pack')) status = 'packed';
+        else if (text.includes('out for delivery') || text.includes('shipped')) status = 'out_for_delivery';
+        else if (text.includes('deliver')) status = 'delivered';
+        else if (text.includes('cancel')) status = 'canceled';
+        else if (text.includes('pending')) status = 'pending';
+        else status = 'confirmed';
+      }
+
+      if (title || body) {
+        setInAppOrderNotification({
+          orderId,
+          status,
+          title: title || 'Order Status Update',
+          message: body || 'Aapke order par naya status update aaya hai.',
+          createdAt: Date.now()
+        });
+      }
     });
     return () => {
       if (unsubPush) unsubPush();
     };
   }, []);
+
+  // Real-time cross-tab BroadcastChannel listener for Customer Order Status updates (0ms local latency)
+  useEffect(() => {
+    let customerChannel: BroadcastChannel | null = null;
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        customerChannel = new BroadcastChannel('lumaro_order_status_alerts');
+        customerChannel.onmessage = (event) => {
+          if (event.data?.type === 'ORDER_STATUS_UPDATE') {
+            const data = event.data;
+            if (!user?.uid || !data.userId || data.userId === user.uid) {
+              try {
+                const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+                audio.volume = 0.6;
+                audio.play().catch(() => {});
+              } catch (_) {}
+
+              setInAppOrderNotification({
+                orderId: data.orderId,
+                status: data.status,
+                title: data.title,
+                message: data.message,
+                createdAt: Date.now()
+              });
+
+              if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+                showPlatformNotification(data.title, {
+                  body: data.message,
+                  icon: '/icon-192.png',
+                  tag: `order-${data.orderId}-${Date.now()}`,
+                  data: { url: '/my-orders', orderId: data.orderId }
+                });
+              }
+            }
+          }
+        };
+      }
+    } catch (_) {}
+
+    return () => {
+      if (customerChannel) customerChannel.close();
+    };
+  }, [user?.uid]);
 
   // Automatically ensure logged-in customer's FCM token is generated & synced
   useEffect(() => {
@@ -101,7 +173,7 @@ export default function App() {
     }
   }, [user?.uid]);
 
-  // Real-time listener for Customer's Orders to trigger Instant Browser & Phone Notifications
+  // Real-time listener for Customer's Orders to trigger Instant In-App Banner & OS Notifications
   const previousOrderStatuses = useRef<Record<string, string>>({});
   const isOrdersInitRef = useRef(true);
 
@@ -127,47 +199,84 @@ export default function App() {
         const currentStatus = orderData.status;
         const oldStatus = previousOrderStatuses.current[orderId];
 
-        if (change.type === 'modified' && oldStatus && oldStatus !== currentStatus) {
+        if (change.type === 'modified' && (!oldStatus || oldStatus !== currentStatus)) {
           previousOrderStatuses.current[orderId] = currentStatus;
 
+          const shortId = orderId.slice(-6).toUpperCase();
+          const normalizedStatus = (currentStatus || '').toLowerCase().trim();
+
           const statusTitles: Record<string, { title: string; message: string }> = {
+            pending: {
+              title: `Order Pending ⏳ (#${shortId})`,
+              message: `Aapka order pending hai. Store jaldi hi isko review aur confirm karega.`
+            },
             confirmed: {
-              title: `Order Confirmed! (#${orderId.slice(-6).toUpperCase()})`,
-              message: `Aapka order confirm ho gaya hai aur pack kiya ja raha hai.`
+              title: `Order Confirmed! ✅ (#${shortId})`,
+              message: `Aapka order confirm ho gaya hai aur store is par kaam kar raha hai.`
+            },
+            confirm: {
+              title: `Order Confirmed! ✅ (#${shortId})`,
+              message: `Aapka order confirm ho gaya hai aur store is par kaam kar raha hai.`
             },
             packed: {
-              title: `Order Packed! (#${orderId.slice(-6).toUpperCase()})`,
+              title: `Order Packed! 📦 (#${shortId})`,
+              message: `Aapka order pack ho chuka hai aur delivery ke liye ready hai.`
+            },
+            packing: {
+              title: `Order Packed! 📦 (#${shortId})`,
               message: `Aapka order pack ho chuka hai aur delivery ke liye ready hai.`
             },
             out_for_delivery: {
-              title: `Order Out for Delivery! 🚚 (#${orderId.slice(-6).toUpperCase()})`,
+              title: `Order Out for Delivery! 🚚 (#${shortId})`,
+              message: `Aapka order delivery person ke sath nikal chuka hai. Jaldi hi pahuchega!`
+            },
+            shipped: {
+              title: `Order Out for Delivery! 🚚 (#${shortId})`,
               message: `Aapka order delivery person ke sath nikal chuka hai. Jaldi hi pahuchega!`
             },
             delivered: {
-              title: `Order Delivered! 🎉 (#${orderId.slice(-6).toUpperCase()})`,
+              title: `Order Delivered! 🎉 (#${shortId})`,
               message: `Aapka order deliver ho gaya hai. Lumaro Mart se shopping ke liye dhanyawad!`
             },
             canceled: {
-              title: `Order Canceled (#${orderId.slice(-6).toUpperCase()})`,
-              message: `Aapka order cancel kar diya gaya hai.`
+              title: `Order Canceled ❌ (#${shortId})`,
+              message: `Aapka order store dwara cancel kar diya gaya hai.`
+            },
+            cancelled: {
+              title: `Order Canceled ❌ (#${shortId})`,
+              message: `Aapka order store dwara cancel kar diya gaya hai.`
             }
           };
 
-          const info = statusTitles[currentStatus];
-          if (info) {
-            try {
-              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
-              audio.volume = 0.6;
-              audio.play().catch(() => {});
-            } catch (_) {}
+          const info = statusTitles[normalizedStatus] || {
+            title: `Order Status: ${(currentStatus || 'Updated').toUpperCase()} (#${shortId})`,
+            message: `Aapke order ka status ab ${currentStatus} ho gaya hai.`
+          };
 
-            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-              showPlatformNotification(info.title, {
-                body: info.message,
-                icon: '/favicon.ico',
-                tag: `order-${orderId}`
-              });
-            }
+          // 1. Play alert chime sound
+          try {
+            const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+            audio.volume = 0.6;
+            audio.play().catch(() => {});
+          } catch (_) {}
+
+          // 2. Display Top Floating Heads-Up Banner on screen with text and status badge
+          setInAppOrderNotification({
+            orderId,
+            status: currentStatus,
+            title: info.title,
+            message: info.message,
+            createdAt: Date.now()
+          });
+
+          // 3. Trigger OS status bar / system shade notification
+          if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+            showPlatformNotification(info.title, {
+              body: info.message,
+              icon: '/icon-192.png',
+              tag: `order-${orderId}-${Date.now()}`,
+              data: { url: '/my-orders', orderId }
+            });
           }
         } else if (change.type === 'added') {
           previousOrderStatuses.current[orderId] = currentStatus;
@@ -196,8 +305,18 @@ export default function App() {
             if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
               showPlatformNotification(`🛍️ Naya Order! (₹${event.data.total})`, {
                 body: `${event.data.customerName || 'Customer'} ne naya order place kiya hai (#${event.data.orderId.slice(-6).toUpperCase()}).`,
-                icon: '/favicon.ico',
+                icon: '/icon-192.png',
                 tag: `admin-order-${event.data.orderId}`,
+                data: { url: '/admin' }
+              });
+            }
+          } else if (event.data?.type === 'STOCK_ALERT') {
+            triggerOrderAlertSoundAndVibration();
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              showPlatformNotification(event.data.title || '🚨 Stock Out Alert!', {
+                body: event.data.body || 'Product stock out ho gaya hai. Jaldi purchase karein.',
+                icon: '/icon-192.png',
+                tag: `admin-stock-${event.data.productId || Date.now()}`,
                 data: { url: '/admin' }
               });
             }
@@ -262,6 +381,12 @@ export default function App() {
     return () => {
       unsubAllProds();
     };
+  }, []);
+
+  // Automatic Daily Order Analysis: Runs once per day in the background
+  // Aggregates real orders to keep product salesCount & popular ranking fresh
+  useEffect(() => {
+    checkAndTriggerDailyAnalysis();
   }, []);
 
   // Centralized real-time listener for Categories and Banners
@@ -582,6 +707,13 @@ export default function App() {
       <Router>
         <ScrollToTop />
         <MobileBackButtonSync />
+        <InAppOrderNotificationBanner
+          notification={inAppOrderNotification}
+          onClose={() => setInAppOrderNotification(null)}
+          onNavigateToOrders={(orderId) => {
+            window.location.hash = '#/my-orders';
+          }}
+        />
         <div className="max-w-md mx-auto bg-white min-h-screen relative shadow-2xl shadow-black/10 overflow-x-hidden pb-24">
           {isQuotaExhausted && (
             <div className="bg-amber-600/95 backdrop-blur-xs text-white text-[11px] font-semibold py-1.5 px-3 flex items-center justify-between sticky top-0 z-50 shadow-xs">

@@ -136,11 +136,15 @@ export interface Notification {
   id: string;
   title: string;
   message: string;
-  type: 'new_product' | 'offer' | 'order_update' | 'flash_sale' | 'discount' | 'announcement';
+  type: 'new_product' | 'offer' | 'order_update' | 'flash_sale' | 'discount' | 'announcement' | 'stock_alert' | 'admin_order_alert';
   createdAt: any;
   productId?: string;
+  productName?: string;
   orderId?: string;
   userId?: string;
+  recipientRole?: string;
+  stock?: number;
+  isOutOfStock?: boolean;
   read?: boolean;
 }
 
@@ -152,6 +156,7 @@ export interface AppSettings {
   telegramBotToken?: string;
   telegramChatId?: string;
   stockThreshold?: number;
+  stockAlertsEnabled?: boolean;
   supportNumber?: string;
   supportEnabled?: boolean;
   orderTimingEnabled?: boolean;

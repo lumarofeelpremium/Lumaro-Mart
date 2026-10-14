@@ -1,6 +1,6 @@
 import { messaging, db } from '../firebase';
 import { getToken, onMessage, MessagePayload } from 'firebase/messaging';
-import { doc, setDoc, serverTimestamp, getDoc, collection, addDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, getDoc, collection, addDoc, updateDoc, arrayUnion, query, where, getDocs } from 'firebase/firestore';
 import { sendFcmV1Push } from './fcm-v1-client';
 
 export const DEFAULT_VAPID_KEY = 'BH5pHZc7Wf0ASibIMFNVtrRi-5Waime9pc9RYCnOh4XqHW3xbwAP8yBWofnR2tc3rbqQ4FnMd15liNgznCN5P08';
@@ -56,15 +56,21 @@ export const showPlatformNotification = async (
     const androidNotification = (window as unknown as {
       AndroidNotification?: {
         showNotification: (t: string, b: string, id: string) => void;
+        showNotificationWithRoute?: (t: string, b: string, id: string, route: string) => void;
         triggerVibration: (duration: number) => void;
       };
     }).AndroidNotification;
 
-    if (androidNotification && typeof androidNotification.showNotification === 'function') {
+    if (androidNotification) {
       try {
         const bodyText = (options?.body as string) || '';
         const orderId = options?.orderId || (options?.data?.orderId as string) || '';
-        androidNotification.showNotification(title, bodyText, orderId);
+        const route = (options?.data?.url as string) || '';
+        if (typeof androidNotification.showNotificationWithRoute === 'function') {
+          androidNotification.showNotificationWithRoute(title, bodyText, orderId, route);
+        } else if (typeof androidNotification.showNotification === 'function') {
+          androidNotification.showNotification(title, bodyText, orderId);
+        }
         return true;
       } catch (nativeErr) {
         console.warn('[Notification] Android Native Channel error:', nativeErr);
@@ -85,15 +91,33 @@ export const showPlatformNotification = async (
   // 2. Mobile/Android Service Worker showNotification (Mandatory for Android lock screen & shade in Chrome)
   if ('serviceWorker' in navigator) {
     try {
-      let reg = await navigator.serviceWorker.getRegistration('/');
-      if (!reg) {
-        reg = await navigator.serviceWorker.ready;
+      let reg: ServiceWorkerRegistration | undefined;
+      const regs = await navigator.serviceWorker.getRegistrations();
+      if (regs && regs.length > 0) {
+        reg = regs[0];
       }
-      if (reg && reg.showNotification) {
+      if (!reg) {
+        reg = await Promise.race([
+          navigator.serviceWorker.ready,
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500))
+        ]);
+      }
+      if (!reg) {
+        try {
+          reg = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+          await navigator.serviceWorker.ready;
+        } catch (_) {}
+      }
+      if (!reg) {
+        reg = await navigator.serviceWorker.getRegistration();
+      }
+      if (reg && typeof reg.showNotification === 'function') {
         await reg.showNotification(title, {
-          icon: '/favicon.ico',
-          badge: '/favicon.ico',
-          vibrate: [200, 100, 200],
+          icon: '/icon-192.png',
+          badge: '/icon-192.png',
+          vibrate: [300, 150, 300],
+          renotify: true,
+          requireInteraction: true,
           ...options
         } as any);
         return true;
@@ -106,7 +130,7 @@ export const showPlatformNotification = async (
   // 3. Desktop fallback (Only works on Desktop browsers)
   try {
     new Notification(title, {
-      icon: '/favicon.ico',
+      icon: '/icon-192.png',
       ...options
     });
     return true;
@@ -399,17 +423,20 @@ export const setupForegroundPushListener = (
         onNotification(payload);
       }
 
-      // If page is hidden or backgrounded, show native notification
-      if (document.hidden && Notification.permission === 'granted') {
-        const title = payload.notification?.title || payload.data?.title || 'Lumaro Mart';
-        const options: NotificationOptions = {
-          body: payload.notification?.body || payload.data?.body || '',
-          icon: payload.notification?.icon || payload.data?.icon || '/favicon.ico',
-          data: {
-            url: payload.data?.url || '/'
-          }
-        };
-        showPlatformNotification(title, options);
+      // Trigger platform notification whenever permission is granted
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        const title = payload.notification?.title || payload.data?.title || '🛍️ Order Status Update';
+        const bodyText = payload.notification?.body || payload.data?.body || '';
+        if (title || bodyText) {
+          showPlatformNotification(title, {
+            body: bodyText,
+            icon: '/icon-192.png',
+            data: {
+              url: payload.data?.url || '/my-orders',
+              orderId: payload.data?.orderId
+            }
+          });
+        }
       }
     });
 
@@ -478,6 +505,31 @@ export const broadcastNewOrderAlert = (data: {
 };
 
 /**
+ * Broadcasts instant real-time order status update to customer browser tabs/windows
+ */
+export const broadcastCustomerOrderStatusAlert = (data: {
+  orderId: string;
+  status: string;
+  title: string;
+  message: string;
+  userId?: string;
+}) => {
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      const channel = new BroadcastChannel('lumaro_order_status_alerts');
+      channel.postMessage({
+        type: 'ORDER_STATUS_UPDATE',
+        ...data,
+        timestamp: Date.now()
+      });
+      channel.close();
+    }
+  } catch (err) {
+    console.warn('BroadcastChannel customer alert error:', err);
+  }
+};
+
+/**
  * Registers the current device specifically as an Admin Notification Receiver
  */
 export const registerCurrentDeviceAsAdminReceiver = async (userId: string): Promise<{ success: boolean; token?: string; error?: string }> => {
@@ -522,17 +574,20 @@ export const sendAdminFcmOrderAlert = async (params: {
   address?: string;
 }) => {
   const shortId = params.orderId.slice(-6).toUpperCase();
-  const alertTitle = `🛍️ Naya Order Recieve Hua! (#${shortId})`;
-  const alertBody = `${params.customerName || 'Customer'} ne ₹${params.total} ka naya order place kiya hai.`;
+  const alertTitle = `🛍️ Naya Order Recieve Hua! (₹${params.total})`;
+  const alertBody = `${params.customerName || 'Customer'} ne ₹${params.total} ka naya order place kiya hai (#${shortId}). Tap karke Admin Dashboard me dekhein.`;
 
-  // 1. Broadcast to all open tabs / windows immediately (0ms latency)
+  // 1. Broadcast to all open tabs / windows immediately (0ms latency sound & popup)
   broadcastNewOrderAlert({
     orderId: params.orderId,
     total: params.total,
     customerName: params.customerName || 'Customer'
   });
 
-  // 2. Add record in notifications collection for admin history
+  // 2. Play alert sound & vibration on current device if admin is listening
+  triggerOrderAlertSoundAndVibration();
+
+  // 3. Add record in notifications collection for admin history
   try {
     await addDoc(collection(db, 'notifications'), {
       title: alertTitle,
@@ -547,64 +602,135 @@ export const sendAdminFcmOrderAlert = async (params: {
     console.warn('[FCM] Error adding admin order notification doc:', err);
   }
 
-  // 3. Send FCM Push Message via modern FCM v1 or Legacy API
+  // 4. Send background FCM Push to ALL registered Admin devices (even when app/phone is completely closed!)
   try {
     const settingsSnap = await getDoc(doc(db, 'settings', 'global'));
+    let serviceAccountJson = '';
+    let serverKey = '';
+    const tokensSet = new Set<string>();
+
     if (settingsSnap.exists()) {
       const data = settingsSnap.data();
-      const serviceAccountJson = data.fcmServiceAccountJson?.trim();
-      const serverKey = data.fcmServerKey?.trim();
-      const adminTokens: string[] = Array.isArray(data.adminFcmTokens) ? data.adminFcmTokens : [];
+      serviceAccountJson = data.fcmServiceAccountJson?.trim() || '';
+      serverKey = data.fcmServerKey?.trim() || '';
 
-      if (adminTokens.length > 0) {
-        if (serviceAccountJson && serviceAccountJson.startsWith('{')) {
-          // Send via Google FCM HTTP v1 (Modern)
-          for (const token of adminTokens) {
+      if (Array.isArray(data.adminFcmTokens)) {
+        data.adminFcmTokens.forEach((t: string) => {
+          if (t && typeof t === 'string' && t.trim().length > 10) {
+            tokensSet.add(t.trim());
+          }
+        });
+      }
+    }
+
+    // Include local token if available and registered
+    if (typeof localStorage !== 'undefined') {
+      const localToken = localStorage.getItem('lumaro_fcm_token');
+      if (localToken && localToken.length > 10) {
+        tokensSet.add(localToken.trim());
+      }
+    }
+
+    // Query admin users from users collection
+    try {
+      const adminUsersSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'admin')));
+      adminUsersSnap.forEach((uDoc) => {
+        const uData = uDoc.data();
+        if (uData.fcmToken && typeof uData.fcmToken === 'string' && uData.fcmToken.length > 10) {
+          tokensSet.add(uData.fcmToken.trim());
+        }
+        if (Array.isArray(uData.fcmTokens)) {
+          uData.fcmTokens.forEach((t: string) => {
+            if (t && typeof t === 'string' && t.trim().length > 10) tokensSet.add(t.trim());
+          });
+        }
+      });
+    } catch (err) {
+      console.warn('[FCM] Error querying admin users tokens:', err);
+    }
+
+    // Also query admin by email shiva1520980@gmail.com
+    try {
+      const emailAdminSnap = await getDocs(query(collection(db, 'users'), where('email', '==', 'shiva1520980@gmail.com')));
+      emailAdminSnap.forEach((uDoc) => {
+        const uData = uDoc.data();
+        if (uData.fcmToken && typeof uData.fcmToken === 'string' && uData.fcmToken.length > 10) {
+          tokensSet.add(uData.fcmToken.trim());
+        }
+      });
+    } catch (_) {}
+
+    // Also query dedicated fcm_tokens collection
+    try {
+      const fcmTokensSnap = await getDocs(query(collection(db, 'fcm_tokens'), where('role', '==', 'admin')));
+      fcmTokensSnap.forEach((tDoc) => {
+        const tData = tDoc.data();
+        if (tData.token && typeof tData.token === 'string' && tData.token.length > 10) {
+          tokensSet.add(tData.token.trim());
+        }
+      });
+    } catch (_) {}
+
+    const allAdminTokens = Array.from(tokensSet);
+    console.log(`[FCM] Dispatching new order background push to ${allAdminTokens.length} admin device(s)...`);
+
+    if (allAdminTokens.length > 0) {
+      if (serviceAccountJson && serviceAccountJson.startsWith('{')) {
+        // Send via modern FCM HTTP v1 (Google recommended)
+        await Promise.allSettled(
+          allAdminTokens.map(token =>
             sendFcmV1Push({
               serviceAccount: serviceAccountJson,
               token,
               title: alertTitle,
               body: alertBody,
               url: '/admin',
+              tag: `lumaro-admin-order-${params.orderId}`,
               data: {
                 orderId: params.orderId,
-                type: 'new_order'
+                type: 'new_order',
+                total: String(params.total),
+                customerName: params.customerName || 'Customer',
+                url: '/admin'
               }
-            }).catch(e => console.warn('[FCM v1] Admin push error:', e));
-          }
-        } else if (serverKey) {
-          // Send via FCM Legacy HTTP API
-          fetch('https://fcm.googleapis.com/fcm/send', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `key=${serverKey}`
+            })
+          )
+        );
+      } else if (serverKey) {
+        // Send via FCM Legacy HTTP API
+        await fetch('https://fcm.googleapis.com/fcm/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `key=${serverKey}`
+          },
+          body: JSON.stringify({
+            registration_ids: allAdminTokens,
+            notification: {
+              title: alertTitle,
+              body: alertBody,
+              icon: '/icon-192.png',
+              badge: '/icon-192.png',
+              click_action: '/admin',
+              sound: 'default'
             },
-            body: JSON.stringify({
-              registration_ids: adminTokens,
-              notification: {
-                title: alertTitle,
-                body: alertBody,
-                icon: '/favicon.ico',
-                click_action: '/admin',
-                sound: 'default'
-              },
-              data: {
-                orderId: params.orderId,
-                url: '/admin',
-                type: 'new_order'
-              },
-              priority: 'high'
-            }),
-            keepalive: true
-          }).catch(fcmErr => {
-            console.warn('[FCM] HTTP push dispatch error:', fcmErr);
-          });
-        }
+            data: {
+              orderId: params.orderId,
+              url: '/admin',
+              type: 'new_order',
+              tag: `lumaro-admin-order-${params.orderId}`,
+              total: String(params.total),
+              customerName: params.customerName || 'Customer'
+            },
+            priority: 'high',
+            content_available: true
+          }),
+          keepalive: true
+        });
       }
     }
   } catch (err) {
-    console.warn('[FCM] Error checking settings for push:', err);
+    console.warn('[FCM] Error dispatching admin order push:', err);
   }
 };
 
@@ -622,10 +748,19 @@ export const sendCustomerFcmOrderStatusAlert = async (params: {
   customerName?: string;
 }): Promise<{ success: boolean; pushedCount: number; error?: string; tokensCount?: number }> => {
   const shortId = params.orderId.slice(-6).toUpperCase();
+  const normalizedStatus = (params.newStatus || '').toLowerCase().trim();
 
   // 1. Determine title and message based on new status
   const statusDetails: Record<string, { title: string; body: string }> = {
+    pending: {
+      title: `Order Pending ⏳ (#${shortId})`,
+      body: `Aapka order pending hai. Store jaldi hi isko review aur confirm karega.`
+    },
     confirmed: {
+      title: `Order Confirmed! ✅ (#${shortId})`,
+      body: `Aapka ₹${params.orderTotal || ''} ka order accept kar liya gaya hai. Store is par kaam kar raha hai.`
+    },
+    confirm: {
       title: `Order Confirmed! ✅ (#${shortId})`,
       body: `Aapka ₹${params.orderTotal || ''} ka order accept kar liya gaya hai. Store is par kaam kar raha hai.`
     },
@@ -633,7 +768,15 @@ export const sendCustomerFcmOrderStatusAlert = async (params: {
       title: `Order Packed! 📦 (#${shortId})`,
       body: `Aapka order pack ho chuka hai aur delivery ke liye bilkul ready hai.`
     },
+    packing: {
+      title: `Order Packed! 📦 (#${shortId})`,
+      body: `Aapka order pack ho chuka hai aur delivery ke liye bilkul ready hai.`
+    },
     out_for_delivery: {
+      title: `Order Out for Delivery! 🚚 (#${shortId})`,
+      body: `Aapka order delivery person ke sath nikal chuka hai. Jaldi hi aapke paas pahuchega!`
+    },
+    shipped: {
       title: `Order Out for Delivery! 🚚 (#${shortId})`,
       body: `Aapka order delivery person ke sath nikal chuka hai. Jaldi hi aapke paas pahuchega!`
     },
@@ -644,13 +787,26 @@ export const sendCustomerFcmOrderStatusAlert = async (params: {
     canceled: {
       title: `Order Canceled ❌ (#${shortId})`,
       body: `Aapka order store dwara cancel kar diya gaya hai. Kisi bhi query ke liye support se sampark karein.`
+    },
+    cancelled: {
+      title: `Order Canceled ❌ (#${shortId})`,
+      body: `Aapka order store dwara cancel kar diya gaya hai. Kisi bhi query ke liye support se sampark karein.`
     }
   };
 
-  const details = statusDetails[params.newStatus] || {
-    title: `Order Update: #${shortId}`,
+  const details = statusDetails[normalizedStatus] || {
+    title: `Order Status: ${(params.newStatus || 'Updated').toUpperCase()} (#${shortId})`,
     body: `Aapke order ka status ab ${params.newStatus} ho gaya hai.`
   };
+
+  // Instant local broadcast to all open tabs/windows on customer devices
+  broadcastCustomerOrderStatusAlert({
+    orderId: params.orderId,
+    status: params.newStatus,
+    title: details.title,
+    message: details.body,
+    userId: params.userId
+  });
 
   // 2. Collect all target tokens for this customer
   const tokensSet = new Set<string>();
@@ -760,12 +916,14 @@ export const sendCustomerFcmOrderStatusAlert = async (params: {
         notification: {
           title: details.title,
           body: details.body,
-          icon: '/favicon.ico',
-          badge: '/favicon.ico',
+          icon: '/icon-192.png',
+          badge: '/icon-192.png',
           click_action: '/my-orders',
           sound: 'default'
         },
         data: {
+          title: details.title,
+          body: details.body,
           orderId: params.orderId,
           status: params.newStatus,
           url: '/my-orders',
@@ -811,7 +969,7 @@ export const sendCustomerFcmOrderStatusAlert = async (params: {
  * Automatically ensures the currently logged-in user's FCM token is generated and synced
  * if browser notification permission is already granted.
  */
-export const ensureUserFcmTokenSynced = async (user: { uid: string; role?: string; fcmToken?: string } | null) => {
+export const ensureUserFcmTokenSynced = async (user: { uid: string; role?: string; email?: string; fcmToken?: string } | null) => {
   if (!user?.uid || typeof window === 'undefined' || !('Notification' in window)) return;
   if (Notification.permission !== 'granted') return;
 
@@ -824,9 +982,27 @@ export const ensureUserFcmTokenSynced = async (user: { uid: string; role?: strin
 
     if (token) {
       localStorage.setItem('lumaro_fcm_token', token);
+      const isAdmin = user.role === 'admin' || user.email === 'shiva1520980@gmail.com';
+      const roleToSave = isAdmin ? 'admin' : ((user.role as any) || 'user');
+
       // Sync if user doesn't have it on profile yet
       if (user.fcmToken !== token) {
-        await saveFcmToken(user.uid, token, (user.role as any) || 'user');
+        await saveFcmToken(user.uid, token, roleToSave);
+      }
+
+      // If user is Admin, automatically ensure device is connected to settings/global.adminFcmTokens
+      if (isAdmin) {
+        try {
+          await updateDoc(doc(db, 'settings', 'global'), {
+            adminFcmTokens: arrayUnion(token)
+          });
+        } catch (e) {
+          try {
+            await setDoc(doc(db, 'settings', 'global'), {
+              adminFcmTokens: arrayUnion(token)
+            }, { merge: true });
+          } catch (_) {}
+        }
       }
     }
   } catch (err) {
@@ -906,3 +1082,259 @@ export const sendBackgroundFcmPushTest = async (
     return { success: false, error: e?.message || String(e) };
   }
 };
+
+// Cooldown map to avoid notification spamming for the same product
+const recentStockAlertsMap: Record<string, number> = {};
+
+/**
+ * Broadcasts real-time stock alert across open admin browser tabs/windows
+ */
+export const broadcastStockAlert = (data: {
+  title: string;
+  body: string;
+  productId?: string;
+  productName?: string;
+  stock?: number;
+  isOutOfStock?: boolean;
+}) => {
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      const channel = new BroadcastChannel('lumaro_admin_alerts');
+      channel.postMessage({
+        type: 'STOCK_ALERT',
+        ...data,
+        timestamp: Date.now()
+      });
+      channel.close();
+    }
+  } catch (err) {
+    console.warn('BroadcastChannel stock alert error:', err);
+  }
+};
+
+export interface StockAlertProductItem {
+  id: string;
+  name: string;
+  stock: number;
+  category?: string;
+  image?: string;
+  isOutOfStock?: boolean;
+}
+
+/**
+ * Dispatches high-priority FCM Push Notification & Sound Alert to Admin
+ * when products go Out of Stock (0 remaining) or hit Low Stock threshold.
+ * Works even when Admin's phone / screen is locked or browser is closed.
+ */
+export const sendAdminFcmStockAlert = async (params: {
+  products: StockAlertProductItem[];
+  alertType?: 'out_of_stock' | 'low_stock';
+  force?: boolean;
+}): Promise<{ success: boolean; pushedCount: number; message: string }> => {
+  if (!params.products || params.products.length === 0) {
+    return { success: false, pushedCount: 0, message: 'Koi product nahi mila.' };
+  }
+
+  // De-duplication check: Avoid sending repetitive spam alerts within 15 minutes for the exact same item
+  const now = Date.now();
+  const eligibleProducts = params.force 
+    ? params.products 
+    : params.products.filter(p => {
+        const lastAlert = recentStockAlertsMap[p.id];
+        if (lastAlert && (now - lastAlert < 15 * 60 * 1000)) {
+          return false; // Skip if already alerted within last 15 minutes
+        }
+        return true;
+      });
+
+  if (eligibleProducts.length === 0 && !params.force) {
+    return { success: true, pushedCount: 0, message: 'Stock alert pehle hi bheja ja chuka hai (cooldown active).' };
+  }
+
+  eligibleProducts.forEach(p => {
+    recentStockAlertsMap[p.id] = now;
+  });
+
+  const targetList = eligibleProducts.length > 0 ? eligibleProducts : params.products;
+  const isSingle = targetList.length === 1;
+  const primaryItem = targetList[0];
+  const isOutOfStock = primaryItem.stock <= 0 || params.alertType === 'out_of_stock';
+
+  let alertTitle = '';
+  let alertBody = '';
+
+  if (isSingle) {
+    if (isOutOfStock) {
+      alertTitle = `🚨 Stock Out Alert: ${primaryItem.name}`;
+      alertBody = `"${primaryItem.name}" ka stock khatam (0 bacha) ho gaya hai! Jaldi purchase karke update karein.`;
+    } else {
+      alertTitle = `⚠️ Low Stock Alert: ${primaryItem.name}`;
+      alertBody = `"${primaryItem.name}" me sirf ${primaryItem.stock} items bache hain! Jaldi restock karein.`;
+    }
+  } else {
+    const names = targetList.map(p => `${p.name} (${p.stock} left)`).slice(0, 3).join(', ');
+    const extraCount = targetList.length > 3 ? ` aur ${targetList.length - 3} anya` : '';
+    if (isOutOfStock) {
+      alertTitle = `🚨 ${targetList.length} Items Stock Out Ho Gaye!`;
+      alertBody = `${names}${extraCount} ka stock khatam ho gaya hai! Jaldi purchase karke restock karein.`;
+    } else {
+      alertTitle = `⚠️ Low Stock Alert: ${targetList.length} Products`;
+      alertBody = `${names}${extraCount} me stock kam ho gaya hai! Kripya reorder karein.`;
+    }
+  }
+
+  // 1. Broadcast to all open tabs / windows immediately (0ms latency sound & popup)
+  broadcastStockAlert({
+    title: alertTitle,
+    body: alertBody,
+    productId: primaryItem.id,
+    productName: primaryItem.name,
+    stock: primaryItem.stock,
+    isOutOfStock
+  });
+
+  // 2. Play alert sound & vibration on current device
+  triggerOrderAlertSoundAndVibration();
+  if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+    showPlatformNotification(alertTitle, {
+      body: alertBody,
+      icon: primaryItem.image || '/favicon.ico',
+      tag: `stock-alert-${primaryItem.id}-${Date.now()}`,
+      data: { url: '/admin', type: 'stock_alert', productId: primaryItem.id }
+    }).catch(() => {});
+  }
+
+  // 3. Add to Firestore notifications collection for Admin History / Notification Center
+  try {
+    await addDoc(collection(db, 'notifications'), {
+      title: alertTitle,
+      message: alertBody,
+      type: 'stock_alert',
+      recipientRole: 'admin',
+      productId: primaryItem.id,
+      productName: primaryItem.name,
+      stock: primaryItem.stock,
+      isOutOfStock,
+      category: primaryItem.category || '',
+      createdAt: serverTimestamp()
+    });
+  } catch (err) {
+    console.warn('[FCM] Error adding stock alert notification doc:', err);
+  }
+
+  // 4. Send background FCM Push to all registered Admin devices
+  let pushedCount = 0;
+  try {
+    const settingsSnap = await getDoc(doc(db, 'settings', 'global'));
+    if (settingsSnap.exists()) {
+      const data = settingsSnap.data();
+      const serviceAccountJson = data.fcmServiceAccountJson?.trim();
+      const serverKey = data.fcmServerKey?.trim();
+      
+      const tokensSet = new Set<string>();
+
+      // Admin tokens stored in global settings
+      if (Array.isArray(data.adminFcmTokens)) {
+        data.adminFcmTokens.forEach((t: string) => {
+          if (t && typeof t === 'string' && t.trim().length > 10) {
+            tokensSet.add(t.trim());
+          }
+        });
+      }
+
+      // Also include current device token from localStorage if present
+      if (typeof localStorage !== 'undefined') {
+        const localToken = localStorage.getItem('lumaro_fcm_token');
+        if (localToken && localToken.length > 10) {
+          tokensSet.add(localToken.trim());
+        }
+      }
+
+      // Also query admin users from Firestore
+      try {
+        const adminUsersSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'admin')));
+        adminUsersSnap.forEach((uDoc) => {
+          const uData = uDoc.data();
+          if (uData.fcmToken && typeof uData.fcmToken === 'string' && uData.fcmToken.length > 10) {
+            tokensSet.add(uData.fcmToken.trim());
+          }
+          if (Array.isArray(uData.fcmTokens)) {
+            uData.fcmTokens.forEach((t: string) => {
+              if (t && typeof t === 'string' && t.trim().length > 10) tokensSet.add(t.trim());
+            });
+          }
+        });
+      } catch (err) {
+        console.warn('[FCM] Error querying admin users tokens:', err);
+      }
+
+      const allAdminTokens = Array.from(tokensSet);
+
+      if (allAdminTokens.length > 0) {
+        if (serviceAccountJson && serviceAccountJson.startsWith('{')) {
+          // Google FCM HTTP v1 (Modern)
+          const results = await Promise.allSettled(
+            allAdminTokens.map(token =>
+              sendFcmV1Push({
+                serviceAccount: serviceAccountJson,
+                token,
+                title: alertTitle,
+                body: alertBody,
+                url: '/admin',
+                data: {
+                  type: 'stock_alert',
+                  productId: primaryItem.id,
+                  stock: String(primaryItem.stock),
+                  isOutOfStock: String(isOutOfStock),
+                  url: '/admin'
+                }
+              })
+            )
+          );
+          pushedCount = results.filter(r => r.status === 'fulfilled' && (r.value as any)?.success).length;
+        } else if (serverKey) {
+          // Legacy FCM HTTP API
+          const res = await fetch('https://fcm.googleapis.com/fcm/send', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `key=${serverKey}`
+            },
+            body: JSON.stringify({
+              registration_ids: allAdminTokens,
+              notification: {
+                title: alertTitle,
+                body: alertBody,
+                icon: '/favicon.ico',
+                click_action: '/admin',
+                sound: 'default'
+              },
+              data: {
+                type: 'stock_alert',
+                productId: primaryItem.id,
+                stock: String(primaryItem.stock),
+                isOutOfStock: String(isOutOfStock),
+                url: '/admin'
+              },
+              priority: 'high'
+            }),
+            keepalive: true
+          });
+          if (res.ok) {
+            const json = await res.json();
+            pushedCount = json.success || 0;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[FCM] Error dispatching stock alert push:', err);
+  }
+
+  return { 
+    success: true, 
+    pushedCount, 
+    message: `${alertTitle}: Push alert ${pushedCount} devices par send ho gaya.` 
+  };
+};
+

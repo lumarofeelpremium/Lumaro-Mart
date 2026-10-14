@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Bell, Heart, Plus, X, ShoppingBag, ChevronLeft, ChevronRight, 
-  MapPin, Globe, Crown, Zap, Mic, MicOff, Clock, Flame, Shuffle, Sparkles, Coffee, Tag, TrendingUp 
+  MapPin, Globe, Crown, Zap, Mic, MicOff, Clock, Flame, Shuffle, Sparkles, Coffee, Tag, TrendingUp, Star 
 } from 'lucide-react';
 import { Button, Input, Skeleton } from '../components/ui/Base';
 import { motion, AnimatePresence } from 'motion/react';
@@ -214,9 +214,12 @@ export const Home = ({
       case 'deals':
         list = list.filter(p => (p.discountPrice && p.discountPrice < p.price) || Boolean(p.offerLabel));
         break;
-      case 'popular':
-        list = list.filter(p => p.isPopular || (p.salesCount && p.salesCount > 0));
+      case 'popular': {
+        const filtered = list.filter(p => p.isPopular || (p.salesCount && p.salesCount > 0));
+        list = filtered.length > 0 ? filtered : list;
+        list = [...list].sort((a, b) => (Number(b.salesCount) || 0) - (Number(a.salesCount) || 0));
         break;
+      }
       case 'budget':
         list = list.filter(p => (p.discountPrice || p.price) <= 99);
         break;
@@ -246,6 +249,11 @@ export const Home = ({
     return list;
   }, [locationFilteredProducts, allProductsFilter, shuffleCount]);
 
+  // Check if admin has manually selected any popular items
+  const hasAdminPopulars = useMemo(() => {
+    return (locationFilteredProducts || []).some(product => product.isPopular);
+  }, [locationFilteredProducts]);
+
   const popularItems = useMemo(() => {
     if (!locationFilteredProducts || locationFilteredProducts.length === 0) return [];
     const populars = locationFilteredProducts.filter(product => product.isPopular);
@@ -269,8 +277,25 @@ export const Home = ({
       // Show up to 10 popular products
       return sorted.slice(0, 10);
     } else {
-      const sortedPopular = [...locationFilteredProducts].sort((a, b) => (b.salesCount || 0) - (a.salesCount || 0));
-      return sortedPopular.slice(0, 10);
+      // WHEN ADMIN HAS NOT SELECTED ANY POPULAR ITEM:
+      // Strictly sort by users' order frequency in DECREASING / DESCENDING ORDER (घटते क्रम में):
+      // Highest ordered product is at #1 (सबसे आगे), then in descending order!
+      const sortedByOrders = [...locationFilteredProducts].sort((a, b) => {
+        const countA = Number(a.salesCount) || 0;
+        const countB = Number(b.salesCount) || 0;
+        if (countB !== countA) {
+          return countB - countA; // Decreasing order (घटते क्रम में)
+        }
+        const ratingA = Number(a.rating) || 0;
+        const ratingB = Number(b.rating) || 0;
+        if (ratingB !== ratingA) {
+          return ratingB - ratingA;
+        }
+        const creatA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+        const creatB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+        return creatB - creatA;
+      });
+      return sortedByOrders.slice(0, 10);
     }
   }, [locationFilteredProducts]);
 
@@ -737,9 +762,6 @@ export const Home = ({
                           {currentTimeSlot.badge}
                         </span>
                       </div>
-                      <p className="text-[11px] text-gray-600 truncate mt-0.5 font-medium">
-                        {currentTimeSlot.hindiSubtitle}
-                      </p>
                     </div>
                   </div>
                 </div>
@@ -765,23 +787,18 @@ export const Home = ({
                         <h3 className="text-base font-black text-gray-900 leading-tight">
                           Deals of the Day
                         </h3>
-                        <span className="text-[9px] font-black bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                        <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-rose-500 text-white shadow-xs">
                           FLASH SALE
                         </span>
                       </div>
-                      <p className="text-[11px] text-gray-500 font-medium">
-                        आज के सबसे बड़े डिस्काउंट्स व बचत
-                      </p>
                     </div>
                   </div>
 
-                  {/* Live Midnight Countdown Timer */}
-                  <div className="flex items-center gap-1.5 bg-stone-900 text-amber-300 px-2.5 py-1 rounded-xl text-[10px] font-mono font-black shadow-xs">
-                    <Clock size={12} className="text-amber-400 animate-spin" style={{ animationDuration: '6s' }} />
-                    <span className="tracking-wider">
-                      {String(dealsTimeLeft.hours).padStart(2, '0')}:
-                      {String(dealsTimeLeft.minutes).padStart(2, '0')}:
-                      {String(dealsTimeLeft.seconds).padStart(2, '0')}
+                  <div className="flex items-center gap-1.5 bg-rose-50 text-rose-700 border border-rose-200/80 px-2.5 py-1 rounded-full text-xs font-bold shadow-2xs">
+                    <Clock size={13} className="text-rose-600" />
+                    <span>Ends in:</span>
+                    <span className="font-mono bg-rose-600 text-white px-1.5 py-0.5 rounded text-[11px] font-black">
+                      {String(dealsTimeLeft.hours).padStart(2, '0')}:{String(dealsTimeLeft.minutes).padStart(2, '0')}:{String(dealsTimeLeft.seconds).padStart(2, '0')}
                     </span>
                   </div>
                 </div>
@@ -836,12 +853,30 @@ export const Home = ({
                 <div className="flex justify-between items-center mb-4">
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-bold text-[#1A1A1A]">Popular Items</h3>
-                    <span className="bg-orange-100 text-orange-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Top Trending</span>
+                    {hasAdminPopulars ? (
+                      <span className="bg-orange-100 text-orange-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase flex items-center gap-1">
+                        <Star size={10} className="fill-orange-500" />
+                        Top Trending
+                      </span>
+                    ) : (
+                      <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase flex items-center gap-1 border border-amber-200">
+                        <Flame size={11} className="text-amber-600 fill-amber-600" />
+                        Most Ordered
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
-                  {popularItems.map((product) => (
-                    <ProductRailCard key={`popular-${product.id}`} product={product} user={user} onAddToCart={onAddToCart} navigate={navigate} />
+                  {popularItems.map((product, index) => (
+                    <ProductRailCard 
+                      key={`popular-${product.id}`} 
+                      product={product} 
+                      user={user} 
+                      onAddToCart={onAddToCart} 
+                      navigate={navigate}
+                      popularRank={index + 1}
+                      isAutoRanked={!hasAdminPopulars}
+                    />
                   ))}
                 </div>
               </div>
@@ -1214,7 +1249,9 @@ const ProductRailCard: React.FC<{
   onAddToCart: (p: Product, quantity?: number, variant?: ProductVariant) => void;
   navigate: any;
   isDealCard?: boolean;
-}> = ({ product, user, onAddToCart, navigate, isDealCard }) => {
+  popularRank?: number;
+  isAutoRanked?: boolean;
+}> = ({ product, user, onAddToCart, navigate, isDealCard, popularRank, isAutoRanked }) => {
   const defaultVariant = product.hasVariants && product.variants?.length 
     ? sortVariantsByWeight(product.variants)[0] 
     : undefined;
@@ -1240,7 +1277,7 @@ const ProductRailCard: React.FC<{
   return (
     <div
       onClick={() => navigate(`/product/${product.id}`)}
-      className="min-w-[145px] max-w-[145px] sm:min-w-[155px] sm:max-w-[155px] bg-white rounded-3xl p-3 shadow-2xs hover:shadow-md transition-all border border-gray-100 flex flex-col justify-between shrink-0 cursor-pointer group select-none"
+      className="min-w-[145px] max-w-[145px] sm:min-w-[155px] sm:max-w-[155px] bg-white rounded-3xl p-3 shadow-2xs hover:shadow-md transition-all border border-gray-100 flex flex-col justify-between shrink-0 cursor-pointer group select-none relative"
     >
       <div>
         <div className="relative aspect-square mb-2.5 rounded-2xl overflow-hidden bg-gray-50 flex items-center justify-center">
@@ -1255,8 +1292,16 @@ const ProductRailCard: React.FC<{
             <Plus size={24} className="text-gray-300" />
           )}
 
-          {/* Discount Badge */}
-          {discountPercent ? (
+          {/* Badges: Auto Rank or Discount or Deal */}
+          {isAutoRanked && popularRank !== undefined ? (
+            <div className={cn(
+              "absolute top-2 left-2 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase z-10 shadow-xs flex items-center gap-0.5",
+              popularRank === 1 ? "bg-gradient-to-r from-amber-500 to-rose-500" : "bg-stone-900/85"
+            )}>
+              <span>#{popularRank}</span>
+              {popularRank === 1 && <span className="text-[7px] text-amber-200">BEST</span>}
+            </div>
+          ) : discountPercent ? (
             <div className="absolute top-2 left-2 bg-gradient-to-r from-rose-600 to-red-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase z-10 shadow-2xs">
               {discountPercent}% OFF
             </div>
@@ -1283,6 +1328,13 @@ const ProductRailCard: React.FC<{
         <h4 className="font-bold text-xs text-[#1A1A1A] line-clamp-1 group-hover:text-emerald-700 transition-colors">
           {product.name}
         </h4>
+
+        {isAutoRanked && (product.salesCount ?? 0) > 0 && (
+          <div className="flex items-center gap-1 text-[9px] text-amber-700 font-bold mt-0.5">
+            <Flame size={10} className="text-orange-500 fill-orange-500" />
+            <span>{product.salesCount} बार ऑर्डर हुआ</span>
+          </div>
+        )}
 
         {defaultVariant && (
           <span className="text-[9px] font-bold text-emerald-800 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-100 inline-block mt-0.5">

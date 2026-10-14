@@ -17,7 +17,7 @@ import { SubscriptionModal } from '../components/SubscriptionModal';
 import { calculateDeliveryFee, decrementSubscriberOrderQuota, isSubscriptionActive, getSubscriptionSummary } from '../lib/subscription-utils';
 import { isProductDeliverable, getStateFromPincode, setStoredDeliveryLocation } from '../lib/location-utils';
 import { useModalBackHandler } from '../lib/back-button-handler';
-import { showPlatformNotification, sendAdminFcmOrderAlert } from '../lib/fcm-utils';
+import { showPlatformNotification, sendAdminFcmOrderAlert, sendAdminFcmStockAlert } from '../lib/fcm-utils';
 
 export const Cart = ({ 
   user,
@@ -329,6 +329,9 @@ export const Cart = ({
 
       // Update Product Stock and Sales Count
       const batch = writeBatch(db);
+      const outOfStockItems: Array<{ id: string; name: string; stock: number; category?: string; image?: string; isOutOfStock?: boolean }> = [];
+      const lowStockItems: Array<{ id: string; name: string; stock: number; category?: string; image?: string; isOutOfStock?: boolean }> = [];
+
       items.forEach(item => {
         const originalId = item.productId || item.id.split('_')[0];
         const productRef = doc(db, 'products', originalId);
@@ -336,8 +339,42 @@ export const Cart = ({
           stock: increment(-item.quantity),
           salesCount: increment(item.quantity)
         });
+
+        const remainingStock = (item.stock || 0) - item.quantity;
+        if (remainingStock <= 0) {
+          outOfStockItems.push({
+            id: originalId,
+            name: item.name,
+            stock: Math.max(0, remainingStock),
+            category: item.category,
+            image: item.image,
+            isOutOfStock: true
+          });
+        } else if (remainingStock <= 3) {
+          lowStockItems.push({
+            id: originalId,
+            name: item.name,
+            stock: remainingStock,
+            category: item.category,
+            image: item.image,
+            isOutOfStock: false
+          });
+        }
       });
       await batch.commit();
+
+      // Trigger high-priority FCM Stock Alert to Admin if items ran out of stock or hit low stock
+      if (outOfStockItems.length > 0) {
+        sendAdminFcmStockAlert({
+          products: outOfStockItems,
+          alertType: 'out_of_stock'
+        }).catch(e => console.warn('Admin stock out FCM alert error:', e));
+      } else if (lowStockItems.length > 0) {
+        sendAdminFcmStockAlert({
+          products: lowStockItems,
+          alertType: 'low_stock'
+        }).catch(e => console.warn('Admin low stock FCM alert error:', e));
+      }
 
       // Send Rich Telegram Notification Receipt with Delivery Address
       sendTelegramNewOrderAlert({

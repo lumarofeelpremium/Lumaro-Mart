@@ -109,18 +109,37 @@ public class MainActivity extends BridgeActivity {
 
         @JavascriptInterface
         public void showNotification(final String title, final String body, final String orderId) {
+            showNotificationWithRoute(title, body, orderId, null);
+        }
+
+        @JavascriptInterface
+        public void showNotificationWithRoute(final String title, final String body, final String orderId, final String route) {
             if (context == null) return;
 
             try {
+                // Ensure POST_NOTIFICATIONS permission on Android 13+ (API 33+)
+                if (Build.VERSION.SDK_INT >= 33) {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        if (context instanceof Activity) {
+                            ActivityCompat.requestPermissions((Activity) context, new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1002);
+                        }
+                    }
+                }
+
                 NotificationManager notificationManager =
                         (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
                 if (notificationManager == null) return;
 
                 Intent intent = new Intent(context, MainActivity.class);
                 intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                
+                String targetRoute = (route != null && !route.trim().isEmpty()) ? route : "/my-orders";
+                if (title != null && (title.contains("Naya Order") || title.contains("Stock Out"))) {
+                    targetRoute = "/admin";
+                }
                 if (orderId != null && !orderId.trim().isEmpty()) {
                     intent.putExtra("orderId", orderId);
-                    intent.putExtra("route", "/admin");
+                    intent.putExtra("route", targetRoute);
                 }
 
                 int pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT;
@@ -140,7 +159,7 @@ public class MainActivity extends BridgeActivity {
                 NotificationCompat.Builder builder = new NotificationCompat.Builder(context, ORDER_CHANNEL_ID)
                         .setSmallIcon(R.mipmap.ic_launcher)
                         .setContentTitle(title != null ? title : "Lumaro Mart Alert")
-                        .setContentText(body != null ? body : "Naya order prapt hua hai!")
+                        .setContentText(body != null ? body : "Aapke order par naya status update aaya hai!")
                         .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
                         .setAutoCancel(true)
                         .setSound(defaultSoundUri)

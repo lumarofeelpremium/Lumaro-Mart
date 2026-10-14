@@ -190,8 +190,8 @@ export async function sendFcmV1Push(params: {
           notification: {
             title: params.title,
             body: params.body,
-            icon: '/favicon.ico',
-            badge: '/favicon.ico',
+            icon: '/icon-192.png',
+            badge: '/icon-192.png',
             tag,
             renotify: true,
             requireInteraction: true,
@@ -209,12 +209,15 @@ export async function sendFcmV1Push(params: {
           notification: {
             title: params.title,
             body: params.body,
-            icon: 'notification_icon',
+            icon: 'ic_launcher',
             color: '#10B981',
             sound: 'default',
             default_sound: true,
             default_vibrate_timings: true,
-            click_action: targetUrl
+            click_action: targetUrl,
+            channel_id: 'lumaro_orders_channel',
+            notification_priority: 'PRIORITY_MAX',
+            visibility: 'PUBLIC'
           }
         }
       }

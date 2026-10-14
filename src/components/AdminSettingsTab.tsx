@@ -9,7 +9,7 @@ import {
 import { Button, Input } from './ui/Base';
 import { AppSettings, DayDeliveryRule } from '../types';
 import { DAYS_OF_WEEK } from '../lib/subscription-utils';
-import { requestFcmTokenDetailed, saveFcmToken, registerCurrentDeviceAsAdminReceiver, sendBackgroundFcmPushTest } from '../lib/fcm-utils';
+import { requestFcmTokenDetailed, saveFcmToken, registerCurrentDeviceAsAdminReceiver, sendBackgroundFcmPushTest, sendAdminFcmStockAlert } from '../lib/fcm-utils';
 import { auth } from '../firebase';
 import { cn } from '../lib/utils';
 import { QRCodeSVG } from 'qrcode.react';
@@ -96,6 +96,8 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
   const [fcmTokenCopied, setFcmTokenCopied] = useState(false);
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
   const [fcmStatusMessage, setFcmStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [stockAlertsEnabled, setStockAlertsEnabled] = useState(settings.stockAlertsEnabled ?? true);
+  const [isSendingStockTest, setIsSendingStockTest] = useState(false);
 
   // Section 7: WhatsApp
   const [whatsappNumber, setWhatsappNumber] = useState(settings.whatsappNumber || '');
@@ -182,6 +184,7 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
     setLoyaltyPointValue(settings.loyaltyPointValue ?? 1);
 
     setFcmEnabled(settings.fcmEnabled ?? true);
+    setStockAlertsEnabled(settings.stockAlertsEnabled ?? true);
     setFcmVapidKey(settings.fcmVapidKey || 'BH5pHZc7Wf0ASibIMFNVtrRi-5Waime9pc9RYCnOh4XqHW3xbwAP8yBWofnR2tc3rbqQ4FnMd15liNgznCN5P08');
 
     setWhatsappNumber(settings.whatsappNumber || '');
@@ -275,6 +278,46 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
     }
   };
 
+  const handleSendStockAlertTest = async () => {
+    setIsSendingStockTest(true);
+    setFcmStatusMessage(null);
+    try {
+      const cred = fcmServiceAccountJson.trim() || fcmServerKey.trim();
+      if (!cred) {
+        setFcmStatusMessage({
+          text: 'FCM push bhejne ke liye Service Account JSON upload karein ya Server Key enter karein.',
+          type: 'error'
+        });
+        setIsSendingStockTest(false);
+        return;
+      }
+      const res = await sendAdminFcmStockAlert({
+        products: [
+          {
+            id: 'sample_stock_item',
+            name: 'Fresh Amul Taaza Milk 500ml',
+            stock: 0,
+            category: 'Dairy & Fresh',
+            isOutOfStock: true
+          }
+        ],
+        alertType: 'out_of_stock',
+        force: true
+      });
+      setFcmStatusMessage({
+        text: `✅ ${res.message}`,
+        type: 'success'
+      });
+    } catch (e: any) {
+      setFcmStatusMessage({
+        text: `Stock alert test failed: ${e?.message || 'Error'}`,
+        type: 'error'
+      });
+    } finally {
+      setIsSendingStockTest(false);
+    }
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     const validSpendBase = Math.max(1, Number(loyaltySpendBase) || 100);
@@ -317,6 +360,7 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
       loyaltyPointValue: Number(loyaltyPointValue) || 1,
       // Push Notifications
       fcmEnabled,
+      stockAlertsEnabled,
       fcmVapidKey: fcmVapidKey.trim(),
       fcmServerKey: fcmServerKey.trim(),
       fcmServiceAccountJson: fcmServiceAccountJson.trim(),
@@ -1352,6 +1396,45 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
                 {isSendingBgTest ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
                 <span>📲 5s Background Push Test (Screen Lock Karein)</span>
               </Button>
+
+              <Button
+                type="button"
+                onClick={handleSendStockAlertTest}
+                disabled={isSendingStockTest}
+                className="py-2.5 px-4 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white text-xs font-bold rounded-xl shadow-xs"
+              >
+                {isSendingStockTest ? <Loader2 size={14} className="animate-spin" /> : <span>🚨</span>}
+                <span>📦 Test Stock-Out Push (Admin Alert)</span>
+              </Button>
+            </div>
+
+            {/* Automatic Stock-Out Alerts Info & Toggle Card */}
+            <div className="p-3.5 bg-rose-50/80 rounded-2xl border border-rose-200/90 flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🚨</span>
+                  <h4 className="text-xs font-bold text-gray-900">Stock Out & Low Stock Push Alerts</h4>
+                  <span className="text-[9px] font-black bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded uppercase">
+                    Auto Push
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-600 leading-relaxed">
+                  Jab bhi koi product stock-out (0 left) ho jaye, admin ke registered phone par turant FCM push notification aur sound bajega taaki jaldi purchase karke restock kiya ja sake.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStockAlertsEnabled(!stockAlertsEnabled)}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative cursor-pointer shrink-0",
+                  stockAlertsEnabled ? "bg-rose-600" : "bg-gray-300"
+                )}
+              >
+                <div className={cn(
+                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-xs",
+                  stockAlertsEnabled ? "right-1" : "left-1"
+                )} />
+              </button>
             </div>
 
             <div className="bg-amber-50 rounded-2xl p-3.5 border border-amber-200/80 text-amber-900 text-xs space-y-1.5">

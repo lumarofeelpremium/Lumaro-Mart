@@ -23,22 +23,39 @@ const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Received background message:', payload);
 
-  const notificationTitle = payload.notification?.title || payload.data?.title || '🛍️ Lumaro Mart Alert';
-  const notificationBody = payload.notification?.body || payload.data?.body || 'Aapke order par naya update aaya hai.';
-  const defaultUrl = payload.data?.type === 'new_order' ? '/admin' : '/my-orders';
+  const type = payload.data?.type || '';
+  const isNewOrder = type === 'new_order';
+  const isStockAlert = type === 'stock_alert';
+
+  let defaultTitle = '🛍️ Order Status Update';
+  let defaultBody = 'Aapke order par naya status update aaya hai.';
+
+  if (isNewOrder) {
+    defaultTitle = '🛍️ Naya Order Recieve Hua!';
+    defaultBody = 'Store par naya order receive hua hai! Tap karke Admin Dashboard me accept karein.';
+  } else if (isStockAlert) {
+    defaultTitle = '🚨 Stock Out Alert!';
+    defaultBody = 'Product stock out ho gaya hai! Jaldi restock karein.';
+  }
+
+  const notificationTitle = payload.notification?.title || payload.data?.title || defaultTitle;
+  const notificationBody = payload.notification?.body || payload.data?.body || defaultBody;
+  const defaultUrl = (isNewOrder || isStockAlert) ? '/admin' : '/my-orders';
   const targetUrl = payload.data?.url || payload.fcmOptions?.link || defaultUrl;
 
   const notificationOptions = {
     body: notificationBody,
-    icon: payload.notification?.icon || payload.data?.icon || '/favicon.ico',
-    badge: '/favicon.ico',
-    vibrate: [400, 200, 400, 200, 400],
-    tag: payload.data?.tag || ('lumaro-' + (payload.data?.orderId || Date.now())),
+    icon: payload.notification?.icon || payload.data?.icon || '/icon-192.png',
+    badge: '/icon-192.png',
+    vibrate: isNewOrder ? [500, 200, 500, 200, 500, 200, 500] : [400, 200, 400, 200, 400],
+    tag: payload.data?.tag || (isNewOrder ? `admin-order-${payload.data?.orderId || Date.now()}` : `lumaro-${payload.data?.productId || payload.data?.orderId || Date.now()}`),
     renotify: true,
     requireInteraction: true,
     data: {
       url: targetUrl,
-      orderId: payload.data?.orderId
+      orderId: payload.data?.orderId,
+      productId: payload.data?.productId,
+      type
     }
   };
 
@@ -61,21 +78,36 @@ self.addEventListener('push', (event) => {
     }
   }
 
-  const title = data.notification?.title || data.title || '🛍️ Lumaro Mart Alert';
-  const body = data.notification?.body || data.body || 'Naya update prapt hua hai.';
-  const defaultUrl = (data.data?.type === 'new_order' || data.type === 'new_order') ? '/admin' : '/my-orders';
+  const type = data.data?.type || data.type || '';
+  const isNewOrder = type === 'new_order';
+  const isStockAlert = type === 'stock_alert';
+
+  let defaultTitle = '🛍️ Order Status Update';
+  let defaultBody = 'Aapke order par naya status update aaya hai.';
+
+  if (isNewOrder) {
+    defaultTitle = '🛍️ Naya Order Recieve Hua!';
+    defaultBody = 'Store par naya order receive hua hai! Tap karke Admin Dashboard me accept karein.';
+  } else if (isStockAlert) {
+    defaultTitle = '🚨 Stock Out Alert!';
+    defaultBody = 'Product stock out ho gaya hai! Jaldi restock karein.';
+  }
+
+  const title = data.notification?.title || data.data?.title || data.title || defaultTitle;
+  const body = data.notification?.body || data.data?.body || data.body || defaultBody;
+  const defaultUrl = (isNewOrder || isStockAlert) ? '/admin' : '/my-orders';
   const url = data.data?.url || data.url || defaultUrl;
 
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
-      icon: '/favicon.ico',
-      badge: '/favicon.ico',
-      vibrate: [400, 200, 400, 200, 400],
+      icon: data.notification?.icon || data.data?.icon || '/icon-192.png',
+      badge: '/icon-192.png',
+      vibrate: isNewOrder ? [500, 200, 500, 200, 500, 200, 500] : [400, 200, 400, 200, 400],
       requireInteraction: true,
       renotify: true,
-      tag: data.tag || data.data?.tag || ('lumaro-' + (data.data?.orderId || Date.now())),
-      data: { url, orderId: data.data?.orderId }
+      tag: data.tag || data.data?.tag || (isNewOrder ? `admin-order-${data.data?.orderId || Date.now()}` : `lumaro-${data.data?.orderId || Date.now()}`),
+      data: { url, orderId: data.data?.orderId, type }
     })
   );
 });
@@ -85,7 +117,8 @@ self.addEventListener('notificationclick', (event) => {
   console.log('[firebase-messaging-sw.js] Notification clicked:', event.notification);
   event.notification.close();
 
-  const targetUrl = event.notification.data?.url || '/my-orders';
+  const rawUrl = event.notification.data?.url || '/my-orders';
+  const targetUrl = rawUrl.startsWith('/#') ? rawUrl : ('/#' + (rawUrl.startsWith('/') ? rawUrl : '/' + rawUrl));
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
@@ -94,7 +127,7 @@ self.addEventListener('notificationclick', (event) => {
         const client = windowClients[i];
         if (client.url.includes(self.location.origin) && 'focus' in client) {
           return client.focus().then((focusedClient) => {
-            if (focusedClient && 'navigate' in focusedClient && targetUrl !== '/') {
+            if (focusedClient && 'navigate' in focusedClient) {
               return focusedClient.navigate(targetUrl);
             }
             return focusedClient;
