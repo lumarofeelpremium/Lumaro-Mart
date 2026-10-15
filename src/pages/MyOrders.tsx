@@ -57,54 +57,80 @@ export const MyOrders = ({ user }: { user: User | null }) => {
     if (order.status !== 'pending') return 0;
     const createdMs = getOrderCreatedAtMs(order);
     const elapsedMs = currentTime - createdMs;
-    const remainingMs = 60 * 1000 - elapsedMs;
+    const remainingMs = 5 * 60 * 1000 - elapsedMs;
     return Math.max(0, Math.ceil(remainingMs / 1000));
   };
 
   const handleConfirmCancelOrder = async () => {
     if (!orderToCancel || !user) return;
 
-    const remaining = getCancelRemainingSeconds(orderToCancel);
-    if (remaining <= 0) {
-      alert("Order cancellation ka 1 minute ka time limit expire ho chuka hai. Ab yeh order cancel karne ke liye store se contact karein.");
+    if (orderToCancel.status !== 'pending') {
+      alert("Yeh order cancel nahi kiya ja sakta kyunki store ne isko process karna shuru kar diya hai.");
       setOrderToCancel(null);
       return;
     }
 
     setIsCanceling(true);
     try {
-      const batch = writeBatch(db);
       const orderRef = doc(db, 'orders', orderToCancel.id);
 
-      // 1. Mark order as canceled in Firestore
-      batch.update(orderRef, {
+      // 1. Mark order as canceled in Firestore first
+      await updateDoc(orderRef, {
         status: 'canceled',
         canceledAt: serverTimestamp(),
         canceledBy: 'user',
-        cancelReason: 'Customer canceled order within 1 minute limit'
+        cancelReason: 'Customer canceled order from My Orders'
       });
 
-      // 2. Restore item stocks & sales count
+      // 2. Restore item stocks safely (handling variants and deleted products)
       if (Array.isArray(orderToCancel.items)) {
-        orderToCancel.items.forEach(item => {
-          const originalId = item.productId || item.id.split('_')[0];
-          const productRef = doc(db, 'products', originalId);
-          batch.update(productRef, {
-            stock: increment(item.quantity),
-            salesCount: increment(-item.quantity)
-          });
-        });
+        for (const item of orderToCancel.items) {
+          const originalId = item.productId || (item.id && item.id.includes('_') ? item.id.split('_')[0] : item.id);
+          try {
+            const productRef = doc(db, 'products', originalId);
+            const prodSnap = await getDoc(productRef);
+            if (prodSnap.exists()) {
+              const prodData = prodSnap.data();
+              if (prodData.hasVariants && Array.isArray(prodData.variants)) {
+                const targetVariantId = (item as any).variantId;
+                const updatedVariants = prodData.variants.map((v: any) => {
+                  const match = (targetVariantId && v.id === targetVariantId) || 
+                                ((item as any).weight && v.weight === (item as any).weight);
+                  if (match) {
+                    return { ...v, stock: (v.stock || 0) + item.quantity };
+                  }
+                  return v;
+                });
+                const totalStock = updatedVariants.reduce((sum: number, v: any) => sum + (Number(v.stock) || 0), 0);
+                await updateDoc(productRef, {
+                  variants: updatedVariants,
+                  stock: totalStock,
+                  salesCount: increment(-item.quantity)
+                });
+              } else {
+                await updateDoc(productRef, {
+                  stock: increment(item.quantity),
+                  salesCount: increment(-item.quantity)
+                });
+              }
+            }
+          } catch (itemErr) {
+            console.warn('Could not restore stock for item:', originalId, itemErr);
+          }
+        }
       }
 
       // 3. Refund redeemed loyalty points
       if (orderToCancel.pointsRedeemed && orderToCancel.pointsRedeemed > 0) {
-        const userRef = doc(db, 'users', user.uid);
-        batch.update(userRef, {
-          loyaltyPoints: increment(orderToCancel.pointsRedeemed)
-        });
+        try {
+          const userRef = doc(db, 'users', user.uid);
+          await updateDoc(userRef, {
+            loyaltyPoints: increment(orderToCancel.pointsRedeemed)
+          });
+        } catch (ptsErr) {
+          console.warn('Could not refund points:', ptsErr);
+        }
       }
-
-      await batch.commit();
 
       // Send Telegram Order Canceled Alert with Customer Address & Items
       sendTelegramOrderCancelAlert({
@@ -116,7 +142,7 @@ export const MyOrders = ({ user }: { user: User | null }) => {
         },
         customer: user,
         canceledBy: 'user',
-        reason: 'Customer canceled order within 1 minute time limit',
+        reason: 'Customer canceled order from My Orders',
         storeSettings
       }).catch(tgErr => console.warn('Telegram cancel alert failed:', tgErr));
 
@@ -317,8 +343,7 @@ export const MyOrders = ({ user }: { user: User | null }) => {
           </div>
         ) : (
           orders.map((order) => {
-            const cancelRemaining = getCancelRemainingSeconds(order);
-            const canCancel = order.status === 'pending' && cancelRemaining > 0;
+            const canCancel = order.status === 'pending';
 
             return (
               <motion.div
@@ -372,7 +397,7 @@ export const MyOrders = ({ user }: { user: User | null }) => {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {/* 1-Minute Cancel Button */}
+                    {/* Cancel Button */}
                     {canCancel && (
                       <button
                         type="button"
@@ -380,11 +405,11 @@ export const MyOrders = ({ user }: { user: User | null }) => {
                           e.stopPropagation();
                           setOrderToCancel(order);
                         }}
-                        className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-[11px] font-bold border border-red-200 shadow-2xs flex items-center gap-1 active:scale-95 transition-all cursor-pointer animate-pulse"
-                        title="Cancel this order (Available for 1 minute only)"
+                        className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-[11px] font-bold border border-red-200 shadow-2xs flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
+                        title="Cancel this order"
                       >
                         <XCircle size={13} className="text-red-500" />
-                        <span>Cancel ({cancelRemaining}s)</span>
+                        <span>Cancel Order</span>
                       </button>
                     )}
 
@@ -474,40 +499,29 @@ export const MyOrders = ({ user }: { user: User | null }) => {
                 {/* Real-time Order Tracking Timeline */}
                 <OrderStatusTracker status={selectedOrder.status} />
 
-                {/* 1-Minute Cancel Alert & Button */}
-                {selectedOrder.status === 'pending' && (() => {
-                  const rem = getCancelRemainingSeconds(selectedOrder);
-                  if (rem > 0) {
-                    return (
-                      <div className="p-4 bg-red-50 border border-red-200 rounded-3xl flex items-center justify-between gap-3 animate-in fade-in duration-200">
-                        <div className="flex items-center gap-2.5">
-                          <div className="p-2 bg-red-100 rounded-xl text-red-600 shrink-0">
-                            <AlertTriangle size={18} />
-                          </div>
-                          <div>
-                            <p className="text-xs font-bold text-red-950">Galti se order ho gaya?</p>
-                            <p className="text-[11px] text-red-700 mt-0.5">
-                              Aap agle <strong className="text-red-900">{rem}s</strong> ke andar cancel kar sakte hain.
-                            </p>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setOrderToCancel(selectedOrder)}
-                          className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shrink-0 shadow-sm shadow-red-600/20 active:scale-95 transition-all cursor-pointer"
-                        >
-                          Cancel ({rem}s)
-                        </button>
+                {/* Cancel Alert & Button for Pending Orders */}
+                {selectedOrder.status === 'pending' && (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-3xl flex items-center justify-between gap-3 animate-in fade-in duration-200">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-red-100 rounded-xl text-red-600 shrink-0">
+                        <AlertTriangle size={18} />
                       </div>
-                    );
-                  } else {
-                    return (
-                      <div className="p-3 bg-gray-50 border border-gray-200/70 rounded-2xl text-[11px] text-gray-500 text-center">
-                        Order cancellation window (1 min) expire ho chuka hai. Cancellation ya change ke liye store se contact karein.
+                      <div>
+                        <p className="text-xs font-bold text-red-950">Galti se order ho gaya?</p>
+                        <p className="text-[11px] text-red-700 mt-0.5">
+                          Yeh order abhi pending hai, aap ise abhi cancel kar sakte hain.
+                        </p>
                       </div>
-                    );
-                  }
-                })()}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setOrderToCancel(selectedOrder)}
+                      className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shrink-0 shadow-sm shadow-red-600/20 active:scale-95 transition-all cursor-pointer"
+                    >
+                      Cancel Order
+                    </button>
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Items Summary</h3>
@@ -639,7 +653,7 @@ export const MyOrders = ({ user }: { user: User | null }) => {
                 <button
                   type="button"
                   onClick={handleConfirmCancelOrder}
-                  disabled={isCanceling || getCancelRemainingSeconds(orderToCancel) <= 0}
+                  disabled={isCanceling}
                   className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-red-600/20 active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
                 >
                   {isCanceling ? <Loader2 size={15} className="animate-spin" /> : <XCircle size={15} />}

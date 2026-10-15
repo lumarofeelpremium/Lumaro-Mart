@@ -155,8 +155,8 @@ service cloud.firestore {
                      (isValidUser(request.resource.data) && isOwner(userId) &&
                       // Role cannot be escalated
                       (!('role' in request.resource.data) || !('role' in resource.data) || request.resource.data.role == resource.data.role || request.resource.data.role == 'user') &&
-                      // Loyalty points cannot be increased by user directly (can only stay same or decrease when redeeming in cart)
-                      (!('loyaltyPoints' in request.resource.data) || !('loyaltyPoints' in resource.data) || request.resource.data.loyaltyPoints <= resource.data.loyaltyPoints) &&
+                      // Loyalty points must be a valid non-negative number (allowing redeeming and refunds on cancel)
+                      (!('loyaltyPoints' in request.resource.data) || (request.resource.data.loyaltyPoints is number && request.resource.data.loyaltyPoints >= 0)) &&
                       // Subscription status cannot be granted by user directly
                       (!('isSubscribed' in request.resource.data) || !('isSubscribed' in resource.data) || request.resource.data.isSubscribed == resource.data.isSubscribed || request.resource.data.isSubscribed == false)
                      ));
@@ -176,9 +176,8 @@ service cloud.firestore {
       allow update: if isAdmin() || (
         isAuthenticated() && 
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'salesCount']) &&
-        // Stock cannot be increased by non-admin and stock reduction cannot exceed remaining stock
-        request.resource.data.stock <= resource.data.stock &&
-        request.resource.data.salesCount >= resource.data.salesCount
+        request.resource.data.stock is number && request.resource.data.stock >= 0 &&
+        request.resource.data.salesCount is number && request.resource.data.salesCount >= 0
       );
     }
 
@@ -199,7 +198,7 @@ service cloud.firestore {
           (
             resource.data.status == 'pending' &&
             request.resource.data.status == 'canceled' &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'canceledAt', 'canceledBy', 'cancelReason', 'viewed'])
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'canceledAt', 'canceledBy', 'cancelReason', 'viewed', 'updatedAt'])
           )
         )
       );

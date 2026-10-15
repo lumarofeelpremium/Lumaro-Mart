@@ -667,36 +667,103 @@ export const AdminDashboard = () => {
       // If status hasn't changed, do nothing
       if (oldStatus === newStatus) return;
       
-      const batch = writeBatch(db);
-      
       // Handle Stock Restoration/Reduction based on status change
       // Case 1: Order is being canceled (Restore Stock & set canceledAt timestamp)
       if (newStatus === 'canceled' && oldStatus !== 'canceled') {
-        orderData.items.forEach(item => {
-          const productRef = doc(db, 'products', item.id);
-          batch.update(productRef, {
-            stock: increment(item.quantity)
-          });
-        });
-        batch.update(orderRef, { 
+        // Guarantee order cancellation in Firestore first
+        await updateDoc(orderRef, { 
           status: 'canceled',
-          canceledAt: serverTimestamp()
+          canceledAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
         });
-        await batch.commit();
+
+        // Safely restore stock for each item (handling variants & deleted items)
+        if (Array.isArray(orderData.items)) {
+          for (const item of orderData.items) {
+            const originalProductId = (item as any).productId || (item.id && item.id.includes('_') ? item.id.split('_')[0] : item.id);
+            try {
+              const productRef = doc(db, 'products', originalProductId);
+              const prodSnap = await getDoc(productRef);
+              if (prodSnap.exists()) {
+                const prodData = prodSnap.data();
+                if (prodData.hasVariants && Array.isArray(prodData.variants)) {
+                  const targetVariantId = (item as any).variantId;
+                  const updatedVariants = prodData.variants.map((v: any) => {
+                    const match = (targetVariantId && v.id === targetVariantId) || 
+                                  ((item as any).weight && v.weight === (item as any).weight);
+                    if (match) {
+                      return { ...v, stock: (v.stock || 0) + item.quantity };
+                    }
+                    return v;
+                  });
+                  const totalStock = updatedVariants.reduce((sum: number, v: any) => sum + (Number(v.stock) || 0), 0);
+                  await updateDoc(productRef, {
+                    variants: updatedVariants,
+                    stock: totalStock,
+                    salesCount: increment(-item.quantity)
+                  });
+                } else {
+                  await updateDoc(productRef, {
+                    stock: increment(item.quantity),
+                    salesCount: increment(-item.quantity)
+                  });
+                }
+              }
+            } catch (pErr) {
+              console.warn('Error restoring stock for product:', originalProductId, pErr);
+            }
+          }
+        }
       }
       // Case 2: Order was canceled but is now being re-activated (Reduce Stock again & clear canceledAt)
       else if (oldStatus === 'canceled' && newStatus !== 'canceled') {
-        orderData.items.forEach(item => {
-          const productRef = doc(db, 'products', item.id);
-          batch.update(productRef, {
-            stock: increment(-item.quantity)
-          });
-        });
-        batch.update(orderRef, { 
+        const orderUpdatePayload: Record<string, any> = { 
           status: newStatus,
-          canceledAt: deleteField()
-        });
-        await batch.commit();
+          canceledAt: deleteField(),
+          updatedAt: serverTimestamp()
+        };
+        if (newStatus === 'delivered') {
+          orderUpdatePayload.deliveredAt = serverTimestamp();
+        }
+        await updateDoc(orderRef, orderUpdatePayload);
+
+        // Safely re-reduce stock
+        if (Array.isArray(orderData.items)) {
+          for (const item of orderData.items) {
+            const originalProductId = (item as any).productId || (item.id && item.id.includes('_') ? item.id.split('_')[0] : item.id);
+            try {
+              const productRef = doc(db, 'products', originalProductId);
+              const prodSnap = await getDoc(productRef);
+              if (prodSnap.exists()) {
+                const prodData = prodSnap.data();
+                if (prodData.hasVariants && Array.isArray(prodData.variants)) {
+                  const targetVariantId = (item as any).variantId;
+                  const updatedVariants = prodData.variants.map((v: any) => {
+                    const match = (targetVariantId && v.id === targetVariantId) || 
+                                  ((item as any).weight && v.weight === (item as any).weight);
+                    if (match) {
+                      return { ...v, stock: Math.max(0, (v.stock || 0) - item.quantity) };
+                    }
+                    return v;
+                  });
+                  const totalStock = updatedVariants.reduce((sum: number, v: any) => sum + (Number(v.stock) || 0), 0);
+                  await updateDoc(productRef, {
+                    variants: updatedVariants,
+                    stock: totalStock,
+                    salesCount: increment(item.quantity)
+                  });
+                } else {
+                  await updateDoc(productRef, {
+                    stock: increment(-item.quantity),
+                    salesCount: increment(item.quantity)
+                  });
+                }
+              }
+            } catch (pErr) {
+              console.warn('Error re-reducing stock for product:', originalProductId, pErr);
+            }
+          }
+        }
       } else {
         // Direct order status update for all other states (delivered, confirmed, packed, out_for_delivery, pending)
         const orderUpdatePayload: Record<string, any> = { 
